@@ -226,7 +226,10 @@ chrome.runtime.onMessage.addListener(
     } else if (message.type === "GRANOLA_STATUS") {
       isGranolaConnected()
         .then((connected) => sendResponse({ connected }))
-        .catch(() => sendResponse({ connected: false }));
+        .catch((err) => sendResponse({
+          connected: false,
+          error: err instanceof Error ? err.message : "Native host not responding",
+        }));
       return true;
     } else if (message.type === "GENERATE_MORNING_BRIEF") {
       generateMorningBrief(true)

@@ -100,7 +100,11 @@ export default function Options() {
   const [dailyCost, setDailyCost] = useState("$0.00");
   const [loaded, setLoaded] = useState(false);
   const [granolaConnected, setGranolaConnected] = useState(false);
+  const [granolaError, setGranolaError] = useState<string | null>(null);
+  const [granolaTestLoading, setGranolaTestLoading] = useState(false);
   const [extensionId, setExtensionId] = useState("");
+  const [showGranolaGuide, setShowGranolaGuide] = useState(false);
+  const [copiedInstall, setCopiedInstall] = useState(false);
 
   // ─── Load settings from chrome.storage.local ───
 
@@ -406,7 +410,7 @@ export default function Options() {
           </div>
 
           <div style={{ ...fieldRow, marginBottom: 0, alignItems: "flex-start" }}>
-            <div>
+            <div style={{ flex: 1 }}>
               <div style={labelStyle}>Granola Meetings</div>
               <div style={subLabel}>Reads from local Granola cache via native messaging</div>
             </div>
@@ -420,31 +424,95 @@ export default function Options() {
               }}>
                 {granolaConnected ? "Connected (Local)" : "Not Connected"}
               </span>
-              {!granolaConnected && (
-                <>
+              <button
+                onClick={async () => {
+                  setGranolaTestLoading(true);
+                  setGranolaError(null);
+                  try {
+                    const res = await chrome.runtime.sendMessage({ type: "GRANOLA_STATUS" });
+                    setGranolaConnected(!!res?.connected);
+                    if (!res?.connected) {
+                      setGranolaError(res?.error || "Native host not responding. Install it first.");
+                    }
+                  } catch (err) {
+                    setGranolaError(err instanceof Error ? err.message : "Connection test failed");
+                  }
+                  setGranolaTestLoading(false);
+                }}
+                disabled={granolaTestLoading}
+                style={{
+                  padding: "5px 12px", fontSize: 11, fontWeight: 600,
+                  fontFamily: OS.font, border: `1px solid ${OS.border}`,
+                  borderRadius: 8, background: OS.white,
+                  color: OS.secondary, cursor: "pointer",
+                }}
+              >
+                {granolaTestLoading ? "Testing..." : "Test Connection"}
+              </button>
+            </div>
+          </div>
+          {granolaError && (
+            <div style={{
+              marginTop: 10, padding: "8px 12px", borderRadius: 6,
+              background: "#fef2f2", border: "1px solid #fecaca",
+              fontSize: 12, color: "#dc2626", lineHeight: 1.5,
+            }}>
+              {granolaError}
+            </div>
+          )}
+          <div style={{ marginTop: 14 }}>
+            <button
+              onClick={() => setShowGranolaGuide(!showGranolaGuide)}
+              style={{
+                background: "none", border: "none", padding: 0,
+                color: OS.blue, fontSize: 12, fontWeight: 600,
+                cursor: "pointer", fontFamily: OS.font,
+              }}
+            >
+              {showGranolaGuide ? "\u25BC" : "\u25B6"} Setup instructions
+            </button>
+            {showGranolaGuide && (
+              <div style={{
+                marginTop: 10, padding: "12px 14px", borderRadius: 8,
+                background: OS.bg, border: `1px solid ${OS.border}`,
+                fontSize: 12, color: OS.secondary, lineHeight: 1.8,
+              }}>
+                <div style={{ fontWeight: 600, color: OS.text, marginBottom: 6 }}>Install the native host:</div>
+                <div>1. Open Terminal</div>
+                <div>2. Navigate to the extension's native-host directory</div>
+                <div>3. Run the install command:</div>
+                <div style={{
+                  margin: "8px 0", padding: "8px 10px", borderRadius: 6,
+                  background: OS.white, border: `1px solid ${OS.border}`,
+                  fontFamily: OS.mono, fontSize: 11, display: "flex",
+                  alignItems: "center", justifyContent: "space-between", gap: 8,
+                }}>
+                  <code style={{ flex: 1, overflowX: "auto" }}>
+                    cd native-host && ./install.sh {extensionId}
+                  </code>
                   <button
                     onClick={() => {
-                      chrome.runtime.sendMessage({ type: "GRANOLA_STATUS" }).then((res) => {
-                        setGranolaConnected(!!res?.connected);
-                      }).catch(() => {});
+                      navigator.clipboard.writeText(`cd native-host && ./install.sh ${extensionId}`);
+                      setCopiedInstall(true);
+                      setTimeout(() => setCopiedInstall(false), 2000);
                     }}
                     style={{
-                      padding: "5px 12px", fontSize: 11, fontWeight: 600,
+                      padding: "3px 8px", fontSize: 10, fontWeight: 600,
                       fontFamily: OS.font, border: `1px solid ${OS.border}`,
-                      borderRadius: 8, background: OS.white,
-                      color: OS.secondary, cursor: "pointer",
+                      borderRadius: 4, background: copiedInstall ? "#16a34a" : OS.white,
+                      color: copiedInstall ? OS.white : OS.secondary, cursor: "pointer",
+                      flexShrink: 0, transition: "all 0.15s ease",
                     }}
                   >
-                    Re-check
+                    {copiedInstall ? "Copied!" : "Copy"}
                   </button>
-                  <div style={{ fontSize: 11, color: OS.muted, textAlign: "right", maxWidth: 260 }}>
-                    Run: <code style={{ fontSize: 10, background: OS.bg, padding: "2px 6px", borderRadius: 4 }}>
-                      ./native-host/install.sh {extensionId}
-                    </code>
-                  </div>
-                </>
-              )}
-            </div>
+                </div>
+                <div>4. Click "Test Connection" above</div>
+                <div style={{ marginTop: 6, fontSize: 11, color: OS.muted }}>
+                  Your extension ID: <code style={{ background: OS.white, padding: "1px 4px", borderRadius: 3 }}>{extensionId}</code>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
