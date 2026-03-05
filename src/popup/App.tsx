@@ -1353,7 +1353,7 @@ export default function App() {
   const actions = useActions();
   const [filter, setFilter] = useState<FilterKey>("all");
   const [expandedId, setExpandedId] = useState<number | null>(null);
-  const [toast, setToast] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ message: string; variant?: "success" | "error" | "warning" | "info" } | null>(null);
   const [hasApiKey, setHasApiKey] = useState<boolean | null>(null);
   const [isFirstRun, setIsFirstRun] = useState<boolean | null>(null);
   const [showSettings, setShowSettings] = useState(false);
@@ -1392,7 +1392,27 @@ export default function App() {
     if (viewMode === "brief") nav.setTo(true);
   }, [viewMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const showToast = useCallback((msg: string) => setToast(msg), []);
+  const showToast = useCallback((msg: string, variant?: "success" | "error" | "warning" | "info") => {
+    setToast({ message: msg, variant });
+  }, []);
+
+  // Check for recent errors from the background pipeline
+  useEffect(() => {
+    const checkErrors = async () => {
+      try {
+        const result = await chrome.storage.session.get("pipelineStatus");
+        const status = result.pipelineStatus as { lastError?: string | null; lastExtraction?: string | null } | undefined;
+        if (status?.lastError) {
+          const lastExtraction = status.lastExtraction ? new Date(status.lastExtraction).getTime() : 0;
+          const fiveMinAgo = Date.now() - 5 * 60 * 1000;
+          if (lastExtraction > fiveMinAgo) {
+            showToast(status.lastError, "error");
+          }
+        }
+      } catch { /* session storage not available in some contexts */ }
+    };
+    checkErrors();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ─── Action handlers ───
 
@@ -1822,7 +1842,7 @@ export default function App() {
         </div>
       )}
 
-      {toast && <Toast message={toast} onClose={() => setToast(null)} />}
+      {toast && <Toast message={toast.message} variant={toast.variant} onClose={() => setToast(null)} />}
     </div>
   );
 }

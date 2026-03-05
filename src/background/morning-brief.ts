@@ -113,7 +113,13 @@ async function callClaudeForBrief(prompt: string): Promise<unknown> {
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(`API ${response.status}: ${errorText.slice(0, 200)}`);
+    if (response.status === 401) {
+      throw new Error("Invalid API key — check your Anthropic API key in Settings");
+    }
+    if (response.status === 429) {
+      throw new Error("Claude API rate limit — too many requests");
+    }
+    throw new Error(`Claude API error (${response.status}): ${errorText.slice(0, 200)}`);
   }
 
   const data = await response.json();

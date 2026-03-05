@@ -215,7 +215,13 @@ export async function callClaude(
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(`API ${response.status}: ${errorText.slice(0, 200)}`);
+    if (response.status === 401) {
+      throw new Error("Invalid API key — check your Anthropic API key in Settings");
+    }
+    if (response.status === 429) {
+      throw new Error("Claude API rate limit — too many requests, will retry soon");
+    }
+    throw new Error(`Claude API error (${response.status}): ${errorText.slice(0, 200)}`);
   }
 
   const data = await response.json();
@@ -223,7 +229,7 @@ export async function callClaude(
     (block: { type: string }) => block.type === "text",
   );
   if (!textBlock?.text) {
-    throw new Error("No text content in Claude response");
+    throw new Error("Invalid response from Claude — no text content");
   }
 
   const raw = textBlock.text.trim();
@@ -238,7 +244,7 @@ export async function callClaude(
   const parsed: ExtractionResponse = JSON.parse(cleaned);
 
   if (!Array.isArray(parsed.commitments)) {
-    throw new Error("Invalid response: missing commitments array");
+    throw new Error("Invalid response from Claude — missing commitments array");
   }
 
   await logStatus("success", "extractor", `Claude returned ${parsed.commitments.length} potential commitments`);
@@ -311,10 +317,21 @@ export async function extractCommitments(
 
   try {
     // Check API key
-    const keyResult = await chrome.storage.local.get("anthropicApiKey");
+    const keyResult = await chrome.storage.local.get(["anthropicApiKey", "apiKeyMissingNotified"]);
     if (!keyResult.anthropicApiKey) {
       await logStatus("error", "extractor", "Cannot extract — no Anthropic API key configured. Add it in Settings (gear icon).");
-      await updateStatus({ lastError: "No API key", hasApiKey: false });
+      await updateStatus({ lastError: "API key not configured", hasApiKey: false });
+      // Notify once so user knows setup is needed
+      if (!keyResult.apiKeyMissingNotified) {
+        chrome.notifications.create("api-key-missing", {
+          type: "basic",
+          iconUrl: chrome.runtime.getURL("assets/icon-128.png"),
+          title: "Clyde — Setup Required",
+          message: "Add your Anthropic API key in Clyde Settings to enable commitment detection.",
+          priority: 2,
+        });
+        await chrome.storage.local.set({ apiKeyMissingNotified: true });
+      }
       return;
     }
     await updateStatus({ hasApiKey: true });
