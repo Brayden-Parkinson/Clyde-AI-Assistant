@@ -1,5 +1,5 @@
 import { db, getDismissalPatterns, getNewCommitmentCount, getActiveCommitments } from "@shared/db";
-import { CLAUDE_MODEL, MAX_DISMISSAL_PATTERNS } from "@shared/constants";
+import { CLAUDE_MODEL, MAX_DISMISSAL_PATTERNS, API_TIMEOUT_MS, API_MAX_RETRIES, API_RETRY_DELAY_MS } from "@shared/constants";
 import type { SourceType, ExtractionResponse, ExtractedCommitment, RejectedCandidate, SlackMessagePayload, DecisionLogEntry, ConversationMessage, SlackWatermarks } from "@shared/types";
 import { logStatus, updateStatus, getStatus } from "@shared/status";
 import { getUserProfile } from "@shared/user-profile";
@@ -183,6 +183,56 @@ ${sections.join("\n\n")}`;
 
 // ─── Claude API ───
 
+async function fetchClaudeWithRetry(
+  apiKey: string,
+  body: object,
+): Promise<Response> {
+  for (let attempt = 0; attempt <= API_MAX_RETRIES; attempt++) {
+    try {
+      const response = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+          "anthropic-dangerous-direct-browser-access": "true",
+        },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(API_TIMEOUT_MS),
+      });
+
+      if (response.status === 429 && attempt < API_MAX_RETRIES) {
+        const delay = API_RETRY_DELAY_MS * (attempt + 1);
+        await logStatus("warn", "extractor", `Rate limited (429) — retrying in ${delay / 1000}s (attempt ${attempt + 1}/${API_MAX_RETRIES})`);
+        await new Promise((r) => setTimeout(r, delay));
+        continue;
+      }
+
+      return response;
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "TimeoutError") {
+        if (attempt < API_MAX_RETRIES) {
+          await logStatus("warn", "extractor", `Claude API timed out after ${API_TIMEOUT_MS / 1000}s — retrying (attempt ${attempt + 1}/${API_MAX_RETRIES})`);
+          continue;
+        }
+        throw new Error(`Claude API timed out after ${API_TIMEOUT_MS / 1000}s`);
+      }
+      throw err;
+    }
+  }
+  throw new Error("Claude API failed after all retries");
+}
+
+function parseClaudeJson(raw: string): unknown {
+  let cleaned = raw.trim().replace(/^```json?\s*/, "").replace(/\s*```$/, "");
+  const firstBrace = cleaned.indexOf("{");
+  const lastBrace = cleaned.lastIndexOf("}");
+  if (firstBrace > 0 && lastBrace > firstBrace) {
+    cleaned = cleaned.slice(firstBrace, lastBrace + 1);
+  }
+  return JSON.parse(cleaned);
+}
+
 export async function callClaude(
   system: string,
   userMessage: string,
@@ -195,22 +245,11 @@ export async function callClaude(
 
   await logStatus("info", "extractor", `Calling Claude API (${CLAUDE_MODEL})...`);
 
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-      "anthropic-dangerous-direct-browser-access": "true",
-    },
-    body: JSON.stringify({
-      model: CLAUDE_MODEL,
-      max_tokens: 4096,
-      system: system,
-      messages: [
-        { role: "user", content: userMessage },
-      ],
-    }),
+  const response = await fetchClaudeWithRetry(apiKey, {
+    model: CLAUDE_MODEL,
+    max_tokens: 4096,
+    system,
+    messages: [{ role: "user", content: userMessage }],
   });
 
   if (!response.ok) {
@@ -232,16 +271,7 @@ export async function callClaude(
     throw new Error("Invalid response from Claude — no text content");
   }
 
-  const raw = textBlock.text.trim();
-  // Strip markdown fences
-  let cleaned = raw.replace(/^```json?\s*/, "").replace(/\s*```$/, "");
-  // If Claude added preamble, find the first { and last }
-  const firstBrace = cleaned.indexOf("{");
-  const lastBrace = cleaned.lastIndexOf("}");
-  if (firstBrace > 0 && lastBrace > firstBrace) {
-    cleaned = cleaned.slice(firstBrace, lastBrace + 1);
-  }
-  const parsed: ExtractionResponse = JSON.parse(cleaned);
+  const parsed = parseClaudeJson(textBlock.text) as ExtractionResponse;
 
   if (!Array.isArray(parsed.commitments)) {
     throw new Error("Invalid response from Claude — missing commitments array");
@@ -563,20 +593,11 @@ async function callClaudeRaw(
     throw new Error("No API key configured");
   }
 
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-      "anthropic-dangerous-direct-browser-access": "true",
-    },
-    body: JSON.stringify({
-      model: CLAUDE_MODEL,
-      max_tokens: 2048,
-      system: system,
-      messages: [{ role: "user", content: userMessage }],
-    }),
+  const response = await fetchClaudeWithRetry(apiKey, {
+    model: CLAUDE_MODEL,
+    max_tokens: 2048,
+    system,
+    messages: [{ role: "user", content: userMessage }],
   });
 
   if (!response.ok) {
@@ -592,15 +613,7 @@ async function callClaudeRaw(
     throw new Error("No text content in Claude response");
   }
 
-  const raw = textBlock.text.trim();
-  let cleaned = raw.replace(/^```json?\s*/, "").replace(/\s*```$/, "");
-  const firstBrace = cleaned.indexOf("{");
-  const lastBrace = cleaned.lastIndexOf("}");
-  if (firstBrace > 0 && lastBrace > firstBrace) {
-    cleaned = cleaned.slice(firstBrace, lastBrace + 1);
-  }
-
-  return JSON.parse(cleaned);
+  return parseClaudeJson(textBlock.text);
 }
 
 // ─── Completion Detection ───

@@ -34,3 +34,12 @@ export const MAX_DISMISSAL_PATTERNS = 15;
 
 /** Claude model to use for extraction */
 export const CLAUDE_MODEL = "claude-sonnet-4-6";
+
+/** API timeout for Claude calls (30 seconds) */
+export const API_TIMEOUT_MS = 30_000;
+
+/** Max retries on 429 rate limit */
+export const API_MAX_RETRIES = 2;
+
+/** Base delay between retries (ms) — multiplied by attempt number */
+export const API_RETRY_DELAY_MS = 5_000;

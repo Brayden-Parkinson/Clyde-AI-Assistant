@@ -1,5 +1,5 @@
 import { db } from "@shared/db";
-import { CLAUDE_MODEL } from "@shared/constants";
+import { CLAUDE_MODEL, API_TIMEOUT_MS, API_MAX_RETRIES, API_RETRY_DELAY_MS } from "@shared/constants";
 import type { MorningBrief, BriefPriority, BriefSuggestedMove, BriefHeadsUpItem } from "@shared/types";
 import { logStatus } from "@shared/status";
 import { getUserProfile } from "@shared/user-profile";
@@ -76,7 +76,7 @@ async function fetchCalendarEvents(): Promise<CalendarEvent[]> {
   if (!icsUrl) return [];
 
   try {
-    const response = await fetch(icsUrl);
+    const response = await fetch(icsUrl, { signal: AbortSignal.timeout(API_TIMEOUT_MS) });
     if (!response.ok) {
       await logStatus("warn", "morning-brief", `Calendar fetch failed: ${response.status}`);
       return [];
@@ -96,20 +96,45 @@ async function callClaudeForBrief(prompt: string): Promise<unknown> {
   const apiKey = result.anthropicApiKey as string | undefined;
   if (!apiKey) throw new Error("No API key configured");
 
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-      "anthropic-dangerous-direct-browser-access": "true",
-    },
-    body: JSON.stringify({
-      model: CLAUDE_MODEL,
-      max_tokens: 2048,
-      messages: [{ role: "user", content: prompt }],
-    }),
-  });
+  let response: Response | undefined;
+  for (let attempt = 0; attempt <= API_MAX_RETRIES; attempt++) {
+    try {
+      response = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+          "anthropic-dangerous-direct-browser-access": "true",
+        },
+        body: JSON.stringify({
+          model: CLAUDE_MODEL,
+          max_tokens: 2048,
+          messages: [{ role: "user", content: prompt }],
+        }),
+        signal: AbortSignal.timeout(API_TIMEOUT_MS),
+      });
+
+      if (response.status === 429 && attempt < API_MAX_RETRIES) {
+        const delay = API_RETRY_DELAY_MS * (attempt + 1);
+        await logStatus("warn", "morning-brief", `Rate limited — retrying in ${delay / 1000}s`);
+        await new Promise((r) => setTimeout(r, delay));
+        continue;
+      }
+      break;
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "TimeoutError") {
+        if (attempt < API_MAX_RETRIES) {
+          await logStatus("warn", "morning-brief", `Timed out — retrying (attempt ${attempt + 1})`);
+          continue;
+        }
+        throw new Error(`Claude API timed out after ${API_TIMEOUT_MS / 1000}s`);
+      }
+      throw err;
+    }
+  }
+
+  if (!response) throw new Error("Claude API failed after all retries");
 
   if (!response.ok) {
     const errorText = await response.text();
