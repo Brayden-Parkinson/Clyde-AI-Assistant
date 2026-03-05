@@ -43,3 +43,6 @@ export const API_MAX_RETRIES = 2;
 
 /** Base delay between retries (ms) — multiplied by attempt number */
 export const API_RETRY_DELAY_MS = 5_000;
+
+/** Default: allow messages from channels not in the filter map */
+export const CHANNEL_FILTER_DEFAULT_ALLOW = true;

@@ -1,82 +1,134 @@
 import { db } from "@shared/db";
-import { COMMITMENT_REGEX, BATCH_DEBOUNCE_MS } from "@shared/constants";
-import type { SlackMessagePayload } from "@shared/types";
-import { extractCommitments } from "./extractor";
+import { COMMITMENT_REGEX, CHANNEL_FILTER_DEFAULT_ALLOW } from "@shared/constants";
+import type { SlackMessagePayload, SlackWatermarks } from "@shared/types";
+import { logStatus, updateStatus, getStatus } from "@shared/status";
+import { extractCommitments, detectCompletions } from "./extractor";
 
 type BufferedMessage = SlackMessagePayload["messages"][number];
 
-/** In-memory buffer of messages that passed the pre-filter */
-let buffer: BufferedMessage[] = [];
+const BUFFER_KEY = "batcherBuffer";
+const BATCH_ALARM = "batcher-flush";
 
-/** Handle for the debounce timer */
-let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-
-/**
- * Add messages to the buffer. Each message is pre-filtered against
- * COMMITMENT_REGEX --- only matches are kept. Non-matches go to
- * db.raw_messages for potential manual review.
- */
-export function addMessages(
+export async function addMessages(
   messages: SlackMessagePayload["messages"],
-): void {
-  for (const msg of messages) {
-    if (COMMITMENT_REGEX.test(msg.text)) {
-      buffer.push(msg);
-    } else {
-      // Store non-matching messages for manual review (fire and forget)
-      db.raw_messages.add({
-        source_type: "slack",
-        sourceId: `${msg.channel}-${msg.timestamp}`,
-        text: msg.text,
-        sender: msg.sender,
-        context: msg.channel,
-        timestamp: msg.timestamp,
-        capturedAt: new Date().toISOString(),
-      });
+): Promise<{ matched: number; total: number }> {
+  // Filter out messages older than channel watermarks
+  const wmResult = await chrome.storage.local.get(["slackChannelWatermarks", "slackChannelFilter"]);
+  const watermarks = (wmResult.slackChannelWatermarks as SlackWatermarks) ?? {};
+  const channelFilter = (wmResult.slackChannelFilter as Record<string, boolean>) ?? {};
+  let skippedCount = 0;
+  let channelFilteredCount = 0;
+
+  const filtered = messages.filter((m) => {
+    // Channel filter: check allow/deny list
+    const channelAllowed = channelFilter[m.channel] ?? CHANNEL_FILTER_DEFAULT_ALLOW;
+    if (!channelAllowed) {
+      channelFilteredCount++;
+      return false;
     }
+
+    if (!m.message_ts) return true; // No timestamp → always pass through
+    const wm = watermarks[m.channel];
+    if (wm?.lastMessageTs && m.message_ts <= wm.lastMessageTs) {
+      skippedCount++;
+      return false;
+    }
+    return true;
+  });
+
+  if (skippedCount > 0) {
+    await logStatus("info", "batcher", `Skipped ${skippedCount} messages older than channel watermarks`);
+  }
+  if (channelFilteredCount > 0) {
+    await logStatus("info", "batcher", `Skipped ${channelFilteredCount} messages from excluded channels`);
   }
 
-  // Reset the debounce timer
-  resetDebounce();
+  const matched = filtered.filter((m) => COMMITMENT_REGEX.test(m.text)).length;
+
+  // Buffer ALL messages (candidates + context)
+  const existing = await getPersistedBuffer();
+  existing.push(...filtered);
+  await chrome.storage.session.set({ [BUFFER_KEY]: existing });
+
+  // Update total received count
+  const status = await getStatus();
+  await updateStatus({
+    totalMessagesReceived: status.totalMessagesReceived + filtered.length,
+    bufferedMessages: existing.length,
+  });
+
+  await logStatus(
+    "info",
+    "batcher",
+    `Buffered ${filtered.length} messages (${matched} match commitment patterns). Buffer now has ${existing.length} total.`,
+  );
+
+  // Still store raw messages for audit trail
+  for (const msg of filtered) {
+    db.raw_messages.add({
+      source_type: "slack",
+      sourceId: `${msg.channel}-${msg.timestamp}`,
+      text: msg.text,
+      sender: msg.sender,
+      context: msg.channel,
+      timestamp: msg.timestamp,
+      capturedAt: new Date().toISOString(),
+    });
+  }
+
+  // Schedule flush
+  const existingAlarm = await chrome.alarms.get(BATCH_ALARM);
+  if (!existingAlarm) {
+    chrome.alarms.create(BATCH_ALARM, { delayInMinutes: 1 });
+  }
+
+  return { matched, total: filtered.length };
 }
 
-/**
- * Flush the buffer: take all buffered messages, clear the buffer,
- * and pass them to the extractor for Claude processing.
- */
 export async function flush(): Promise<void> {
-  if (buffer.length === 0) return;
+  const buffer = await getPersistedBuffer();
 
-  const toProcess = [...buffer];
-  buffer = [];
-
-  if (debounceTimer !== null) {
-    clearTimeout(debounceTimer);
-    debounceTimer = null;
+  if (buffer.length === 0) {
+    await logStatus("info", "batcher", "Flush called but buffer is empty — nothing to extract");
+    return;
   }
 
-  const formatted = toProcess.map((m) => ({
-    text: m.text,
-    sender: m.sender,
-    channel: m.channel,
-    timestamp: m.timestamp,
-  }));
+  // Separate candidates from context
+  const candidates = buffer.filter((m) => COMMITMENT_REGEX.test(m.text));
+  const contextMessages = buffer.filter((m) => !COMMITMENT_REGEX.test(m.text));
 
-  await extractCommitments(formatted, "slack");
+  await logStatus(
+    "info",
+    "batcher",
+    `Flushing: ${candidates.length} candidates, ${contextMessages.length} context messages`,
+  );
+
+  await chrome.storage.session.remove(BUFFER_KEY);
+  await chrome.alarms.clear(BATCH_ALARM);
+  await updateStatus({ bufferedMessages: 0 });
+
+  if (candidates.length === 0) {
+    await logStatus("info", "batcher", "No commitment candidates in batch — skipping extraction");
+    return;
+  }
+
+  await extractCommitments(candidates, contextMessages, "slack");
+
+  // Run completion detection every other flush to save API costs
+  const cycleResult = await chrome.storage.session.get("completionCheckCycle");
+  const cycle = ((cycleResult.completionCheckCycle as number) ?? 0) + 1;
+  await chrome.storage.session.set({ completionCheckCycle: cycle });
+  if (cycle % 2 === 0) {
+    await detectCompletions(candidates, contextMessages);
+  }
 }
 
-/** Get the current number of buffered messages */
-export function getBufferSize(): number {
+export async function getBufferSize(): Promise<number> {
+  const buffer = await getPersistedBuffer();
   return buffer.length;
 }
 
-/** Reset (or start) the debounce timer. When it fires, auto-flush. */
-function resetDebounce(): void {
-  if (debounceTimer !== null) {
-    clearTimeout(debounceTimer);
-  }
-  debounceTimer = setTimeout(() => {
-    debounceTimer = null;
-    flush();
-  }, BATCH_DEBOUNCE_MS);
+async function getPersistedBuffer(): Promise<BufferedMessage[]> {
+  const result = await chrome.storage.session.get(BUFFER_KEY);
+  return (result[BUFFER_KEY] as BufferedMessage[]) ?? [];
 }

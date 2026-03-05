@@ -105,6 +105,8 @@ export default function Options() {
   const [extensionId, setExtensionId] = useState("");
   const [showGranolaGuide, setShowGranolaGuide] = useState(false);
   const [copiedInstall, setCopiedInstall] = useState(false);
+  const [channelFilter, setChannelFilter] = useState<Record<string, boolean>>({});
+  const [discoveredChannels, setDiscoveredChannels] = useState<string[]>([]);
 
   // ─── Load settings from chrome.storage.local ───
 
@@ -151,6 +153,24 @@ export default function Options() {
         setLoaded(true);
       },
     );
+
+    // Load channel filter + discover channels from raw messages
+    chrome.storage.local.get("slackChannelFilter").then((cfResult) => {
+      if (cfResult.slackChannelFilter) {
+        setChannelFilter(cfResult.slackChannelFilter as Record<string, boolean>);
+      }
+    });
+    db.raw_messages
+      .where("source_type")
+      .equals("slack")
+      .uniqueKeys()
+      .then(() => {
+        // Get distinct channels from raw messages
+        db.raw_messages.orderBy("context").uniqueKeys().then((keys) => {
+          setDiscoveredChannels(keys.filter((k): k is string => typeof k === "string").sort());
+        });
+      })
+      .catch(() => {});
 
     // Check Granola local connection status
     setExtensionId(chrome.runtime.id);
@@ -634,6 +654,54 @@ export default function Options() {
             </select>
           </div>
         </div>
+
+        {/* Channel Filters */}
+        {discoveredChannels.length > 0 && (
+          <div style={sectionStyle}>
+            <h2 style={sectionTitle}>Channel Filters</h2>
+            <p style={{ fontSize: 12, color: OS.muted, marginBottom: 16, lineHeight: 1.5 }}>
+              Toggle channels on/off. Disabled channels won't be scanned for commitments.
+              New channels default to enabled.
+            </p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {discoveredChannels.map((ch) => {
+                const enabled = channelFilter[ch] ?? true;
+                return (
+                  <div key={ch} style={{
+                    display: "flex", alignItems: "center", justifyContent: "space-between",
+                    padding: "8px 10px", background: OS.bg, borderRadius: 6,
+                    border: `1px solid ${OS.border}`,
+                  }}>
+                    <span style={{ fontSize: 13, fontWeight: 500, color: OS.text }}>
+                      #{ch}
+                    </span>
+                    <button
+                      onClick={() => {
+                        const updated = { ...channelFilter, [ch]: !enabled };
+                        setChannelFilter(updated);
+                        chrome.storage.local.set({ slackChannelFilter: updated });
+                      }}
+                      style={{
+                        width: 48, height: 26, borderRadius: 13, border: "none",
+                        background: enabled ? OS.blue : "#dcdcdc",
+                        cursor: "pointer", position: "relative", transition: "background 0.2s",
+                        flexShrink: 0,
+                      }}
+                    >
+                      <div style={{
+                        width: 20, height: 20, borderRadius: 10, background: OS.white,
+                        position: "absolute", top: 3,
+                        left: enabled ? 25 : 3,
+                        transition: "left 0.2s ease",
+                        boxShadow: "0 1px 3px rgba(0,0,0,0.2)",
+                      }} />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* Detection & Schedule */}
         <div style={sectionStyle}>
