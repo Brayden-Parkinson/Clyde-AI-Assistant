@@ -171,6 +171,7 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
   const [granolaTestLoading, setGranolaTestLoading] = useState(false);
   const [extensionId, setExtensionId] = useState("");
   const [copiedInstall, setCopiedInstall] = useState(false);
+  const [restoring, setRestoring] = useState(false);
   const [channelFilter, setChannelFilter] = useState<Record<string, boolean>>({});
   const [discoveredChannels, setDiscoveredChannels] = useState<string[]>([]);
 
@@ -1128,7 +1129,7 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
           </div>
         </div>
 
-        <div style={{ ...fieldRow, marginBottom: 0 }}>
+        <div style={fieldRow}>
           <div>
             <div style={labelStyle}>Export Data</div>
             <div style={subLabel}>
@@ -1150,6 +1151,47 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
             }}
           >
             Export JSON
+          </button>
+        </div>
+
+        <div style={{ ...fieldRow, marginBottom: 0 }}>
+          <div>
+            <div style={labelStyle}>Restore from Backup</div>
+            <div style={subLabel}>
+              Recover data from a local backup file (requires native host)
+            </div>
+          </div>
+          <button
+            onClick={async () => {
+              setRestoring(true);
+              try {
+                const res = await chrome.runtime.sendMessage({ type: "RESTORE_BACKUP" });
+                if (res?.ok) {
+                  showToast("Backup restored successfully", "success");
+                } else {
+                  showToast(res?.error || "No backup found", "error");
+                }
+              } catch (err) {
+                showToast("Failed — is the native host installed?", "error");
+              } finally {
+                setRestoring(false);
+              }
+            }}
+            disabled={restoring}
+            style={{
+              padding: "8px 20px",
+              fontSize: 13,
+              fontWeight: 600,
+              fontFamily: OS.font,
+              border: `1px solid ${OS.border}`,
+              borderRadius: 8,
+              background: OS.white,
+              color: OS.green,
+              cursor: restoring ? "wait" : "pointer",
+              opacity: restoring ? 0.6 : 1,
+            }}
+          >
+            {restoring ? "Restoring..." : "Restore"}
           </button>
         </div>
       </div>

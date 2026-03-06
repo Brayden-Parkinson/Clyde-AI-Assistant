@@ -281,6 +281,14 @@ chrome.runtime.onMessage.addListener(
       updateStatus({ slackConnected: true, lastContentPing: new Date().toISOString() });
       sendResponse({ ok: true });
       return false;
+    } else if (message.type === "RESTORE_BACKUP") {
+      restoreFromBackup()
+        .then(() => {
+          updateBadge();
+          sendResponse({ ok: true });
+        })
+        .catch((err) => sendResponse({ ok: false, error: err instanceof Error ? err.message : String(err) }));
+      return true;
     } else if (message.type === "GRANOLA_STATUS") {
       isGranolaConnected()
         .then((connected) => sendResponse({ connected }))

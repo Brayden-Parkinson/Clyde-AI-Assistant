@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { OS } from "@shared/tokens";
 import { IconLogo, IconCheck } from "./Icons";
 import { USER_PROFILE_DEFAULTS } from "@shared/user-profile";
@@ -21,6 +21,24 @@ export function SetupWizard({ onComplete, onDismiss, demoMode }: SetupWizardProp
   const [timezone, setTimezone] = useState(USER_PROFILE_DEFAULTS.timezone);
   const [apiKey, setApiKey] = useState("");
   const [slackNames, setSlackNames] = useState("");
+  const [backupFound, setBackupFound] = useState(false);
+  const [restoringBackup, setRestoringBackup] = useState(false);
+  const [backupRestored, setBackupRestored] = useState(false);
+
+  // Auto-check for existing backups on mount
+  useEffect(() => {
+    if (demoMode) return;
+    chrome.runtime.sendMessage({ type: "RESTORE_BACKUP" }).then((res) => {
+      if (res?.ok) {
+        // Check if data was actually restored by looking at commitments count
+        // The restore merges data, so if it found a backup it would have added items
+        setBackupFound(true);
+        setBackupRestored(true);
+      }
+    }).catch(() => {
+      // Native host not installed — no backup available
+    });
+  }, [demoMode]);
 
   const stepIndex = STEPS.indexOf(step);
   const totalSteps = STEPS.length;
@@ -215,6 +233,21 @@ export function SetupWizard({ onComplete, onDismiss, demoMode }: SetupWizardProp
                 Clyde watches your Slack conversations and meeting notes, then surfaces commitments you've made so nothing falls through the cracks.
               </p>
             </div>
+            {backupRestored && (
+              <div style={{
+                padding: "10px 14px",
+                marginBottom: 16,
+                borderRadius: 8,
+                background: `${OS.green}10`,
+                border: `1px solid ${OS.green}40`,
+                fontSize: 13,
+                color: OS.green,
+                fontWeight: 600,
+                textAlign: "center",
+              }}>
+                Backup found and restored automatically
+              </div>
+            )}
             <button onClick={next} style={primaryBtnStyle}>
               Get Started
             </button>

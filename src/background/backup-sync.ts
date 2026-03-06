@@ -86,17 +86,28 @@ export async function restoreFromBackup(): Promise<void> {
     const extensionId = chrome.runtime.id;
     if (!extensionId) return;
 
-    const result = await sendNative({
+    let result = await sendNative({
       command: "load_state",
       extension_id: extensionId,
     });
+
+    // If no backup for this ID, try the most recent backup from any ID
+    let state = (result as unknown as Record<string, unknown>).state as BackupState | null;
+    if (result.ok && !state) {
+      await logStatus("info", "backup", "No backup for current ID — checking for latest backup");
+      result = await sendNative({ command: "load_latest_state" });
+      state = (result as unknown as Record<string, unknown>).state as BackupState | null;
+      if (state) {
+        const source = (result as unknown as Record<string, unknown>).source as string;
+        await logStatus("info", "backup", `Found backup from different extension ID: ${source}`);
+      }
+    }
 
     if (!result.ok) {
       await logStatus("warn", "backup", `Backup load failed: ${result.error}`);
       return;
     }
 
-    const state = (result as unknown as Record<string, unknown>).state as BackupState | null;
     if (!state) {
       await logStatus("info", "backup", "No backup found on disk — starting fresh");
       return;

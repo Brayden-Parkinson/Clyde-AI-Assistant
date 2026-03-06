@@ -413,6 +413,27 @@ def handle_load_state(extension_id: str) -> dict:
         return {"ok": False, "error": f"Failed to load state: {e}", "state": None}
 
 
+def handle_load_latest_state() -> dict:
+    """Find the most recent backup file regardless of extension ID."""
+    if not BACKUP_DIR.exists():
+        return {"ok": True, "state": None}
+
+    backups = sorted(
+        BACKUP_DIR.glob("backup-*.json"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    if not backups:
+        return {"ok": True, "state": None}
+
+    try:
+        with open(backups[0], "r", encoding="utf-8") as f:
+            state = json.load(f)
+        return {"ok": True, "state": state, "source": backups[0].name}
+    except (json.JSONDecodeError, IOError) as e:
+        return {"ok": False, "error": f"Failed to load latest state: {e}", "state": None}
+
+
 def main():
     """Read one command from stdin, process it, write response, exit."""
     try:
@@ -439,6 +460,8 @@ def main():
             result = handle_load_state(
                 extension_id=msg.get("extension_id", ""),
             )
+        elif command == "load_latest_state":
+            result = handle_load_latest_state()
         elif command == "read_inbox":
             result = handle_read_inbox()
         elif command == "clear_inbox":
