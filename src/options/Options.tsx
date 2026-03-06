@@ -477,7 +477,7 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
             <div style={labelStyle}>Slack Display Name(s)</div>
             <div style={subLabel}>
               Comma-separated. Used to identify your messages.
-              Falls back to auto-detection if empty.
+              Falls back to your profile name if empty.
             </div>
           </div>
           <input

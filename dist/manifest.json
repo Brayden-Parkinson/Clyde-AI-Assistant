@@ -24,7 +24,7 @@
   "content_scripts": [
     {
       "js": [
-        "assets/slack.ts-BXftKyNA.js"
+        "assets/slack.ts-BOfcwwov.js"
       ],
       "matches": [
         "https://app.slack.com/*",
@@ -71,7 +71,7 @@
         "https://app.slack.com/*"
       ],
       "resources": [
-        "assets/slack.ts-BXftKyNA.js"
+        "assets/slack.ts-BOfcwwov.js"
       ],
       "use_dynamic_url": false
     },

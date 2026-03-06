@@ -390,12 +390,21 @@ async function init(): Promise<void> {
     console.warn("[CommitmentTracker] Could not notify background");
   });
 
-  // Read display names from storage first
+  // Read display names from storage first, fall back to full name from profile
   try {
-    const result = await chrome.storage.local.get("slackDisplayNames");
+    const result = await chrome.storage.local.get(["slackDisplayNames", "userName"]);
     const raw = result.slackDisplayNames;
     if (typeof raw === "string" && raw.trim()) {
       MY_DISPLAY_NAMES = raw.split(",").map((n: string) => n.trim()).filter(Boolean);
+    } else if (typeof result.userName === "string" && result.userName.trim()) {
+      // Use profile name as fallback (also add first name for matching)
+      const fullName = result.userName.trim();
+      MY_DISPLAY_NAMES = [fullName];
+      const firstName = fullName.split(" ")[0];
+      if (firstName && firstName !== fullName) {
+        MY_DISPLAY_NAMES.push(firstName);
+      }
+      console.log(`[CommitmentTracker] Using profile name as display name: ${MY_DISPLAY_NAMES.join(", ")}`);
     }
   } catch {
     // Storage read failed, fall through to detection
