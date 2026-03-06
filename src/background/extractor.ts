@@ -1,9 +1,9 @@
 import { db, getDismissalPatterns, getNewCommitmentCount, getActiveCommitments } from "@shared/db";
-import { CLAUDE_MODEL, MAX_DISMISSAL_PATTERNS, API_TIMEOUT_MS, API_MAX_RETRIES, API_RETRY_DELAY_MS } from "@shared/constants";
+import { CLAUDE_MODEL, CLAUDE_MODEL_FAST, MAX_DISMISSAL_PATTERNS, API_TIMEOUT_MS, API_MAX_RETRIES, API_RETRY_DELAY_MS } from "@shared/constants";
 import type { SourceType, ExtractionResponse, ExtractedCommitment, RejectedCandidate, SlackMessagePayload, DecisionLogEntry, ConversationMessage, SlackWatermarks } from "@shared/types";
 import { logStatus, updateStatus, getStatus } from "@shared/status";
 import { getUserProfile } from "@shared/user-profile";
-import { computeHash, isDuplicate } from "./dedup";
+import { computeHash, isDuplicate, isFuzzyDuplicate } from "./dedup";
 import { requestBackupSave } from "./backup-sync";
 
 type BufferedMessage = SlackMessagePayload["messages"][number];
@@ -29,7 +29,7 @@ async function isDevModeEnabled(): Promise<boolean> {
   return result.developerMode === true;
 }
 
-async function buildSystemPrompt(): Promise<string> {
+async function buildSystemPrompt(sourceType: SourceType = "slack"): Promise<string> {
   const dismissalBlock = await buildDismissalBlock();
   const devMode = await isDevModeEnabled();
   const profile = await getUserProfile();
@@ -45,11 +45,41 @@ In addition to the "commitments" array, also return a "rejections" array listing
 - "sender": who sent it
 - "channel": which channel
 - "reason": a brief, plain-English explanation of why it's not a commitment (e.g. "Delegation to someone else, not ${userName}'s commitment", "Past tense — already done", "Hedging/uncertain — 'I'll try'")
-- "category": one of "not_commitment", "third_party", "hedging", "past_tense", "delegation", "politeness", "low_confidence", "acknowledgment"
+- "category": one of "not_commitment", "third_party", "hedging", "past_tense", "delegation", "politeness", "low_confidence", "acknowledgment", "stale_document"
 
 Only include messages that matched commitment-like patterns but were ruled out. Don't include completely irrelevant context messages.` : "";
 
-  return `You are analyzing Slack messages for ${userName}${userTitle}${userCompany}.
+  const gdocBlock = sourceType === "gdoc" ? `
+
+GOOGLE DOCS SOURCE — SPECIAL RULES:
+This content comes from a Google Doc, not a live Slack conversation. Apply these extra rules:
+
+RECENCY IS CRITICAL:
+- The current time is provided below. Use it to judge whether content is recent.
+- Prefer commitments from content that references dates within the last ~2 weeks.
+- If a section references dates, deadlines, or meetings clearly older than 2 weeks, do NOT extract commitments from it — these are likely stale.
+- If no dates are present, use contextual clues: "next week", "tomorrow", "this sprint" suggest recency. "Last quarter", "back in January" (if months ago), etc. suggest staleness.
+
+HIGHER CONFIDENCE THRESHOLD:
+- Only return items with confidence >= 0.75 (instead of the usual 0.6).
+- Documents often contain old action items that were never cleaned up. Be skeptical of undated action items in document body text.
+
+HIGH CONFIDENCE SIGNALS (boost to 0.85+):
+- Explicit "Action item:" or "TODO:" labels with recent dates
+- Comments/replies (these are usually recent and active discussions)
+- Text near the top of a document titled like meeting notes with a recent date
+- Items explicitly mentioning ${userName} by name with future deadlines
+
+LOW CONFIDENCE / SKIP:
+- Undated action items buried in long document body text
+- Items in sections with old dates (more than 2 weeks ago)
+- Generic "we should..." or "we need to..." without clear ownership
+- Historical notes about what was discussed or decided (not action items)
+` : "";
+
+  const sourceLabel = sourceType === "gdoc" ? "Google Docs content" : "Slack messages";
+
+  return `You are analyzing ${sourceLabel} for ${userName}${userTitle}${userCompany}.${gdocBlock}
 
 TASK: Extract commitments — things ${userName} agreed to do, or that were assigned to them by someone else.
 
@@ -98,6 +128,14 @@ Confidence scoring:
 
 Only return items with confidence >= 0.6.
 
+SENSITIVITY TAGGING:
+For each commitment, also return a "sensitive" boolean field (true/false). Mark as sensitive=true if the content involves:
+- HR matters (performance reviews, complaints, hiring/firing, compensation)
+- Personal/interpersonal issues (conflicts, personal favors, health, family)
+- Confidential business info (unreleased financials, M&A, legal issues)
+- Private 1:1 matters that would be embarrassing or inappropriate if seen on a shared screen
+When in doubt, lean towards marking as sensitive. Most routine work tasks should be sensitive=false.
+
 CONTEXT SUMMARY:
 For each commitment, also return a "context_summary" field: 1-3 sentences summarizing the conversation that led to the commitment. Focus on: what was being discussed, who was involved, and why the commitment arose. If there's not enough surrounding context, set it to null.
 
@@ -108,12 +146,12 @@ Messages:
 [ME] [[User] in #engineering at 9:00 AM]: I'll send over the API spec after lunch
 [Sarah in #engineering at 2:00 PM]: @[User] did you get a chance to send that spec?
 [ME] [[User] in #engineering at 2:05 PM]: Just sent it! [reactions: ✅]
-Output: {"commitments":[{"text":"Send API spec to Sarah","original_quote":"I'll send over the API spec after lunch","deadline":null,"urgency":"low","context":"#engineering","source_type":"slack","confidence":0.85,"direction":"by_me","likely_completed":true,"completion_signal":"Just sent it!","message_timestamp":"9:00 AM","context_summary":"Sarah asked about the API spec. [User] committed to sending it after lunch and followed up later confirming it was sent.","triggered":false}]}
+Output: {"commitments":[{"text":"Send API spec to Sarah","original_quote":"I'll send over the API spec after lunch","deadline":null,"urgency":"low","context":"#engineering","source_type":"slack","confidence":0.85,"direction":"by_me","likely_completed":true,"completion_signal":"Just sent it!","message_timestamp":"9:00 AM","context_summary":"Sarah asked about the API spec. [User] committed to sending it after lunch and followed up later confirming it was sent.","triggered":false,"sensitive":false}]}
 
 Example 2 — Valid assignment:
 Messages:
 [Sarah in #engineering at 10:00 AM]: @[User] can you review the PRD for the new dashboard? Need it by Friday
-Output: {"commitments":[{"text":"Review PRD for new dashboard","original_quote":"@[User] can you review the PRD for the new dashboard? Need it by Friday","deadline":"<next Friday ISO>","urgency":"medium","context":"#engineering","source_type":"slack","confidence":0.9,"direction":"assigned_to_me","likely_completed":false,"completion_signal":null,"message_timestamp":"10:00 AM","context_summary":"Sarah asked [User] to review the PRD for the new dashboard feature, with a Friday deadline.","triggered":false}]}
+Output: {"commitments":[{"text":"Review PRD for new dashboard","original_quote":"@[User] can you review the PRD for the new dashboard? Need it by Friday","deadline":"<next Friday ISO>","urgency":"medium","context":"#engineering","source_type":"slack","confidence":0.9,"direction":"assigned_to_me","likely_completed":false,"completion_signal":null,"message_timestamp":"10:00 AM","context_summary":"Sarah asked [User] to review the PRD for the new dashboard feature, with a Friday deadline.","triggered":false,"sensitive":false}]}
 
 Example 3 — Empty result (delegation + hedging):
 Messages:
@@ -247,7 +285,7 @@ export async function callClaude(
 
   const response = await fetchClaudeWithRetry(apiKey, {
     model: CLAUDE_MODEL,
-    max_tokens: 4096,
+    max_tokens: 2048,
     system,
     messages: [{ role: "user", content: userMessage }],
   });
@@ -367,7 +405,7 @@ export async function extractCommitments(
     await updateStatus({ hasApiKey: true });
 
     const devMode = await isDevModeEnabled();
-    const system = await buildSystemPrompt();
+    const system = await buildSystemPrompt(sourceType);
     const userMessage = buildUserMessage(candidates, contextMessages);
     const result = await callClaude(system, userMessage);
 
@@ -376,10 +414,20 @@ export async function extractCommitments(
     let dupeCount = 0;
     let invalidCount = 0;
 
+    // For Google Docs, enforce a higher confidence floor (0.75)
+    const confidenceFloor = sourceType === "gdoc" ? 0.75 : 0.6;
+
     for (const commitment of result.commitments) {
       if (!isValidCommitment(commitment)) {
         invalidCount++;
         await logStatus("warn", "extractor", `Skipping invalid commitment: "${commitment.text?.slice(0, 50)}..."`);
+        continue;
+      }
+
+      // Apply source-specific confidence floor
+      if (commitment.confidence < confidenceFloor) {
+        invalidCount++;
+        await logStatus("info", "extractor", `Below ${sourceType} confidence floor (${commitment.confidence.toFixed(2)} < ${confidenceFloor}): "${commitment.text.slice(0, 50)}..."`);
         continue;
       }
 
@@ -391,6 +439,13 @@ export async function extractCommitments(
 
       if (await isDuplicate(hash)) {
         dupeCount++;
+        continue;
+      }
+
+      // Fuzzy dedup: catch near-identical commitments that differ only in minor wording
+      if (await isFuzzyDuplicate(commitment.text, commitment.original_quote, commitment.context)) {
+        dupeCount++;
+        await logStatus("info", "extractor", `Fuzzy duplicate skipped: "${commitment.text.slice(0, 50)}..."`);
         continue;
       }
 
@@ -418,6 +473,7 @@ export async function extractCommitments(
         conversation_messages: conversationMessages,
         slack_link: slackLink,
         triggered: isTriggered,
+        sensitive: commitment.sensitive === true,
         createdAt: new Date().toISOString(),
       });
 
@@ -586,6 +642,7 @@ export async function extractCommitments(
 async function callClaudeRaw(
   system: string,
   userMessage: string,
+  useFastModel = false,
 ): Promise<unknown> {
   const result = await chrome.storage.local.get("anthropicApiKey");
   const apiKey = result.anthropicApiKey as string | undefined;
@@ -593,9 +650,10 @@ async function callClaudeRaw(
     throw new Error("No API key configured");
   }
 
+  const model = useFastModel ? CLAUDE_MODEL_FAST : CLAUDE_MODEL;
   const response = await fetchClaudeWithRetry(apiKey, {
-    model: CLAUDE_MODEL,
-    max_tokens: 2048,
+    model,
+    max_tokens: 1024,
     system,
     messages: [{ role: "user", content: userMessage }],
   });
@@ -667,8 +725,13 @@ For each open commitment, check if any recent message indicates it was fulfilled
 - Implied completion: Context indicating the task was done
 - Conversational signals: "Done", "Handled", "Taken care of", "Just sent that", "Already did this"
 
-Be conservative — only flag completions you're fairly confident about.
-False positives (marking something done that isn't) are worse than false negatives (missing a completion).
+Confidence scoring:
+- 0.9+: Unambiguous proof of completion (explicit "done", "sent it", past-tense confirmation). These will be auto-marked done.
+- 0.7-0.9: Strong evidence but some ambiguity. User will be prompted to confirm.
+- 0.5-0.7: Possible completion signal worth asking about. User will be prompted.
+- Below 0.5: Do NOT include.
+
+Include anything >= 0.5. Be honest with confidence scores — the system handles each tier differently.
 
 Return ONLY valid JSON (no markdown fences):
 { "completions": [ { "commitment_id": 123, "confidence": 0.85, "evidence": "brief description of evidence", "source_message": "exact message text that triggered this" } ] }
@@ -678,6 +741,7 @@ If no completions detected, return: { "completions": [] }`;
     const raw = await callClaudeRaw(
       systemPrompt,
       "Check the messages above against the open commitments.",
+      true, // use fast model — this is simple pattern matching
     );
 
     const parsed = raw as { completions?: CompletionResult[] };
@@ -689,8 +753,41 @@ If no completions detected, return: { "completions": [] }`;
 
     let suggestedCount = 0;
 
+    let autoCompletedCount = 0;
+
     for (const completion of completions) {
-      if (completion.confidence < 0.7) continue;
+      if (completion.confidence < 0.5) continue;
+
+      const commitment = capped.find((c) => c.id === completion.commitment_id);
+
+      // High confidence (>= 0.9): auto-mark done without prompting
+      if (completion.confidence >= 0.9) {
+        await db.commitments.update(completion.commitment_id, { status: "done" });
+        await db.action_log.add({
+          commitmentId: completion.commitment_id,
+          action: "done",
+          createdAt: new Date().toISOString(),
+        });
+        autoCompletedCount++;
+        await logStatus(
+          "success",
+          "extractor",
+          `Auto-completed (${Math.round(completion.confidence * 100)}%): "${commitment?.text.slice(0, 40) ?? "?"}..."`,
+        );
+        chrome.notifications.create(
+          `auto-done-${completion.commitment_id}-${Date.now()}`,
+          {
+            type: "basic",
+            iconUrl: chrome.runtime.getURL("assets/icon-128.png"),
+            title: "Auto-completed",
+            message: `Marked done: ${commitment?.text ?? "a commitment"}`,
+            priority: 1,
+          },
+        );
+        continue;
+      }
+
+      // Medium confidence (0.5–0.9): create a suggestion for the user to confirm
 
       // Check if dismissed too many times
       const dismissed = await db.dismissed_completions.get(completion.commitment_id);
@@ -717,7 +814,6 @@ If no completions detected, return: { "completions": [] }`;
       suggestedCount++;
 
       // Fire Chrome notification
-      const commitment = capped.find((c) => c.id === completion.commitment_id);
       chrome.notifications.create(
         `completion-${completion.commitment_id}-${Date.now()}`,
         {
@@ -730,10 +826,13 @@ If no completions detected, return: { "completions": [] }`;
       );
     }
 
+    const parts = [];
+    if (autoCompletedCount > 0) parts.push(`${autoCompletedCount} auto-done`);
+    if (suggestedCount > 0) parts.push(`${suggestedCount} suggestions`);
     await logStatus(
-      suggestedCount > 0 ? "success" : "info",
+      (autoCompletedCount + suggestedCount) > 0 ? "success" : "info",
       "extractor",
-      `Completion detection: ${suggestedCount} suggestions from ${completions.length} results`,
+      `Completion detection: ${parts.length > 0 ? parts.join(", ") : "none"} from ${completions.length} results`,
     );
   } catch (err) {
     await logStatus(

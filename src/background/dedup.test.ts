@@ -40,4 +40,28 @@ describe("computeHash", () => {
     const hash = await computeHash("I'll send the 📊 report", "slack", "#team-日本語");
     expect(hash).toMatch(/^[0-9a-f]{64}$/);
   });
+
+  it("normalizes # prefix in context — '#engineering' matches 'engineering'", async () => {
+    const hash1 = await computeHash("I'll send the report", "slack", "#engineering");
+    const hash2 = await computeHash("I'll send the report", "slack", "engineering");
+    expect(hash1).toBe(hash2);
+  });
+
+  it("normalizes extra whitespace in original_quote", async () => {
+    const hash1 = await computeHash("I'll  send  the report", "slack", "engineering");
+    const hash2 = await computeHash("I'll send the report", "slack", "engineering");
+    expect(hash1).toBe(hash2);
+  });
+
+  it("normalizes trailing punctuation", async () => {
+    const hash1 = await computeHash("I'll send the report.", "slack", "engineering");
+    const hash2 = await computeHash("I'll send the report", "slack", "engineering");
+    expect(hash1).toBe(hash2);
+  });
+
+  it("normalizes case differences", async () => {
+    const hash1 = await computeHash("I'll Send The Report", "slack", "Engineering");
+    const hash2 = await computeHash("i'll send the report", "slack", "engineering");
+    expect(hash1).toBe(hash2);
+  });
 });

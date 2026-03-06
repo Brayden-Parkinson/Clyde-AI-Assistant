@@ -1,6 +1,6 @@
 import { db } from "@shared/db";
-import { CLAUDE_MODEL, API_TIMEOUT_MS, API_MAX_RETRIES, API_RETRY_DELAY_MS } from "@shared/constants";
-import type { MorningBrief, BriefPriority, BriefSuggestedMove, BriefHeadsUpItem } from "@shared/types";
+import { CLAUDE_MODEL_FAST, API_TIMEOUT_MS, API_MAX_RETRIES, API_RETRY_DELAY_MS } from "@shared/constants";
+import type { MorningBrief, BriefPriority, BriefSuggestedMove } from "@shared/types";
 import { logStatus } from "@shared/status";
 import { getUserProfile } from "@shared/user-profile";
 
@@ -89,6 +89,37 @@ async function fetchCalendarEvents(): Promise<CalendarEvent[]> {
   }
 }
 
+// ─── Kanban Board State ───
+
+interface BoardContext {
+  /** Map from column label (e.g. "Do Next", "On Hold") to commitment IDs */
+  columnAssignments: Map<string, number[]>;
+  /** Map from column ID to label */
+  columnLabels: Map<string, string>;
+}
+
+async function getBoardContext(): Promise<BoardContext> {
+  const columns = await db.kanban_columns.orderBy("position").toArray();
+  const assignments = await db.kanban_assignments.toArray();
+
+  const columnLabels = new Map<string, string>();
+  for (const col of columns) {
+    columnLabels.set(col.id, col.label);
+  }
+
+  const columnAssignments = new Map<string, number[]>();
+  for (const col of columns) {
+    const ids = assignments
+      .filter(a => a.column_id === col.id)
+      .map(a => a.commitment_id);
+    if (ids.length > 0) {
+      columnAssignments.set(col.label, ids);
+    }
+  }
+
+  return { columnAssignments, columnLabels };
+}
+
 // ─── Claude API Call ───
 
 async function callClaudeForBrief(prompt: string): Promise<unknown> {
@@ -108,7 +139,7 @@ async function callClaudeForBrief(prompt: string): Promise<unknown> {
           "anthropic-dangerous-direct-browser-access": "true",
         },
         body: JSON.stringify({
-          model: CLAUDE_MODEL,
+          model: CLAUDE_MODEL_FAST,
           max_tokens: 2048,
           messages: [{ role: "user", content: prompt }],
         }),
@@ -190,8 +221,11 @@ export async function generateMorningBrief(force = false): Promise<void> {
       .anyOf("new", "snoozed", "actioned")
       .toArray();
 
-    // Fetch calendar events
-    const calendarEvents = await fetchCalendarEvents();
+    // Fetch calendar events and board context
+    const [calendarEvents, boardContext] = await Promise.all([
+      fetchCalendarEvents(),
+      getBoardContext(),
+    ]);
 
     const now = new Date();
     const dateStr = now.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
@@ -201,9 +235,42 @@ export async function generateMorningBrief(force = false): Promise<void> {
       ? calendarEvents.map(e => `- ${e.start}${e.end !== e.start && e.end !== "All day" ? ` – ${e.end}` : ""}: ${e.title}`).join("\n")
       : "No calendar events found (or no calendar connected)";
 
-    const commitmentsSection = openCommitments.length > 0
-      ? openCommitments.map(c => `[ID:${c.id}] [${c.urgency}] ${c.text} (${c.context}, ${c.direction === "by_me" ? "I owe this" : "assigned to me"}${c.deadline ? `, due ${c.deadline.slice(0, 10)}` : ""})`).join("\n")
-      : "No open commitments";
+    // Build board context string
+    const assignedIds = new Set<number>();
+    const boardLines: string[] = [];
+    for (const [label, ids] of boardContext.columnAssignments) {
+      for (const id of ids) assignedIds.add(id);
+      const items = ids
+        .map(id => openCommitments.find(c => c.id === id))
+        .filter(Boolean)
+        .map(c => `  - [ID:${c!.id}] ${c!.text}`);
+      if (items.length > 0) {
+        boardLines.push(`Column "${label}":\n${items.join("\n")}`);
+      }
+    }
+
+    // Items in "actioned" status but not in a custom column are "In Progress"
+    const inProgressItems = openCommitments
+      .filter(c => c.status === "actioned" && c.id != null && !assignedIds.has(c.id!))
+      .map(c => `  - [ID:${c.id}] ${c.text}`);
+    if (inProgressItems.length > 0) {
+      boardLines.push(`Column "In Progress":\n${inProgressItems.join("\n")}`);
+    }
+
+    // Remaining items in Todo
+    const todoItems = openCommitments
+      .filter(c => (c.status === "new" || c.status === "snoozed") && c.id != null && !assignedIds.has(c.id!))
+      .map(c => `  - [ID:${c.id}] [${c.urgency}] ${c.text} (${c.context}, ${c.direction === "by_me" ? "I owe this" : "assigned to me"}${c.deadline ? `, due ${c.deadline.slice(0, 10)}` : ""})`)
+    if (todoItems.length > 0) {
+      boardLines.push(`Column "Todo":\n${todoItems.join("\n")}`);
+    }
+
+    const boardSection = boardLines.length > 0
+      ? boardLines.join("\n\n")
+      : "No commitments on the board";
+
+    // Available column names for suggested moves
+    const columnNames = [...boardContext.columnLabels.values()];
 
     const profile = await getUserProfile();
     const briefUserName = profile.userName || "the user";
@@ -215,23 +282,27 @@ export async function generateMorningBrief(force = false): Promise<void> {
 Here is ${briefUserName}'s calendar for today:
 ${calendarSection}
 
-Here are their open commitments:
-${commitmentsSection}
+Here is their Kanban board — the column a commitment is in reflects the user's own prioritization:
+${boardSection}
 
-Generate a morning brief that:
+IMPORTANT CONTEXT ABOUT COLUMNS:
+- Items in "In Progress" or columns like "Do Next" are what the user considers active work — prioritize these.
+- Items in columns like "On Hold" or "Backlog" should NOT be priorities unless they have an imminent deadline.
+- Items in "Todo" are unsorted — use deadlines, urgency, and meeting alignment to decide if they should be priorities.
+- The column placement is a strong signal of user intent. Respect it.
 
-1. PRIORITIES: List the top 3-5 things to focus on today, considering both calendar commitments and open tasks. Prioritize by:
-   - Overdue items (highest priority)
-   - Items with today's deadline
+Generate a morning brief:
+
+1. PRIORITIES: List the top 3-5 things to focus on today. Prioritize by:
+   - Items the user placed in active columns ("In Progress", "Do Next", etc.) — these are already prioritized by the user
+   - Overdue items or items due today (regardless of column)
    - Items that align with today's meetings (prep or follow-up)
-   - Items that have been open the longest
+   - Do NOT prioritize items in "On Hold" type columns unless they have a deadline today
 
-2. SUGGESTED SCHEDULE: Look at gaps between calendar events and suggest when to tackle specific commitments.
+2. SUGGESTED SCHEDULE: If calendar events exist, suggest when to work on specific commitments in the gaps. If no calendar, give a brief 1-2 sentence plan for the day.
 
-3. HEADS UP: Flag anything concerning:
-   - Commitments that are 3+ days old with no action
-   - Multiple commitments related to the same person/meeting today
-   - Anything that might need prep before a meeting
+3. SUGGESTED MOVES: If any commitments seem misplaced based on deadlines or meeting alignment, suggest moving them. Use the actual column names from the board.
+   Available columns: ${columnNames.length > 0 ? columnNames.join(", ") : "In Progress"}, Todo, Done
 
 Return ONLY valid JSON (no markdown fences):
 {
@@ -240,22 +311,17 @@ Return ONLY valid JSON (no markdown fences):
     {
       "commitment_id": 123,
       "text": "Brief description",
-      "reason": "Why this is a priority today",
+      "reason": "Why this is a priority today (reference column placement, deadline, or meeting)",
       "suggested_time": "Between 10-11:30 AM or null",
-      "action": "calendar"
+      "action": "calendar or do or delegate or prep"
     }
   ],
-  "schedule_suggestion": "A 2-3 sentence natural language summary of how to structure the day",
-  "heads_up": ["The QA team expectations talk has been open for 5 days"],
-  "heads_up_typed": [
-    { "text": "The QA team expectations talk has been open for 5 days", "severity": "warning" },
-    { "text": "You have 2 commitments related to the design review meeting", "severity": "info" }
-  ],
+  "schedule_suggestion": "A 2-3 sentence summary of how to structure the day",
   "suggested_moves": [
     {
       "commitment_id": 456,
-      "from": "todo",
-      "to": "do_next",
+      "from": "Todo",
+      "to": "In Progress",
       "reason": "Aligns with your 2pm meeting"
     }
   ]
@@ -265,8 +331,6 @@ Return ONLY valid JSON (no markdown fences):
       greeting: string;
       priorities: Array<{ commitment_id: number; text: string; reason: string; suggested_time: string | null; action: string }>;
       schedule_suggestion: string;
-      heads_up: string[];
-      heads_up_typed?: Array<{ text: string; severity: string }>;
       suggested_moves: Array<{ commitment_id: number; from: string; to: string; reason: string }>;
     };
 
@@ -285,25 +349,16 @@ Return ONLY valid JSON (no markdown fences):
       reason: m.reason,
     }));
 
-    const validSeverities = ["warning", "info", "due_soon", "duplicate"] as const;
-    const headsUpTyped: BriefHeadsUpItem[] = (rawResponse.heads_up_typed ?? []).map(h => ({
-      text: h.text,
-      severity: (validSeverities as readonly string[]).includes(h.severity)
-        ? h.severity as BriefHeadsUpItem["severity"]
-        : "info",
-    }));
-
     const brief: MorningBrief = {
       date: today,
       greeting: rawResponse.greeting ?? dateStr,
       priorities,
       scheduleSuggestion: rawResponse.schedule_suggestion ?? "",
-      headsUp: rawResponse.heads_up ?? [],
-      headsUpTyped: headsUpTyped.length > 0 ? headsUpTyped : undefined,
-      calendarEvents: calendarEvents.length > 0 ? calendarEvents : undefined,
+      headsUp: [],
       suggestedMoves,
       dismissed: false,
       snoozedUntil: null,
+      calendarEvents: calendarEvents.length > 0 ? calendarEvents : undefined,
       createdAt: new Date().toISOString(),
     };
 

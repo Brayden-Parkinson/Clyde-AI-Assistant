@@ -486,37 +486,35 @@ With the pre-filter regex, most messages never hit Claude:
 
 ## Build Phases
 
-### Phase 1 — MVP (this weekend)
+### Phase 1 — MVP ✅ DONE
 
-Get the core loop working end-to-end:
+- [x] Scaffold project: Vite + CRXJS + React + TypeScript
+- [x] `manifest.json` with correct permissions and content script config
+- [x] Slack content script: MutationObserver, capture my messages, send to background
+- [x] Background service worker: receive messages, batch with debounce, pre-filter regex
+- [x] Claude extraction: build prompt, call API, parse JSON response
+- [x] IndexedDB storage layer with Dexie.js (commitments, dismissals, settings tables)
+- [x] Deduplication via SHA256 hash of original_quote + source
+- [x] Popup UI: the full triage inbox with OpenSpace branding (the React app we designed)
+- [x] Action: "Not a commitment" dismiss flow that saves to dismissals table
+- [x] Action: "Calendar event" that opens pre-filled Google Calendar URL
+- [x] Action: "Already done" that marks complete
+- [x] Badge count on extension icon
+- [x] Options page with Anthropic API key input
+- [x] Basic chrome.notifications for high-urgency items
 
-- [ ] Scaffold project: Vite + CRXJS + React + TypeScript
-- [ ] `manifest.json` with correct permissions and content script config
-- [ ] Slack content script: MutationObserver, capture my messages, send to background
-- [ ] Background service worker: receive messages, batch with debounce, pre-filter regex
-- [ ] Claude extraction: build prompt, call API, parse JSON response
-- [ ] IndexedDB storage layer with Dexie.js (commitments, dismissals, settings tables)
-- [ ] Deduplication via SHA256 hash of original_quote + source
-- [ ] Popup UI: the full triage inbox with OpenSpace branding (the React app we designed)
-- [ ] Action: "Not a commitment" dismiss flow that saves to dismissals table
-- [ ] Action: "Calendar event" that opens pre-filled Google Calendar URL
-- [ ] Action: "Already done" that marks complete
-- [ ] Badge count on extension icon
-- [ ] Options page with Anthropic API key input
-- [ ] Basic chrome.notifications for high-urgency items
+### Phase 2 — Daily Driver ✅ DONE
 
-### Phase 2 — Daily Driver (next week)
-
-- [ ] Granola API poller in background service worker
-- [ ] Dynamic dismissal patterns injected into Claude prompt
-- [ ] Side panel mode (persistent, alongside Slack)
-- [ ] Snooze functionality with chrome.alarms
-- [ ] "Set reminder" action with time picker
-- [ ] "Slack message" action that opens the relevant channel
-- [ ] Morning digest notification at 8 AM
-- [ ] Options page: all settings (scan frequency, confidence threshold, digest time)
-- [ ] Auto-cleanup of old data (7-day raw messages, 30-day completed)
-- [ ] Cost tracking in options page
+- [x] Granola API poller in background service worker (full OAuth + MCP integration)
+- [x] Dynamic dismissal patterns injected into Claude prompt
+- [x] Side panel mode (persistent, alongside Slack)
+- [x] Snooze functionality with chrome.alarms
+- [x] "Set reminder" action with time picker
+- [x] "Slack message" action that opens the relevant channel
+- [x] Morning digest notification at 8 AM
+- [x] Options page: all settings (scan frequency, confidence threshold, digest time)
+- [x] Auto-cleanup of old data (7-day raw messages, 30-day completed)
+- [x] Cost tracking in options page
 
 ### Phase 3 — Power Features (future)
 
@@ -526,5 +524,5 @@ Get the core loop working end-to-end:
 - [ ] Auto-tuning confidence threshold based on dismiss rate
 - [ ] Keyboard shortcut (Cmd+Shift+C) to open triage
 - [ ] Slack thread context awareness (read surrounding messages for better extraction)
-- [ ] Export commitments as markdown
+- [ ] Export commitments as markdown (JSON export exists, markdown not yet)
 - [ ] Manual input: quick-add box to type a commitment directly

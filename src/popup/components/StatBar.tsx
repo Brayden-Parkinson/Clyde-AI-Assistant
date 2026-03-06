@@ -7,9 +7,9 @@ interface StatBarProps {
 
 export function StatBar({ stats }: StatBarProps) {
   const items = [
-    { label: "Actioned", value: String(stats.actioned), color: "#16a34a" },
-    { label: "Dismissed", value: String(stats.dismissed), color: "#dc2626" },
-    { label: "Last scan", value: "3m ago", color: OS.textMuted },
+    { label: "Actioned", value: String(stats.actioned), color: OS.green },
+    { label: "Dismissed", value: String(stats.dismissed), color: OS.red },
+    { label: "Last scan", value: "3m ago", color: OS.muted },
   ];
 
   return (
@@ -20,7 +20,7 @@ export function StatBar({ stats }: StatBarProps) {
           style={{ display: "flex", alignItems: "center", gap: 6 }}
         >
           <span
-            style={{ fontSize: 11, color: OS.textMuted, fontFamily: OS.font }}
+            style={{ fontSize: 11, color: OS.muted, fontFamily: OS.font }}
           >
             {s.label}
           </span>

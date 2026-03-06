@@ -4,11 +4,14 @@ import type { Commitment } from "@shared/types";
 
 export interface Actions {
   handleDismiss: (id: number) => Promise<string>;
+  handleClose: (id: number) => Promise<string>;
   handleDone: (id: number) => Promise<string>;
   handleSnooze: (id: number) => Promise<string>;
   handleCalendar: (commitment: Commitment) => Promise<string>;
   handleSlack: (commitment: Commitment) => Promise<string>;
   handleReminder: (id: number, minutes: number) => Promise<string>;
+  handleStartWorking: (id: number) => Promise<string>;
+  handleReopen: (id: number) => Promise<string>;
 }
 
 function formatCalendarDate(date: Date): string {
@@ -47,6 +50,16 @@ export function useActions(): Actions {
 
     const snippet = commitment.original_quote.slice(0, 35);
     return `Dismissed — learning from "${snippet}..."`;
+  }, []);
+
+  const handleClose = useCallback(async (id: number): Promise<string> => {
+    await db.commitments.update(id, { status: "dismissed" });
+    await db.action_log.add({
+      commitmentId: id,
+      action: "dismissed",
+      createdAt: new Date().toISOString(),
+    });
+    return "Closed";
   }, []);
 
   const handleDone = useCallback(async (id: number): Promise<string> => {
@@ -119,6 +132,7 @@ export function useActions(): Actions {
       window.open(url, "_blank");
 
       if (commitment.id != null) {
+        await db.commitments.update(commitment.id, { status: "actioned" });
         await db.action_log.add({
           commitmentId: commitment.id,
           action: "slack",
@@ -139,6 +153,7 @@ export function useActions(): Actions {
         });
       }
 
+      await db.commitments.update(id, { status: "actioned" });
       await db.action_log.add({
         commitmentId: id,
         action: "reminder",
@@ -150,12 +165,30 @@ export function useActions(): Actions {
     [],
   );
 
+  const handleStartWorking = useCallback(async (id: number): Promise<string> => {
+    await db.commitments.update(id, { status: "actioned" });
+    await db.action_log.add({
+      commitmentId: id,
+      action: "started",
+      createdAt: new Date().toISOString(),
+    });
+    return "Moved to In Progress";
+  }, []);
+
+  const handleReopen = useCallback(async (id: number): Promise<string> => {
+    await db.commitments.update(id, { status: "new" });
+    return "Moved back to Todo";
+  }, []);
+
   return {
     handleDismiss,
+    handleClose,
     handleDone,
     handleSnooze,
     handleCalendar,
     handleSlack,
     handleReminder,
+    handleStartWorking,
+    handleReopen,
   };
 }

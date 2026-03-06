@@ -5,7 +5,18 @@ export type Urgency = "high" | "medium" | "low";
 export type CommitmentStatus = "new" | "snoozed" | "actioned" | "done" | "dismissed";
 
 /** Where the commitment was captured from */
-export type SourceType = "meeting" | "slack";
+export type SourceType = "meeting" | "slack" | "gdoc" | "voice";
+
+/** Who owes the action */
+export type CommitmentDirection = "by_me" | "assigned_to_me";
+
+/** A single message from the conversation surrounding a commitment */
+export interface ConversationMessage {
+  sender: string;
+  text: string;
+  timestamp: string;
+  isMine: boolean;
+}
 
 /** A detected commitment stored in IndexedDB */
 export interface Commitment {
@@ -24,8 +35,26 @@ export interface Commitment {
   source_type: SourceType;
   confidence: number;
   status: CommitmentStatus;
+  /** Whether the user committed or was assigned */
+  direction: CommitmentDirection;
+  /** Claude thinks this commitment is already done */
+  likely_completed: boolean;
+  /** Quote from conversation indicating completion, null if none */
+  completion_signal: string | null;
+  /** ISO timestamp of the original source message */
+  message_timestamp: string;
   /** ISO timestamp when snoozed until (null if not snoozed) */
   snooze_until: string | null;
+  /** AI-generated summary of the conversation that led to this commitment */
+  context_summary: string | null;
+  /** Raw messages from the batch window surrounding the commitment */
+  conversation_messages: ConversationMessage[];
+  /** Permalink to the original Slack message */
+  slack_link: string | null;
+  /** Whether this was explicitly triggered by the "Clyde" keyword */
+  triggered: boolean;
+  /** Whether this commitment contains sensitive/personal content */
+  sensitive: boolean;
   /** ISO timestamp when created */
   createdAt: string;
 }
@@ -64,7 +93,7 @@ export interface Dismissal {
 export interface ActionLogEntry {
   id?: number;
   commitmentId: number;
-  action: "calendar" | "reminder" | "slack" | "snooze" | "done" | "dismissed";
+  action: "calendar" | "reminder" | "slack" | "snooze" | "done" | "dismissed" | "started";
   createdAt: string;
 }
 
@@ -84,6 +113,10 @@ export interface SlackMessagePayload {
     timestamp: string;
     isMine: boolean;
     mentionsMe: boolean;
+    reactions: string[];
+    channel_id: string | null;
+    message_ts: string | null;
+    slack_link: string | null;
   }>;
 }
 
@@ -96,9 +129,170 @@ export interface ExtractedCommitment {
   context: string;
   source_type: SourceType;
   confidence: number;
+  direction: CommitmentDirection;
+  likely_completed: boolean;
+  completion_signal: string | null;
+  message_timestamp: string;
+  context_summary: string | null;
+  triggered?: boolean;
+  sensitive?: boolean;
+}
+
+/** A candidate that Claude considered but rejected */
+export interface RejectedCandidate {
+  original_text: string;
+  sender: string;
+  channel: string;
+  reason: string;
+  category: "not_commitment" | "third_party" | "hedging" | "past_tense" | "delegation" | "politeness" | "low_confidence" | "acknowledgment";
 }
 
 /** Claude API response shape */
 export interface ExtractionResponse {
   commitments: ExtractedCommitment[];
+  rejections?: RejectedCandidate[];
+}
+
+/** A single transcript segment from Granola's cache */
+export interface TranscriptSegment {
+  text: string;
+  source: "microphone" | "system";
+  start?: string;
+}
+
+/** Rich transcript response from native host */
+export interface TranscriptResponse {
+  segments: TranscriptSegment[];
+  creator?: string;
+  attendees: string[];
+  transcript: string;
+}
+
+/** A meeting note retrieved from Granola via MCP */
+export interface MeetingNote {
+  id: string;
+  title: string;
+  date: string;
+  attendees: string[];
+  summary: string;
+  transcript?: string;
+  creator?: string;
+  has_transcript?: boolean;
+}
+
+/** A user-defined kanban column */
+export interface CustomColumn {
+  id: string;
+  label: string;
+  position: number;
+}
+
+/** Maps a commitment to a custom kanban column */
+export interface KanbanAssignment {
+  commitment_id: number;
+  column_id: string;
+}
+
+/** Per-channel Slack message watermarks for dedup across reloads */
+export type SlackWatermarks = { [channel: string]: { lastMessageTs: string } };
+
+/** Full backup state persisted to disk via native messaging */
+export interface BackupState {
+  version: 1;
+  lastSaved: string;
+  commitments: Commitment[];
+  dismissals: Dismissal[];
+  action_log: ActionLogEntry[];
+  settings_db: Settings[];
+  kanban_columns?: CustomColumn[];
+  kanban_assignments?: KanbanAssignment[];
+  briefs?: MorningBrief[];
+  chrome_storage: Record<string, unknown>;
+  watermarks: {
+    granolaProcessedNoteIds: string[];
+    granolaLastPoll: string | null;
+    granolaScannedThrough: string | null;
+    slackChannelWatermarks: SlackWatermarks;
+  };
+}
+
+/** A decision log entry stored in IndexedDB */
+export interface DecisionLogEntry {
+  id?: number;
+  /** "accepted" or "rejected" */
+  decision: "accepted" | "rejected";
+  /** The original message text */
+  original_text: string;
+  /** Who sent it */
+  sender: string;
+  /** Channel or meeting context */
+  channel: string;
+  /** For rejections: why it was excluded. For accepted: the extracted commitment text */
+  reason: string;
+  /** Category tag for rejections */
+  category: string;
+  /** Confidence if accepted, null if rejected */
+  confidence: number | null;
+  /** The extraction batch ID (groups decisions from same Claude call) */
+  batchId: string;
+  /** ISO timestamp */
+  createdAt: string;
+}
+
+/** A detected completion suggestion from the auto-detect pipeline */
+export interface CompletionSuggestion {
+  id?: number;
+  commitmentId: number;
+  confidence: number;
+  evidence: string;
+  sourceMessage: string;
+  status: "pending" | "accepted" | "dismissed";
+  createdAt: string;
+}
+
+/** Tracks how many times user dismissed a completion suggestion for a commitment */
+export interface DismissedCompletion {
+  commitmentId: number;
+  dismissCount: number;
+  lastDismissedAt: string;
+}
+
+/** A priority item inside a morning brief */
+export interface BriefPriority {
+  commitmentId: number;
+  text: string;
+  reason: string;
+  suggestedTime: string | null;
+  action: "calendar" | "do" | "delegate" | "prep";
+}
+
+/** A suggested kanban column move inside a morning brief */
+export interface BriefSuggestedMove {
+  commitmentId: number;
+  from: string;
+  to: string;
+  reason: string;
+}
+
+/** A typed heads-up alert inside a morning brief */
+export interface BriefHeadsUpItem {
+  text: string;
+  severity: "warning" | "info" | "due_soon" | "duplicate";
+}
+
+/** A generated morning brief stored in IndexedDB */
+export interface MorningBrief {
+  id?: number;
+  /** YYYY-MM-DD */
+  date: string;
+  greeting: string;
+  priorities: BriefPriority[];
+  scheduleSuggestion: string;
+  headsUp: string[];
+  headsUpTyped?: BriefHeadsUpItem[];
+  calendarEvents?: Array<{ title: string; start: string; end: string }>;
+  suggestedMoves: BriefSuggestedMove[];
+  dismissed: boolean;
+  snoozedUntil: string | null;
+  createdAt: string;
 }

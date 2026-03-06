@@ -5,7 +5,7 @@ import type { Commitment, Dismissal } from "@shared/types";
 export interface CommitmentsData {
   commitments: Commitment[];
   dismissalPatterns: Dismissal[];
-  counts: { all: number; high: number };
+  counts: { all: number; high: number; byMe: number; assignedToMe: number };
   stats: { actioned: number; dismissed: number };
   loading: boolean;
 }
@@ -62,6 +62,8 @@ export function useCommitments(): CommitmentsData {
     counts: {
       all: items.length,
       high: items.filter((c) => c.urgency === "high").length,
+      byMe: items.filter((c) => c.direction === "by_me").length,
+      assignedToMe: items.filter((c) => c.direction === "assigned_to_me").length,
     },
     stats: {
       actioned: actionedCount ?? 0,

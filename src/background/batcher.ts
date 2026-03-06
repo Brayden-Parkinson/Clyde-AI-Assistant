@@ -65,8 +65,9 @@ export async function addMessages(
 
   // Still store raw messages for audit trail
   for (const msg of filtered) {
+    const isGdoc = !msg.channel_id && msg.slack_link?.includes("docs.google.com");
     db.raw_messages.add({
-      source_type: "slack",
+      source_type: isGdoc ? "gdoc" : "slack",
       sourceId: `${msg.channel}-${msg.timestamp}`,
       text: msg.text,
       sender: msg.sender,
@@ -112,7 +113,10 @@ export async function flush(): Promise<void> {
     return;
   }
 
-  await extractCommitments(candidates, contextMessages, "slack");
+  // Determine source type: if any messages look like Google Docs, use "gdoc"
+  const hasGdoc = candidates.some((m) => !m.channel_id && m.slack_link?.includes("docs.google.com"));
+  const sourceType = hasGdoc ? "gdoc" as const : "slack" as const;
+  await extractCommitments(candidates, contextMessages, sourceType);
 
   // Run completion detection every other flush to save API costs
   const cycleResult = await chrome.storage.session.get("completionCheckCycle");

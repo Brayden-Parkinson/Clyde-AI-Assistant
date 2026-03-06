@@ -1,51 +1,59 @@
 import React from "react";
 import { OS } from "@shared/tokens";
 
-export type FilterKey = "all" | "high" | "meetings" | "slack" | "confident";
+export type FilterKey = "all" | "overdue" | "has_deadline" | "high" | "meetings" | "slack" | "gdoc";
 
 interface FilterBarProps {
   filter: FilterKey;
   setFilter: (key: FilterKey) => void;
-  counts: { all: number; high: number };
 }
 
-export function FilterBar({ filter, setFilter, counts }: FilterBarProps) {
-  const filters: Array<{ key: FilterKey; label: string }> = [
-    { key: "all", label: `All (${counts.all})` },
-    { key: "high", label: `Urgent (${counts.high})` },
-    { key: "meetings", label: "Meetings" },
-    { key: "slack", label: "Slack" },
-    { key: "confident", label: "High confidence" },
-  ];
+const filters: Array<{ key: FilterKey; label: string }> = [
+  { key: "all", label: "All" },
+  { key: "overdue", label: "Overdue" },
+  { key: "has_deadline", label: "Has deadline" },
+  { key: "high", label: "High priority" },
+  { key: "meetings", label: "Meetings" },
+  { key: "slack", label: "Slack" },
+  { key: "gdoc", label: "Google Docs" },
+];
 
+export function FilterBar({ filter, setFilter }: FilterBarProps) {
   return (
-    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-      {filters.map((f) => {
-        const active = filter === f.key;
-        return (
-          <button
-            key={f.key}
-            onClick={() => setFilter(f.key)}
-            style={{
-              padding: "6px 14px",
-              borderRadius: 8,
-              fontSize: 12,
-              fontWeight: active ? 700 : 500,
-              fontFamily: OS.font,
-              background: active ? OS.blue : OS.white,
-              border: `1.5px solid ${active ? OS.blue : OS.border}`,
-              color: active ? OS.white : OS.textSecondary,
-              cursor: "pointer",
-              transition: "all 0.15s ease",
-              boxShadow: active
-                ? "0 1px 4px rgba(43,103,219,0.2)"
-                : "none",
-            }}
-          >
+    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+      <label
+        style={{
+          fontSize: 12,
+          fontWeight: 500,
+          fontFamily: OS.font,
+          color: OS.muted,
+          whiteSpace: "nowrap",
+        }}
+      >
+        Filter:
+      </label>
+      <select
+        value={filter}
+        onChange={(e) => setFilter(e.target.value as FilterKey)}
+        style={{
+          fontSize: 12,
+          fontWeight: 500,
+          fontFamily: OS.font,
+          color: OS.text,
+          background: OS.white,
+          border: `1px solid ${OS.border}`,
+          borderRadius: 6,
+          padding: "4px 8px",
+          cursor: "pointer",
+          outline: "none",
+        }}
+      >
+        {filters.map((f) => (
+          <option key={f.key} value={f.key}>
             {f.label}
-          </button>
-        );
-      })}
+          </option>
+        ))}
+      </select>
     </div>
   );
 }

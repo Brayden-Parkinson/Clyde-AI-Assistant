@@ -1,20 +1,21 @@
 {
   "manifest_version": 3,
-  "name": "Commitment Tracker",
+  "name": "Clyde",
   "version": "0.1.0",
-  "description": "Detects commitments from Slack and meetings. Keeps you honest.",
+  "description": "Watches Slack and meetings for commitments. Say the word.",
   "permissions": [
     "storage",
     "alarms",
     "notifications",
-    "sidePanel"
+    "sidePanel",
+    "tabs",
+    "nativeMessaging"
   ],
   "host_permissions": [
     "https://app.slack.com/*",
     "https://*.slack.com/*",
-    "https://api.anthropic.com/*",
-    "https://*.granola.so/*",
-    "https://api.granola.so/*"
+    "https://docs.google.com/*",
+    "https://api.anthropic.com/*"
   ],
   "background": {
     "service_worker": "src/background/service-worker.ts",
@@ -25,10 +26,17 @@
       "matches": ["https://app.slack.com/*", "https://*.slack.com/*"],
       "js": ["src/content/slack.ts"],
       "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://docs.google.com/document/*"],
+      "js": ["src/content/google-docs.ts"],
+      "run_at": "document_idle"
     }
   ],
+  "chrome_url_overrides": {
+    "newtab": "src/newtab/index.html"
+  },
   "action": {
-    "default_popup": "src/popup/index.html",
     "default_icon": {
       "16": "assets/icon-16.png",
       "48": "assets/icon-48.png",

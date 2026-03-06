@@ -4,12 +4,17 @@ import {
   DEFAULTS,
   RAW_MESSAGE_TTL_MS,
   COMPLETED_COMMITMENT_TTL_MS,
+  ACTION_LOG_TTL_MS,
+  BRIEFS_TTL_MS,
+  COMPLETION_SUGGESTION_TTL_MS,
+  DISMISSED_COMPLETION_TTL_MS,
 } from "@shared/constants";
 import type { SlackMessagePayload } from "@shared/types";
 import { logStatus, updateStatus } from "@shared/status";
 import { getUserProfile } from "@shared/user-profile";
 import { addMessages, flush } from "./batcher";
 import { pollGranola } from "./granola-poller";
+import { pollVoiceInbox } from "./voice-inbox";
 import { isGranolaConnected } from "./granola-local";
 import { restoreFromBackup, executeBackupSave, requestBackupSave, BACKUP_SAVE_ALARM } from "./backup-sync";
 import { generateMorningBrief } from "./morning-brief";
@@ -27,14 +32,46 @@ export async function updateBadge(): Promise<void> {
 
 async function runCleanup(): Promise<void> {
   const now = Date.now();
+
+  // Raw messages: 7 days
   const rawCutoff = new Date(now - RAW_MESSAGE_TTL_MS).toISOString();
   await db.raw_messages.where("capturedAt").below(rawCutoff).delete();
 
+  // Done/dismissed commitments: 30 days
   const commitmentCutoff = new Date(now - COMPLETED_COMMITMENT_TTL_MS).toISOString();
+  const deletedCommitmentIds: number[] = [];
   await db.commitments
     .where("status")
     .anyOf("done", "dismissed")
     .filter((c) => c.createdAt < commitmentCutoff)
+    .each((c) => { if (c.id !== undefined) deletedCommitmentIds.push(c.id); });
+  if (deletedCommitmentIds.length > 0) {
+    await db.commitments.bulkDelete(deletedCommitmentIds);
+    // Clean up orphaned kanban assignments for deleted commitments
+    await db.kanban_assignments.where("commitment_id").anyOf(deletedCommitmentIds).delete();
+  }
+
+  // Action log: 90 days
+  const actionLogCutoff = new Date(now - ACTION_LOG_TTL_MS).toISOString();
+  await db.action_log.where("createdAt").below(actionLogCutoff).delete();
+
+  // Morning briefs: 30 days
+  const briefsCutoff = new Date(now - BRIEFS_TTL_MS).toISOString();
+  await db.briefs.where("createdAt").below(briefsCutoff).delete();
+
+  // Resolved completion suggestions: 30 days
+  const completionCutoff = new Date(now - COMPLETION_SUGGESTION_TTL_MS).toISOString();
+  await db.completion_suggestions
+    .where("status")
+    .anyOf("accepted", "dismissed")
+    .filter((s) => s.createdAt < completionCutoff)
+    .delete();
+
+  // Dismissed completion tracking: 90 days
+  const dismissedCompletionCutoff = new Date(now - DISMISSED_COMPLETION_TTL_MS).toISOString();
+  await db.dismissed_completions
+    .where("lastDismissedAt")
+    .below(dismissedCompletionCutoff)
     .delete();
 
   await logStatus("info", "worker", "Daily cleanup completed");
@@ -166,6 +203,11 @@ chrome.runtime.onInstalled.addListener(async () => {
     periodInMinutes: DEFAULTS.granolaPollFrequencyMin,
   });
 
+  chrome.alarms.create(ALARMS.VOICE_INBOX, {
+    delayInMinutes: 1,
+    periodInMinutes: 2, // Check every 2 minutes
+  });
+
   chrome.alarms.create(ALARMS.CLEANUP, {
     delayInMinutes: 5,
     periodInMinutes: 24 * 60,
@@ -185,9 +227,25 @@ chrome.runtime.onStartup.addListener(async () => {
   await restoreFromBackup();
   await applyUiMode();
   updateBadge();
+
+  // Re-create alarms — they may not survive browser restarts
+  chrome.alarms.create(ALARMS.GRANOLA_POLL, {
+    delayInMinutes: 1,
+    periodInMinutes: DEFAULTS.granolaPollFrequencyMin,
+  });
+  chrome.alarms.create(ALARMS.CLEANUP, {
+    delayInMinutes: 5,
+    periodInMinutes: 24 * 60,
+  });
+  chrome.alarms.create(ALARMS.VOICE_INBOX, {
+    delayInMinutes: 1,
+    periodInMinutes: 2,
+  });
+  await scheduleMorningDigestAlarm();
+
   const result = await chrome.storage.local.get("anthropicApiKey");
   await updateStatus({ hasApiKey: !!result.anthropicApiKey });
-  await logStatus("info", "worker", "Service worker started");
+  await logStatus("info", "worker", "Service worker started — alarms scheduled");
 });
 
 // ─── Message Handling ───
@@ -209,7 +267,7 @@ chrome.runtime.onMessage.addListener(
       return true;
     } else if (message.type === "MANUAL_FLUSH") {
       logStatus("info", "worker", "Manual scan triggered");
-      Promise.all([flush(), pollGranola()]).then(() => {
+      Promise.all([flush(), pollGranola(), pollVoiceInbox()]).then(() => {
         updateBadge();
         sendResponse({ ok: true });
       });
@@ -236,6 +294,11 @@ chrome.runtime.onMessage.addListener(
         .then(() => sendResponse({ ok: true }))
         .catch((err) => sendResponse({ ok: false, error: err instanceof Error ? err.message : String(err) }));
       return true;
+    } else if (message.type === "GDOCS_CONTENT_SCRIPT_READY") {
+      const gdocs = message as unknown as { url: string; title: string };
+      logStatus("success", "content", `Google Docs content script loaded: "${gdocs.title}" (${gdocs.url?.slice(0, 60)})`);
+      sendResponse({ ok: true });
+      return false;
     } else if (message.type === "CONTENT_DIAGNOSTICS") {
       const diag = message as unknown as { diagnostics: string[]; summary: string; displayName: string; url: string };
       logStatus("info", "content", `Diagnostics (${diag.displayName}): ${diag.summary}`);
@@ -260,6 +323,9 @@ chrome.alarms.onAlarm.addListener((alarm) => {
       break;
     case ALARMS.MORNING_DIGEST:
       generateMorningBrief();
+      break;
+    case ALARMS.VOICE_INBOX:
+      pollVoiceInbox();
       break;
     case ALARMS.CLEANUP:
       runCleanup();

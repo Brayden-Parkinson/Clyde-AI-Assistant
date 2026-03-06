@@ -1,39 +1,31 @@
-/** OpenSpace brand design tokens */
+/** Clyde design tokens — quiet, functional, tool-grade aesthetic */
 export const OS = {
-  blue: "#2b67db",
-  darkBlue: "#163B83",
-  yellow: "#fde13c",
-  lightBlue: "#bfd1f4",
-  lightestBlue: "#d5e0f8",
-  lightGray: "#dcdcdc",
-  darkGray: "#323232",
+  // Accent — single muted color, used sparingly for primary actions and active states
+  blue: "#5e6ad2",
+
+  // Sidebar
+  darkBlue: "#1c1c22",
+
+  // Surfaces
+  bg: "#f5f5f7",
   white: "#ffffff",
-  bg: "#f7f8fc",
-  cardBg: "#ffffff",
-  border: "#e4e7f0",
-  textPrimary: "#1a1d2e",
-  textSecondary: "#5c6078",
-  textMuted: "#8e92a8",
-  font: "'Arial', 'Helvetica Neue', sans-serif",
-} as const;
 
-/** Urgency → left border color mapping */
-export const URGENCY_COLORS = {
-  high: "#dc2626",
-  medium: "#eab308",
-  low: OS.border,
-} as const;
+  // Borders
+  border: "#e1e2e5",
 
-/** Urgency indicator pill styles */
-export const URGENCY_STYLES = {
-  high: { color: "#dc2626", bg: "#fee2e2", label: "Urgent" },
-  medium: { color: "#ca8a04", bg: "#fef9c3", label: "Medium" },
-  low: { color: "#16a34a", bg: "#dcfce7", label: "Low" },
-} as const;
+  // Text hierarchy
+  text: "#111111",
+  secondary: "#555555",
+  muted: "#777777",
+  faint: "#aaaaaa",
 
-/** Confidence pill color thresholds */
-export function getConfidenceColors(value: number) {
-  if (value >= 0.85) return { color: "#16a34a", bg: "#dcfce7" };
-  if (value >= 0.7) return { color: "#ca8a04", bg: "#fef9c3" };
-  return { color: "#dc2626", bg: "#fee2e2" };
-}
+  // Semantic — only for meaning
+  red: "#d14343",
+  green: "#3b8c5f",
+  yellowBg: "#fef9e8",
+  yellowBorder: "#e8d174",
+
+  // Typography — one neutral sans-serif
+  font: '-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif',
+  mono: '"SF Mono", "JetBrains Mono", Menlo, monospace',
+} as const;

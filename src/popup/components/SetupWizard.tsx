@@ -1,16 +1,19 @@
 import React, { useState } from "react";
 import { OS } from "@shared/tokens";
+import { IconLogo, IconCheck } from "./Icons";
 import { USER_PROFILE_DEFAULTS } from "@shared/user-profile";
 
 interface SetupWizardProps {
   onComplete: () => void;
+  onDismiss?: () => void;
+  demoMode?: boolean;
 }
 
 type Step = "welcome" | "profile" | "apiKey" | "slack" | "done";
 
 const STEPS: Step[] = ["welcome", "profile", "apiKey", "slack", "done"];
 
-export function SetupWizard({ onComplete }: SetupWizardProps) {
+export function SetupWizard({ onComplete, onDismiss, demoMode }: SetupWizardProps) {
   const [step, setStep] = useState<Step>("welcome");
   const [userName, setUserName] = useState("");
   const [userTitle, setUserTitle] = useState("");
@@ -33,24 +36,26 @@ export function SetupWizard({ onComplete }: SetupWizardProps) {
   };
 
   const saveProfile = () => {
-    chrome.storage.local.set({
-      userName: userName.trim(),
-      userTitle: userTitle.trim(),
-      userCompany: userCompany.trim(),
-      timezone: timezone.trim() || USER_PROFILE_DEFAULTS.timezone,
-    });
+    if (!demoMode) {
+      chrome.storage.local.set({
+        userName: userName.trim(),
+        userTitle: userTitle.trim(),
+        userCompany: userCompany.trim(),
+        timezone: timezone.trim() || USER_PROFILE_DEFAULTS.timezone,
+      });
+    }
     next();
   };
 
   const saveApiKey = () => {
-    if (apiKey.trim()) {
+    if (!demoMode && apiKey.trim()) {
       chrome.storage.local.set({ anthropicApiKey: apiKey.trim() });
     }
     next();
   };
 
   const saveSlack = () => {
-    if (slackNames.trim()) {
+    if (!demoMode && slackNames.trim()) {
       chrome.storage.local.set({ slackDisplayNames: slackNames.trim() });
     }
     next();
@@ -86,15 +91,21 @@ export function SetupWizard({ onComplete }: SetupWizardProps) {
 
   return (
     <div style={{
-      height: "100vh",
+      position: "fixed",
+      inset: 0,
+      zIndex: 9999,
       display: "flex",
       alignItems: "center",
       justifyContent: "center",
-      background: OS.bg,
+      background: "rgba(0,0,0,0.35)",
+      backdropFilter: "blur(8px)",
+      WebkitBackdropFilter: "blur(8px)",
       fontFamily: OS.font,
       color: OS.text,
       padding: 24,
-    }}>
+    }}
+      onClick={(e) => { if (e.target === e.currentTarget && onDismiss) onDismiss(); }}
+    >
       <div style={{
         background: OS.white,
         border: `1px solid ${OS.border}`,
@@ -102,8 +113,50 @@ export function SetupWizard({ onComplete }: SetupWizardProps) {
         padding: "36px 32px",
         maxWidth: 440,
         width: "100%",
-        boxShadow: "0 4px 24px rgba(0,0,0,0.08)",
+        boxShadow: "0 8px 40px rgba(0,0,0,0.18)",
+        position: "relative",
       }}>
+        {/* Dismiss button */}
+        {onDismiss && (
+          <button
+            onClick={onDismiss}
+            style={{
+              position: "absolute",
+              top: 12,
+              right: 12,
+              background: "none",
+              border: "none",
+              cursor: "pointer",
+              color: OS.muted,
+              fontSize: 18,
+              lineHeight: 1,
+              padding: 4,
+            }}
+            title="Dismiss"
+          >
+            &times;
+          </button>
+        )}
+
+        {/* Demo mode badge */}
+        {demoMode && (
+          <div style={{
+            position: "absolute",
+            top: 12,
+            left: 12,
+            background: "#d97706",
+            color: "#fff",
+            fontSize: 10,
+            fontWeight: 700,
+            padding: "3px 8px",
+            borderRadius: 6,
+            letterSpacing: "0.04em",
+            textTransform: "uppercase",
+          }}>
+            Demo Mode
+          </div>
+        )}
+
         {/* Progress dots */}
         <div style={{
           display: "flex",
@@ -138,12 +191,10 @@ export function SetupWizard({ onComplete }: SetupWizardProps) {
                 alignItems: "center",
                 justifyContent: "center",
                 color: OS.white,
-                fontSize: 24,
-                fontWeight: 900,
                 marginBottom: 16,
                 boxShadow: "0 2px 12px rgba(43,103,219,0.3)",
               }}>
-                {"\u25C9"}
+                <IconLogo size={24} />
               </div>
               <h1 style={{
                 fontSize: 22,
@@ -219,12 +270,12 @@ export function SetupWizard({ onComplete }: SetupWizardProps) {
               <button onClick={back} style={secondaryBtnStyle}>Back</button>
               <button
                 onClick={saveProfile}
-                disabled={!userName.trim()}
+                disabled={!demoMode && !userName.trim()}
                 style={{
                   ...primaryBtnStyle,
                   flex: 1,
-                  opacity: userName.trim() ? 1 : 0.5,
-                  cursor: userName.trim() ? "pointer" : "default",
+                  opacity: (demoMode || userName.trim()) ? 1 : 0.5,
+                  cursor: (demoMode || userName.trim()) ? "pointer" : "default",
                 }}
               >
                 Continue
@@ -265,12 +316,12 @@ export function SetupWizard({ onComplete }: SetupWizardProps) {
               <button onClick={back} style={secondaryBtnStyle}>Back</button>
               <button
                 onClick={saveApiKey}
-                disabled={!apiKey.trim()}
+                disabled={!demoMode && !apiKey.trim()}
                 style={{
                   ...primaryBtnStyle,
                   flex: 1,
-                  opacity: apiKey.trim() ? 1 : 0.5,
-                  cursor: apiKey.trim() ? "pointer" : "default",
+                  opacity: (demoMode || apiKey.trim()) ? 1 : 0.5,
+                  cursor: (demoMode || apiKey.trim()) ? "pointer" : "default",
                 }}
               >
                 Continue
@@ -312,10 +363,13 @@ export function SetupWizard({ onComplete }: SetupWizardProps) {
           <>
             <div style={{ textAlign: "center", marginBottom: 24 }}>
               <div style={{
-                fontSize: 36,
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                color: OS.green,
                 marginBottom: 12,
               }}>
-                {"\u2713"}
+                <IconCheck size={36} />
               </div>
               <h2 style={{
                 ...headingStyle,
@@ -350,6 +404,24 @@ export function SetupWizard({ onComplete }: SetupWizardProps) {
             <button onClick={onComplete} style={primaryBtnStyle}>
               Open Clyde
             </button>
+
+            {/* Demo mode option — only shown during real first-time setup */}
+            {!demoMode && (
+              <button
+                onClick={() => {
+                  chrome.storage.local.set({ demoMode: true });
+                  onComplete();
+                }}
+                style={{
+                  ...secondaryBtnStyle,
+                  width: "100%",
+                  marginTop: 10,
+                  textAlign: "center",
+                }}
+              >
+                Try demo mode with example data
+              </button>
+            )}
           </>
         )}
 

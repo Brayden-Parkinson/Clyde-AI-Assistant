@@ -1,207 +1,166 @@
 import type { SlackMessagePayload } from "../shared/types";
 import {
-  SELECTORS,
-  queryWithFallback,
-  queryAllWithFallback,
-  healthCheck,
+  discoverMessages,
+  findMessageList,
+  findMessageText,
+  findSenderName,
+  findTimestamp,
+  findReactions,
+  runDiagnostics,
   getChannelName,
+  getSlackIds,
+  extractMessageTs,
+  buildSlackPermalink,
 } from "./selectors";
 
 // ─── State ───
 
-/** The current user's display name, determined on load */
-let MY_DISPLAY_NAME = "";
-
-/** Buffer of captured messages waiting to be sent to background */
+let MY_DISPLAY_NAMES: string[] = [];
 let messageBuffer: SlackMessagePayload["messages"] = [];
-
-/** Timer handle for the flush debounce */
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
-
-/** Set of message keys we've already captured (prevents dupes within a session) */
 const seenMessages = new Set<string>();
-
-/** Flush interval: 2.5 minutes */
 const FLUSH_INTERVAL_MS = 2.5 * 60 * 1000;
 
 // ─── User Detection ───
 
-/**
- * Attempt to determine the current user's display name.
- * Tries multiple strategies since Slack's DOM varies.
- */
 function detectMyDisplayName(): string {
-  // Strategy 1: The user menu button in the top-right typically has the user's name
-  const topBarButton = document.querySelector(
-    '[data-qa="user-button"]',
-  );
-  if (topBarButton) {
-    const ariaLabel = topBarButton.getAttribute("aria-label");
-    if (ariaLabel) {
-      // aria-label is usually "User: Display Name" or just the name
-      const cleaned = ariaLabel.replace(/^User:\s*/i, "").trim();
-      if (cleaned) return cleaned;
+  // Strategy 1: Top-bar user button (current Slack)
+  for (const sel of ['[data-qa="user-button"]', '[data-qa="user-menu-button"]', '.p-ia__nav__user__button', 'button[aria-label*="User"]']) {
+    const btn = document.querySelector(sel);
+    if (btn) {
+      const ariaLabel = btn.getAttribute("aria-label");
+      if (ariaLabel) {
+        // Slack uses "User: Name" or just the name
+        const cleaned = ariaLabel.replace(/^User[:\s]*/i, "").replace(/\(.*?\)/, "").trim();
+        if (cleaned && cleaned.length > 1) {
+          console.log(`[CommitmentTracker] Detected name via ${sel}: "${cleaned}"`);
+          return cleaned;
+        }
+      }
     }
   }
 
-  // Strategy 2: Look for the sidebar's own profile section
-  const profileLink = document.querySelector(
-    '[data-qa="user_profile_link"]',
-  );
-  if (profileLink?.textContent?.trim()) {
-    return profileLink.textContent.trim();
-  }
-
-  // Strategy 3: Check for the "You" indicator in messages
-  // Some Slack themes mark your own messages
-  const ownMessage = document.querySelector(
-    '.c-message_kit__sender--is-you, [data-qa="message_sender_name"][data-is-you="true"]',
-  );
-  if (ownMessage?.textContent?.trim()) {
-    return ownMessage.textContent.trim();
-  }
-
-  // Strategy 4: Check meta tags or global JS variables
-  // Slack sometimes exposes the user name in boot data
-  const bootDataEl = document.getElementById("props_node");
-  if (bootDataEl?.textContent) {
-    try {
-      const data = JSON.parse(bootDataEl.textContent);
-      if (data?.user_name) return data.user_name;
-      if (data?.display_name) return data.display_name;
-    } catch {
-      // Not valid JSON, ignore
+  // Strategy 2: Profile link / sidebar
+  for (const sel of ['[data-qa="user_profile_link"]', '.p-ia__nav__user__name', '[data-qa="channel_sidebar_name_you"]']) {
+    const el = document.querySelector(sel);
+    if (el?.textContent?.trim()) {
+      const name = el.textContent.trim().replace(/\s*\(you\)\s*$/i, "").trim();
+      if (name) {
+        console.log(`[CommitmentTracker] Detected name via ${sel}: "${name}"`);
+        return name;
+      }
     }
   }
 
-  console.warn(
-    "[CommitmentTracker] Could not detect display name. Will attempt to match on common patterns.",
-  );
+  // Strategy 3: Own message sender name (look for "is-you" markers)
+  for (const sel of [
+    '[data-qa="message_sender_name"][data-is-you="true"]',
+    '.c-message_kit__sender--is-you',
+    '[data-qa="message_sender_name"].c-link--primary',
+  ]) {
+    const el = document.querySelector(sel);
+    if (el?.textContent?.trim()) {
+      console.log(`[CommitmentTracker] Detected name via own message ${sel}: "${el.textContent.trim()}"`);
+      return el.textContent.trim();
+    }
+  }
+
+  // Strategy 4: Slack boot data (various locations)
+  for (const id of ["props_node", "client-boot-data", "team_data"]) {
+    const el = document.getElementById(id);
+    if (el?.textContent) {
+      try {
+        const data = JSON.parse(el.textContent);
+        const name = data?.user_name || data?.display_name || data?.real_name
+          || data?.user?.profile?.display_name || data?.user?.profile?.real_name;
+        if (name) {
+          console.log(`[CommitmentTracker] Detected name via #${id}: "${name}"`);
+          return name;
+        }
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  // Strategy 5: Parse localStorage for Slack's cached user data
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key) continue;
+      // Slack stores user info in keys like "localConfig_v2" or team-specific keys
+      if (key.includes("localConfig") || key.includes("bootData") || key.includes("currentUser")) {
+        try {
+          const val = JSON.parse(localStorage.getItem(key) || "");
+          const name = val?.user_name || val?.display_name || val?.real_name
+            || val?.name || val?.user?.name || val?.user?.profile?.real_name;
+          if (name && typeof name === "string" && name.length > 1) {
+            console.log(`[CommitmentTracker] Detected name via localStorage "${key}": "${name}"`);
+            return name;
+          }
+        } catch {
+          // not JSON
+        }
+      }
+    }
+  } catch {
+    // localStorage access denied
+  }
+
+  // Strategy 6: Look for the user's avatar img alt text in the top nav
+  const avatarSelectors = [
+    '.p-ia__nav__user img[alt]',
+    '[data-qa="user-button"] img[alt]',
+    '.c-avatar__image[alt]',
+  ];
+  for (const sel of avatarSelectors) {
+    const img = document.querySelector(sel);
+    if (img) {
+      const alt = img.getAttribute("alt")?.trim();
+      if (alt && alt.length > 1 && !alt.includes("avatar") && !alt.includes("photo")) {
+        console.log(`[CommitmentTracker] Detected name via avatar alt: "${alt}"`);
+        return alt;
+      }
+    }
+  }
+
+  console.warn("[CommitmentTracker] Could not detect display name — capturing ALL messages");
   return "";
 }
 
-// ─── Message Extraction ───
+// ─── Message Helpers ───
 
-/**
- * Check if message text contains an @mention of the current user.
- */
 function mentionsMe(text: string): boolean {
-  if (!MY_DISPLAY_NAME) return false;
-  // Check for @DisplayName (Slack renders mentions as plain text in the DOM)
+  if (MY_DISPLAY_NAMES.length === 0) return false;
   const lowerText = text.toLowerCase();
-  const lowerName = MY_DISPLAY_NAME.toLowerCase();
-  return (
-    lowerText.includes(`@${lowerName}`) ||
-    lowerText.includes(`@${lowerName.split(" ")[0]}`)
-  );
+  return MY_DISPLAY_NAMES.some((name) => {
+    const lowerName = name.toLowerCase();
+    return (
+      lowerText.includes(`@${lowerName}`) ||
+      lowerText.includes(`@${lowerName.split(" ")[0]}`)
+    );
+  });
 }
 
-/**
- * Generate a dedup key for a message.
- */
 function messageKey(sender: string, text: string, timestamp: string): string {
   return `${sender}|${text.slice(0, 100)}|${timestamp}`;
 }
 
-/**
- * Extract message data from a message DOM node.
- * Returns null if the message can't be read or isn't relevant.
- */
-function extractMessage(
-  messageNode: Element,
-): SlackMessagePayload["messages"][number] | null {
-  try {
-    // Get sender name
-    const senderEl = queryWithFallback(messageNode, SELECTORS.senderName);
-    const sender = senderEl?.textContent?.trim() ?? "";
-
-    // Get message text
-    const textEl = queryWithFallback(messageNode, SELECTORS.messageText);
-    const text = textEl?.textContent?.trim() ?? "";
-
-    // Skip empty messages
-    if (!text) return null;
-
-    // Get timestamp
-    const tsEl = queryWithFallback(messageNode, SELECTORS.timestamp);
-    let timestamp = "";
-    if (tsEl) {
-      // Prefer the datetime attribute (ISO format)
-      timestamp =
-        tsEl.getAttribute("datetime") ??
-        tsEl.getAttribute("data-ts") ??
-        tsEl.getAttribute("title") ??
-        tsEl.textContent?.trim() ??
-        "";
-    }
-    if (!timestamp) {
-      timestamp = new Date().toISOString();
-    }
-
-    // Determine if this is my message
-    const isMine =
-      MY_DISPLAY_NAME !== "" &&
-      sender.toLowerCase() === MY_DISPLAY_NAME.toLowerCase();
-
-    // Determine if I'm mentioned
-    const isMentioned = mentionsMe(text);
-
-    // Check if this is a DM channel (URL contains /D for direct messages)
-    const isDM = /\/client\/[A-Z0-9]+\/D[A-Z0-9]+/.test(
-      window.location.pathname,
-    );
-
-    // Only capture: messages I sent, messages that @mention me, DMs directed at me
-    if (!isMine && !isMentioned && !isDM) {
-      return null;
-    }
-
-    // Dedup check
-    const key = messageKey(sender, text, timestamp);
-    if (seenMessages.has(key)) return null;
-    seenMessages.add(key);
-
-    const channel = getChannelName();
-
-    return {
-      text,
-      sender,
-      channel,
-      timestamp,
-      isMine,
-      mentionsMe: isMentioned,
-    };
-  } catch (err) {
-    console.warn("[CommitmentTracker] Failed to extract message:", err);
-    return null;
-  }
-}
-
 // ─── Buffer & Flush ───
 
-/**
- * Add a message to the buffer and schedule a flush.
- */
 function bufferMessage(msg: SlackMessagePayload["messages"][number]): void {
   messageBuffer.push(msg);
   scheduleFlush();
 }
 
-/**
- * Schedule a flush of the message buffer.
- * Uses a debounce so we batch messages every ~2.5 minutes.
- */
 function scheduleFlush(): void {
-  if (flushTimer !== null) return; // Already scheduled
+  if (flushTimer !== null) return;
   flushTimer = setTimeout(() => {
     flushBuffer();
     flushTimer = null;
   }, FLUSH_INTERVAL_MS);
 }
 
-/**
- * Send buffered messages to the background service worker and clear the buffer.
- */
 function flushBuffer(): void {
   if (messageBuffer.length === 0) return;
 
@@ -210,109 +169,209 @@ function flushBuffer(): void {
     messages: [...messageBuffer],
   };
 
-  try {
-    chrome.runtime.sendMessage(payload);
-    console.log(
-      `[CommitmentTracker] Flushed ${messageBuffer.length} messages to background`,
-    );
-  } catch (err) {
-    console.warn("[CommitmentTracker] Failed to send messages to background:", err);
+  const count = messageBuffer.length;
+  messageBuffer = [];
+
+  chrome.runtime.sendMessage(payload).then(
+    () => {
+      console.log(`[CommitmentTracker] Flushed ${count} messages to background`);
+    },
+    (err: unknown) => {
+      console.warn("[CommitmentTracker] Background not ready:", err);
+    },
+  );
+}
+
+// ─── Scanning (Text-First Approach) ───
+
+/**
+ * Scan visible messages using the text-first approach:
+ * find all message-text elements, walk UP to find sender/timestamp.
+ */
+function scanVisibleMessages(): void {
+  const discovered = discoverMessages();
+  let captured = 0;
+
+  const channel = getChannelName();
+  const { channelId } = getSlackIds();
+
+  for (const msg of discovered) {
+    const key = messageKey(msg.sender, msg.text, msg.timestamp);
+    if (seenMessages.has(key)) continue;
+    seenMessages.add(key);
+
+    const isMine =
+      MY_DISPLAY_NAMES.length > 0 &&
+      MY_DISPLAY_NAMES.some(
+        (name) => msg.sender.toLowerCase() === name.toLowerCase(),
+      );
+
+    const messageTs = extractMessageTs(msg.blockEl);
+    const slackLink = (channelId && messageTs) ? buildSlackPermalink(channelId, messageTs) : null;
+
+    bufferMessage({
+      text: msg.text,
+      sender: msg.sender,
+      channel,
+      timestamp: msg.timestamp,
+      isMine,
+      mentionsMe: mentionsMe(msg.text),
+      reactions: msg.reactions,
+      channel_id: channelId,
+      message_ts: messageTs,
+      slack_link: slackLink,
+    });
+    captured++;
   }
 
-  messageBuffer = [];
+  const summary = `Scan: ${discovered.length} messages found, ${captured} captured`;
+  console.log(`[CommitmentTracker] ${summary}`);
+  sendDiagnostics(summary);
+
+  if (captured > 0) {
+    flushBuffer();
+  }
 }
 
 // ─── MutationObserver ───
 
-/** The active MutationObserver instance */
 let observer: MutationObserver | null = null;
 
 /**
- * Callback for the MutationObserver. Processes added nodes for new messages.
+ * When new nodes are added to the message list, check if they contain
+ * message-text elements and extract them.
  */
 function handleMutations(mutations: MutationRecord[]): void {
+  let newMessages = 0;
+
   for (const mutation of mutations) {
     for (const node of mutation.addedNodes) {
       if (!(node instanceof Element)) continue;
 
-      // Check if the added node itself is a message container
-      if (
-        node.matches(SELECTORS.messageContainer.primary) ||
-        node.matches(SELECTORS.messageContainer.fallback)
-      ) {
-        const msg = extractMessage(node);
-        if (msg) bufferMessage(msg);
+      // Check if the added node has message text, or contains elements with message text
+      const text = findMessageText(node);
+      if (text) {
+        processAddedNode(node, text);
+        newMessages++;
         continue;
       }
 
-      // Check if added node contains message containers (bulk DOM updates)
-      const messageNodes = [
-        ...node.querySelectorAll(SELECTORS.messageContainer.primary),
-        ...node.querySelectorAll(SELECTORS.messageContainer.fallback),
-      ];
+      // Check children for message text elements
+      const textEls = node.querySelectorAll(
+        '[data-qa="message-text"], .c-message_kit__text, .p-rich_text_section',
+      );
+      for (const textEl of textEls) {
+        const childText = textEl.textContent?.trim();
+        if (!childText) continue;
 
-      // Deduplicate nodes (a node could match both selectors)
-      const uniqueNodes = new Set(messageNodes);
-      for (const msgNode of uniqueNodes) {
-        const msg = extractMessage(msgNode);
-        if (msg) bufferMessage(msg);
+        // Find context around this text element
+        const container = textEl.closest('[data-qa="virtual-list-item"]')
+          ?? textEl.closest('[role="listitem"]')
+          ?? textEl.closest('.c-message_kit__background')
+          ?? node;
+
+        processAddedNode(container, childText);
+        newMessages++;
       }
     }
   }
+
+  if (newMessages > 0) {
+    console.log(`[CommitmentTracker] MutationObserver: ${newMessages} new messages detected`);
+  }
 }
 
-/**
- * Find the message list container and attach the MutationObserver.
- * Retries a few times if the container isn't available yet (Slack loads asynchronously).
- */
-function attachObserver(retries = 10): void {
-  const listEl = queryWithFallback(document, SELECTORS.messageList);
+function processAddedNode(node: Element, text: string): void {
+  const sender = findSenderName(node);
+  const timestamp = findTimestamp(node);
+  const channel = getChannelName();
+  const reactions = findReactions(node);
+  const { channelId } = getSlackIds();
+  const messageTs = extractMessageTs(node);
+  const slackLink = (channelId && messageTs) ? buildSlackPermalink(channelId, messageTs) : null;
+
+  const key = messageKey(sender, text, timestamp);
+  if (seenMessages.has(key)) return;
+  seenMessages.add(key);
+
+  const isMine =
+    MY_DISPLAY_NAMES.length > 0 &&
+    MY_DISPLAY_NAMES.some(
+      (name) => sender.toLowerCase() === name.toLowerCase(),
+    );
+
+  bufferMessage({
+    text,
+    sender,
+    channel,
+    timestamp,
+    isMine,
+    mentionsMe: mentionsMe(text),
+    reactions,
+    channel_id: channelId,
+    message_ts: messageTs,
+    slack_link: slackLink,
+  });
+}
+
+function attachObserver(retries = 15): void {
+  const listEl = findMessageList();
 
   if (!listEl) {
     if (retries > 0) {
-      console.log(
-        `[CommitmentTracker] Message list not found, retrying... (${retries} left)`,
-      );
+      console.log(`[CommitmentTracker] Message list not found, retrying... (${retries} left)`);
       setTimeout(() => attachObserver(retries - 1), 2000);
       return;
     }
-    console.warn(
-      "[CommitmentTracker] Could not find message list container after retries. Observer not attached.",
-    );
+    console.warn("[CommitmentTracker] Could not find message list. Falling back to document.body observer.");
+    // Fallback: observe entire body (less efficient but works)
+    observeTarget(document.body);
     return;
   }
 
+  console.log(`[CommitmentTracker] Found message list: <${listEl.tagName} class="${listEl.className?.toString().slice(0, 80)}">`);
+  observeTarget(listEl);
+}
+
+function observeTarget(target: Element): void {
+  // First scan visible messages
+  scanVisibleMessages();
+
   observer = new MutationObserver(handleMutations);
-  observer.observe(listEl, {
+  observer.observe(target, {
     childList: true,
     subtree: true,
   });
+  console.log("[CommitmentTracker] MutationObserver attached.");
+}
 
-  console.log("[CommitmentTracker] MutationObserver attached to message list.");
+// ─── Diagnostics ───
+
+function sendDiagnostics(summary: string): void {
+  const diag = runDiagnostics();
+  chrome.runtime.sendMessage({
+    type: "CONTENT_DIAGNOSTICS",
+    diagnostics: diag,
+    summary,
+    displayName: MY_DISPLAY_NAMES.length > 0 ? MY_DISPLAY_NAMES.join(", ") : "(not detected)",
+    url: window.location.href,
+  }).catch(() => {
+    // Background not ready
+  });
 }
 
 // ─── Navigation Detection ───
 
-/**
- * Slack is an SPA — watch for URL changes to re-attach observer when
- * the user switches channels.
- */
 function watchForNavigation(): void {
   let lastPath = window.location.pathname;
 
-  // Use a periodic check since Slack uses History API (no hashchange)
   setInterval(() => {
     const currentPath = window.location.pathname;
     if (currentPath !== lastPath) {
       lastPath = currentPath;
-      console.log(
-        `[CommitmentTracker] Channel changed: ${getChannelName()}`,
-      );
-
-      // Flush any buffered messages from the previous channel
+      console.log(`[CommitmentTracker] Channel changed: ${getChannelName()}`);
       flushBuffer();
 
-      // Re-attach observer to the new channel's message list
       if (observer) {
         observer.disconnect();
         observer = null;
@@ -324,33 +383,68 @@ function watchForNavigation(): void {
 
 // ─── Initialization ───
 
-function init(): void {
-  console.log("[CommitmentTracker] Slack content script loaded.");
+async function init(): Promise<void> {
+  console.log("[CommitmentTracker] Slack content script loaded on", window.location.href);
 
-  // Detect user display name
-  MY_DISPLAY_NAME = detectMyDisplayName();
-  if (MY_DISPLAY_NAME) {
-    console.log(
-      `[CommitmentTracker] Detected display name: "${MY_DISPLAY_NAME}"`,
-    );
+  chrome.runtime.sendMessage({ type: "CONTENT_SCRIPT_READY" }).catch(() => {
+    console.warn("[CommitmentTracker] Could not notify background");
+  });
+
+  // Read display names from storage first
+  try {
+    const result = await chrome.storage.local.get("slackDisplayNames");
+    const raw = result.slackDisplayNames;
+    if (typeof raw === "string" && raw.trim()) {
+      MY_DISPLAY_NAMES = raw.split(",").map((n: string) => n.trim()).filter(Boolean);
+    }
+  } catch {
+    // Storage read failed, fall through to detection
   }
 
-  // Run health check on selectors
-  healthCheck();
+  // Fallback: detect from DOM if storage was empty (with retries — Slack loads progressively)
+  if (MY_DISPLAY_NAMES.length === 0) {
+    const detected = detectMyDisplayName();
+    if (detected) {
+      MY_DISPLAY_NAMES = [detected];
+    } else {
+      // Retry detection — Slack's DOM renders progressively
+      let retries = 5;
+      const retryDetection = (): void => {
+        if (MY_DISPLAY_NAMES.length > 0 || retries <= 0) return;
+        retries--;
+        const name = detectMyDisplayName();
+        if (name) {
+          MY_DISPLAY_NAMES = [name];
+          console.log(`[CommitmentTracker] Display name detected on retry: ${name}`);
+        } else if (retries > 0) {
+          setTimeout(retryDetection, 3000);
+        }
+      };
+      setTimeout(retryDetection, 3000);
+    }
+  }
 
-  // Attach observer to message list
+  if (MY_DISPLAY_NAMES.length > 0) {
+    console.log(`[CommitmentTracker] Display names: ${MY_DISPLAY_NAMES.join(", ")}`);
+  } else {
+    console.log("[CommitmentTracker] Display name not detected yet — will retry");
+  }
+
+  // Run and log diagnostics
+  const diag = runDiagnostics();
+  for (const line of diag) {
+    console.log(`[CommitmentTracker] ${line}`);
+  }
+  sendDiagnostics("Initial load diagnostics");
+
   attachObserver();
-
-  // Watch for SPA navigation (channel switches)
   watchForNavigation();
 
-  // Flush buffer on page unload so we don't lose messages
   window.addEventListener("beforeunload", () => {
     flushBuffer();
   });
 }
 
-// Start when DOM is ready (content script runs at document_idle, so it should be ready)
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", init);
 } else {

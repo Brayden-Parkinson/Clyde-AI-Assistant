@@ -15,6 +15,7 @@ export const DEFAULTS = {
 /** Chrome alarm names */
 export const ALARMS = {
   GRANOLA_POLL: "granola-poll",
+  VOICE_INBOX: "voice-inbox-poll",
   MORNING_DIGEST: "morning-digest",
   CLEANUP: "daily-cleanup",
   SNOOZE_PREFIX: "snooze-",
@@ -26,14 +27,29 @@ export const RAW_MESSAGE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 /** How long to keep done/dismissed commitments (30 days in ms) */
 export const COMPLETED_COMMITMENT_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
+/** How long to keep action log entries (90 days in ms) */
+export const ACTION_LOG_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+
+/** How long to keep morning briefs (30 days in ms) */
+export const BRIEFS_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+/** How long to keep resolved completion suggestions (30 days in ms) */
+export const COMPLETION_SUGGESTION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+/** How long to keep dismissed completion tracking (90 days in ms) */
+export const DISMISSED_COMPLETION_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+
 /** Debounce delay for batching Slack messages (ms) */
 export const BATCH_DEBOUNCE_MS = 5 * 60 * 1000;
 
 /** Maximum dismissal patterns to include in Claude prompt (prevents bloat) */
 export const MAX_DISMISSAL_PATTERNS = 15;
 
-/** Claude model to use for extraction */
+/** Claude model for extraction and morning briefs (quality-sensitive) */
 export const CLAUDE_MODEL = "claude-sonnet-4-6";
+
+/** Cheaper model for simple tasks (completion detection, pattern matching) */
+export const CLAUDE_MODEL_FAST = "claude-haiku-4-5-20251001";
 
 /** API timeout for Claude calls (30 seconds) */
 export const API_TIMEOUT_MS = 30_000;

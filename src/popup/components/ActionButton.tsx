@@ -6,13 +6,15 @@ export type ActionButtonVariant =
   | "primary"
   | "danger"
   | "success"
-  | "yellow";
+  | "yellow"
+  | "muted";
 
 interface ActionButtonProps {
-  icon: string;
+  icon: React.ReactNode;
   label: string;
   onClick: (e: React.MouseEvent) => void;
   variant?: ActionButtonVariant;
+  shortcut?: string;
 }
 
 export function ActionButton({
@@ -20,6 +22,7 @@ export function ActionButton({
   label,
   onClick,
   variant = "default",
+  shortcut,
 }: ActionButtonProps) {
   const [hovered, setHovered] = useState(false);
 
@@ -28,29 +31,34 @@ export function ActionButton({
     { bg: string; border: string; color: string }
   > = {
     default: {
-      bg: hovered ? "#f0f2f8" : OS.white,
+      bg: hovered ? OS.bg : OS.white,
       border: OS.border,
-      color: OS.textSecondary,
+      color: OS.text,
     },
     primary: {
-      bg: hovered ? OS.darkBlue : OS.blue,
-      border: OS.blue,
-      color: OS.white,
+      bg: hovered ? OS.blue : OS.white,
+      border: hovered ? OS.blue : OS.border,
+      color: hovered ? OS.white : OS.blue,
     },
     danger: {
-      bg: hovered ? "#fef2f2" : OS.white,
-      border: hovered ? "#fca5a5" : "#fecaca",
-      color: "#dc2626",
+      bg: hovered ? OS.bg : OS.white,
+      border: OS.border,
+      color: hovered ? OS.red : OS.secondary,
     },
     success: {
-      bg: hovered ? "#f0fdf4" : OS.white,
-      border: hovered ? "#86efac" : "#bbf7d0",
-      color: "#16a34a",
+      bg: hovered ? OS.bg : OS.white,
+      border: OS.border,
+      color: hovered ? OS.green : OS.secondary,
     },
     yellow: {
-      bg: hovered ? "#fef9c3" : OS.white,
-      border: hovered ? "#fde047" : "#fef08a",
-      color: "#a16207",
+      bg: hovered ? OS.bg : OS.white,
+      border: OS.border,
+      color: hovered ? "#b08d33" : OS.secondary,
+    },
+    muted: {
+      bg: hovered ? OS.bg : OS.white,
+      border: OS.border,
+      color: OS.muted,
     },
   };
 
@@ -65,22 +73,33 @@ export function ActionButton({
         display: "inline-flex",
         alignItems: "center",
         gap: 6,
-        padding: "7px 14px",
-        borderRadius: 8,
+        padding: "6px 12px",
+        borderRadius: 6,
         background: s.bg,
-        border: `1.5px solid ${s.border}`,
+        border: `1px solid ${s.border}`,
         color: s.color,
         fontSize: 12,
-        fontWeight: 600,
+        fontWeight: 500,
         cursor: "pointer",
         fontFamily: OS.font,
-        transition: "all 0.15s ease",
+        transition: "all 0.12s ease",
         whiteSpace: "nowrap",
-        boxShadow: hovered ? "0 1px 3px rgba(0,0,0,0.06)" : "none",
       }}
     >
-      <span style={{ fontSize: 14, lineHeight: 1 }}>{icon}</span>
+      <span style={{ fontSize: 12, lineHeight: 1 }}>{icon}</span>
       {label}
+      {shortcut && (
+        <span
+          style={{
+            fontSize: 10,
+            color: hovered && variant === "primary" ? "rgba(255,255,255,0.6)" : OS.muted,
+            marginLeft: 2,
+            fontFamily: OS.mono,
+          }}
+        >
+          {shortcut}
+        </span>
+      )}
     </button>
   );
 }

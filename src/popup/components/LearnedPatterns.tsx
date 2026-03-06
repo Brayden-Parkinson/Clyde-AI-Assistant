@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { OS } from "@shared/tokens";
+import { IconBrain, IconChevronDown, IconX } from "./Icons";
 import type { Dismissal } from "@shared/types";
 
 interface LearnedPatternsProps {
@@ -14,7 +15,7 @@ export function LearnedPatterns({ patterns }: LearnedPatternsProps) {
   return (
     <div
       style={{
-        background: OS.cardBg,
+        background: OS.white,
         border: `1.5px solid ${OS.border}`,
         borderRadius: 10,
         padding: "14px 18px",
@@ -39,17 +40,17 @@ export function LearnedPatterns({ patterns }: LearnedPatternsProps) {
               width: 28,
               height: 28,
               borderRadius: 8,
-              background: OS.lightestBlue,
-              fontSize: 14,
+              background: "#e8eef9",
+              color: OS.blue,
             }}
           >
-            {"🧠"}
+            <IconBrain size={15} />
           </span>
           <span
             style={{
               fontSize: 13,
               fontWeight: 700,
-              color: OS.textPrimary,
+              color: OS.text,
               fontFamily: OS.font,
             }}
           >
@@ -61,7 +62,7 @@ export function LearnedPatterns({ patterns }: LearnedPatternsProps) {
               fontWeight: 600,
               fontFamily: "monospace",
               background: OS.bg,
-              color: OS.textMuted,
+              color: OS.muted,
               padding: "2px 8px",
               borderRadius: 8,
             }}
@@ -71,14 +72,13 @@ export function LearnedPatterns({ patterns }: LearnedPatternsProps) {
         </div>
         <span
           style={{
-            color: OS.textMuted,
-            fontSize: 16,
-            lineHeight: 1,
+            color: OS.muted,
+            display: "inline-flex",
             transition: "transform 0.2s ease",
             transform: open ? "rotate(180deg)" : "none",
           }}
         >
-          {"▾"}
+          <IconChevronDown size={14} />
         </span>
       </div>
       {open && (
@@ -97,19 +97,19 @@ export function LearnedPatterns({ patterns }: LearnedPatternsProps) {
               <div
                 style={{ display: "flex", alignItems: "center", gap: 8 }}
               >
-                <span style={{ color: "#dc2626", fontSize: 12 }}>
-                  {"✕"}
+                <span style={{ color: "#dc2626", display: "inline-flex", alignItems: "center" }}>
+                  <IconX size={12} />
                 </span>
                 <span
                   style={{
                     fontSize: 12,
-                    color: OS.textSecondary,
+                    color: OS.secondary,
                     fontStyle: "italic",
                   }}
                 >
                   &ldquo;{p.pattern}&rdquo;
                 </span>
-                <span style={{ fontSize: 11, color: OS.textMuted }}>
+                <span style={{ fontSize: 11, color: OS.muted }}>
                   {"— "}
                   {p.reason}
                 </span>
@@ -118,7 +118,7 @@ export function LearnedPatterns({ patterns }: LearnedPatternsProps) {
                 style={{
                   fontSize: 11,
                   fontFamily: "monospace",
-                  color: OS.textMuted,
+                  color: OS.muted,
                   background: OS.bg,
                   padding: "2px 8px",
                   borderRadius: 6,
