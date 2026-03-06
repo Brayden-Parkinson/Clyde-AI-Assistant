@@ -1,4 +1,4 @@
-#!/opt/homebrew/bin/python3
+#!/usr/bin/env python3
 """
 Chrome Native Messaging host that reads Granola's local cache file
 and manages extension backup state on disk.
