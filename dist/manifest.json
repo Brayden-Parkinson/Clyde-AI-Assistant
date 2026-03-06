@@ -1,0 +1,88 @@
+{
+  "manifest_version": 3,
+  "name": "Clyde",
+  "version": "0.1.0",
+  "description": "Watches Slack and meetings for commitments. Say the word.",
+  "permissions": [
+    "storage",
+    "alarms",
+    "notifications",
+    "sidePanel",
+    "tabs",
+    "nativeMessaging"
+  ],
+  "host_permissions": [
+    "https://app.slack.com/*",
+    "https://*.slack.com/*",
+    "https://docs.google.com/*",
+    "https://api.anthropic.com/*"
+  ],
+  "background": {
+    "service_worker": "service-worker-loader.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "js": [
+        "assets/slack.ts-BXftKyNA.js"
+      ],
+      "matches": [
+        "https://app.slack.com/*",
+        "https://*.slack.com/*"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "js": [
+        "assets/google-docs.ts-Dtpgs9Ce.js"
+      ],
+      "matches": [
+        "https://docs.google.com/document/*"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "chrome_url_overrides": {
+    "newtab": "src/newtab/index.html"
+  },
+  "action": {
+    "default_icon": {
+      "16": "assets/icon-16.png",
+      "48": "assets/icon-48.png",
+      "128": "assets/icon-128.png"
+    }
+  },
+  "side_panel": {
+    "default_path": "src/sidepanel/index.html"
+  },
+  "options_ui": {
+    "page": "src/options/index.html",
+    "open_in_tab": true
+  },
+  "icons": {
+    "16": "assets/icon-16.png",
+    "48": "assets/icon-48.png",
+    "128": "assets/icon-128.png"
+  },
+  "web_accessible_resources": [
+    {
+      "matches": [
+        "https://*.slack.com/*",
+        "https://app.slack.com/*"
+      ],
+      "resources": [
+        "assets/slack.ts-BXftKyNA.js"
+      ],
+      "use_dynamic_url": false
+    },
+    {
+      "matches": [
+        "https://docs.google.com/*"
+      ],
+      "resources": [
+        "assets/google-docs.ts-Dtpgs9Ce.js"
+      ],
+      "use_dynamic_url": false
+    }
+  ]
+}

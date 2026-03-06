@@ -6,22 +6,17 @@ All data is stored locally. Nothing leaves your browser except API calls to Anth
 
 ## Installation
 
-1. Clone this repo and install dependencies:
+1. Clone this repo:
    ```bash
    git clone https://github.com/Brayden-Parkinson/commitment-tracker-ext.git
-   cd commitment-tracker-ext
-   npm install
    ```
 
-2. Build the extension:
-   ```bash
-   npm run build
-   ```
-
-3. Load in Chrome:
+2. Load in Chrome:
    - Open `chrome://extensions`
    - Enable **Developer mode** (toggle in top-right)
-   - Click **Load unpacked** and select the `dist/` folder
+   - Click **Load unpacked** and select the `dist/` folder inside the cloned repo
+
+That's it — no build step required. The extension is pre-built and ready to go.
 
 ## Setup
 
