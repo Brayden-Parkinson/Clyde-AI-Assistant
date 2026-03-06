@@ -8,7 +8,7 @@ All data is stored locally. Nothing leaves your browser except API calls to Anth
 
 1. Clone this repo and install dependencies:
    ```bash
-   git clone <repo-url>
+   git clone https://github.com/Brayden-Parkinson/commitment-tracker-ext.git
    cd commitment-tracker-ext
    npm install
    ```
@@ -57,6 +57,15 @@ Open any Slack workspace in Chrome. Clyde's content script observes messages and
 
 ### Explicit Flagging
 Say **"Clyde"** in any Slack message to explicitly flag a commitment (e.g. "I'll send the report by Friday. Clyde."). These are extracted at 0.95 confidence.
+
+### Clyde Chat
+Click the chat bubble (bottom-right) to talk to Clyde. You can:
+- Create tasks with natural language ("remind me to send the report by Friday")
+- Search and filter your board ("show me all high urgency items from #engineering")
+- Bulk update tasks ("mark all low urgency slack items as done")
+- Manage columns ("create a 'Blocked' column")
+
+Use the mic button for quick voice capture — say a task and it's created instantly.
 
 ### Triage Actions
 - **Done** — Mark a commitment as completed
