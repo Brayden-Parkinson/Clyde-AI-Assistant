@@ -191,6 +191,20 @@ chrome.action.onClicked.addListener(async () => {
 });
 
 
+// ─── Restore backup on every service worker start (covers reload) ───
+
+(async () => {
+  try {
+    const count = await db.commitments.count();
+    if (count === 0) {
+      await restoreFromBackup();
+      await updateBadge();
+    }
+  } catch {
+    // DB not ready yet — onInstalled will handle it
+  }
+})();
+
 // ─── Extension Lifecycle ───
 
 chrome.runtime.onInstalled.addListener(async () => {
