@@ -4,19 +4,21 @@ Chrome extension that watches your Slack conversations and Granola meeting notes
 
 All data is stored locally. Nothing leaves your browser except API calls to Anthropic.
 
-## Installation
+## Installation (2 minutes)
 
-1. Clone this repo:
-   ```bash
-   git clone https://github.com/Brayden-Parkinson/commitment-tracker-ext.git
-   ```
+No coding or build tools needed.
 
-2. Load in Chrome:
-   - Open `chrome://extensions`
-   - Enable **Developer mode** (toggle in top-right)
-   - Click **Load unpacked** and select the `dist/` folder inside the cloned repo
+1. **Download the code** — click the green **Code** button at the top of this page, then **Download ZIP**. Unzip it anywhere on your computer. (Or `git clone` if you prefer.)
 
-That's it — no build step required. The extension is pre-built and ready to go.
+2. **Open Chrome's extension page** — paste `chrome://extensions` into your address bar and hit Enter.
+
+3. **Turn on Developer mode** — flip the toggle in the top-right corner.
+
+4. **Load the extension** — click **Load unpacked**, navigate into the folder you just unzipped, select the **`dist`** folder inside it, and click Open.
+
+5. **Pin it** — click the puzzle piece icon in Chrome's toolbar and pin **Clyde** for easy access.
+
+You're done! Click the Clyde icon to open the setup wizard.
 
 ## Setup
 
