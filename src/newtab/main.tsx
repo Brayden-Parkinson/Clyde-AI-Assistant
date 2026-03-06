@@ -13,14 +13,14 @@ if (storedVersion && storedVersion !== currentVersion) {
   sessionStorage.setItem("clyde-ext-version", currentVersion);
 }
 
-// Also detect if the extension context was invalidated (after reload)
+// Detect if the extension context was invalidated (after reload)
 setInterval(() => {
   try {
     chrome.runtime.getManifest();
   } catch {
     location.reload();
   }
-}, 2000);
+}, 10000);
 
 const root = document.getElementById("root");
 if (root) {

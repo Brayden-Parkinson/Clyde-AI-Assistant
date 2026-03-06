@@ -24,7 +24,7 @@
   "content_scripts": [
     {
       "js": [
-        "assets/slack.ts-BOfcwwov.js"
+        "assets/slack.ts-DiYqOQuv.js"
       ],
       "matches": [
         "https://app.slack.com/*",
@@ -34,7 +34,7 @@
     },
     {
       "js": [
-        "assets/google-docs.ts-Dtpgs9Ce.js"
+        "assets/google-docs.ts-8UK2wPz-.js"
       ],
       "matches": [
         "https://docs.google.com/document/*"
@@ -71,7 +71,7 @@
         "https://app.slack.com/*"
       ],
       "resources": [
-        "assets/slack.ts-BOfcwwov.js"
+        "assets/slack.ts-DiYqOQuv.js"
       ],
       "use_dynamic_url": false
     },
@@ -80,7 +80,7 @@
         "https://docs.google.com/*"
       ],
       "resources": [
-        "assets/google-docs.ts-Dtpgs9Ce.js"
+        "assets/google-docs.ts-8UK2wPz-.js"
       ],
       "use_dynamic_url": false
     }

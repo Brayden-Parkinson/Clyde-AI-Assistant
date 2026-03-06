@@ -12,6 +12,7 @@ let flushTimer: ReturnType<typeof setTimeout> | null = null;
 const FLUSH_INTERVAL_MS = 3 * 60 * 1000; // 3 minutes
 const SCAN_INTERVAL_MS = 30 * 1000; // Re-scan every 30s for changes
 const seenComments = new Set<string>();
+const SEEN_SET_MAX = 5000;
 
 // ─── Document Text Extraction ───
 
@@ -209,6 +210,7 @@ function buildMessages(): MessagePayload[] {
   for (const comment of comments) {
     const key = commentKey(comment.author, comment.text);
     if (seenComments.has(key)) continue;
+    if (seenComments.size >= SEEN_SET_MAX) seenComments.clear();
     seenComments.add(key);
 
     messages.push({
@@ -322,7 +324,7 @@ function attachObserver(retries = 10): void {
   const target = editor ?? document.body;
 
   observer = new MutationObserver(handleMutations);
-  observer.observe(target, { childList: true, subtree: true, characterData: true });
+  observer.observe(target, { childList: true, subtree: true });
   console.log(`[Clyde:GDocs] Observer attached to ${target === document.body ? "document.body" : "editor"}`);
 
   // Also observe comment pane if found

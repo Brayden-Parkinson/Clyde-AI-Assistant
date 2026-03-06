@@ -19,6 +19,7 @@ let MY_DISPLAY_NAMES: string[] = [];
 let messageBuffer: SlackMessagePayload["messages"] = [];
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
 const seenMessages = new Set<string>();
+const SEEN_SET_MAX = 5000;
 const FLUSH_INTERVAL_MS = 2.5 * 60 * 1000;
 
 // ─── User Detection ───
@@ -198,6 +199,7 @@ function scanVisibleMessages(): void {
   for (const msg of discovered) {
     const key = messageKey(msg.sender, msg.text, msg.timestamp);
     if (seenMessages.has(key)) continue;
+    if (seenMessages.size >= SEEN_SET_MAX) seenMessages.clear();
     seenMessages.add(key);
 
     const isMine =
@@ -292,6 +294,7 @@ function processAddedNode(node: Element, text: string): void {
 
   const key = messageKey(sender, text, timestamp);
   if (seenMessages.has(key)) return;
+  if (seenMessages.size >= SEEN_SET_MAX) seenMessages.clear();
   seenMessages.add(key);
 
   const isMine =
@@ -378,7 +381,7 @@ function watchForNavigation(): void {
       }
       attachObserver();
     }
-  }, 3000);
+  }, 10000);
 }
 
 // ─── Initialization ───
