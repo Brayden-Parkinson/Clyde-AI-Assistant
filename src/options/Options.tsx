@@ -602,22 +602,19 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
           </div>
         </div>
         <Disclosure label="Setup instructions">
-          <div style={{ fontWeight: 600, color: OS.text, marginBottom: 6 }}>Install the native host:</div>
-          <div>1. Open Terminal</div>
-          <div>2. Navigate to the extension's native-host directory</div>
-          <div>3. Run the install command:</div>
+          <div style={{ fontWeight: 600, color: OS.text, marginBottom: 6 }}>Copy this into Terminal and hit Enter:</div>
           <div style={{
             margin: "8px 0", padding: "8px 10px", borderRadius: 6,
             background: OS.white, border: `1px solid ${OS.border}`,
             fontFamily: OS.mono, fontSize: 11, display: "flex",
             alignItems: "center", justifyContent: "space-between", gap: 8,
           }}>
-            <code style={{ flex: 1, overflowX: "auto" }}>
-              cd native-host && ./install.sh {extensionId}
+            <code style={{ flex: 1, overflowX: "auto", whiteSpace: "nowrap" }}>
+              cd ~/Clyde-AI-Assistant/native-host && ./install.sh {extensionId}
             </code>
             <button
               onClick={() => {
-                navigator.clipboard.writeText(`cd native-host && ./install.sh ${extensionId}`);
+                navigator.clipboard.writeText(`cd ~/Clyde-AI-Assistant/native-host && ./install.sh ${extensionId}`);
                 setCopiedInstall(true);
                 setTimeout(() => setCopiedInstall(false), 2000);
               }}
@@ -632,10 +629,7 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
               {copiedInstall ? "Copied!" : "Copy"}
             </button>
           </div>
-          <div>4. Click "Test Connection" above</div>
-          <div style={{ marginTop: 6, fontSize: 11, color: OS.muted }}>
-            Your extension ID: <code style={{ background: OS.white, padding: "1px 4px", borderRadius: 3 }}>{extensionId}</code>
-          </div>
+          <div>Then click "Test Connection" above to verify.</div>
         </Disclosure>
       </div>
 
