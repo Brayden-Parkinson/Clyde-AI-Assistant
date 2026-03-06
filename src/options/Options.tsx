@@ -804,46 +804,6 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
   const renderDetectionTab = () => (
     <>
       {/* Scan Frequencies */}
-      <div style={sectionStyle}>
-        <h2 style={sectionTitle}>Scan Frequencies</h2>
-
-        <div style={fieldRow}>
-          <div>
-            <div style={labelStyle}>Slack Scan Frequency</div>
-            <div style={subLabel}>How often to batch Slack messages</div>
-          </div>
-          <select
-            style={selectStyle}
-            value={form.slackScanFrequency}
-            onChange={(e) =>
-              update("slackScanFrequency", Number(e.target.value))
-            }
-          >
-            <option value={2}>Every 2 minutes</option>
-            <option value={5}>Every 5 minutes</option>
-            <option value={10}>Every 10 minutes</option>
-          </select>
-        </div>
-
-        <div style={{ ...fieldRow, marginBottom: 0 }}>
-          <div>
-            <div style={labelStyle}>Granola Poll Frequency</div>
-            <div style={subLabel}>How often to check for new meeting notes</div>
-          </div>
-          <select
-            style={selectStyle}
-            value={form.granolaPollFrequency}
-            onChange={(e) =>
-              update("granolaPollFrequency", Number(e.target.value))
-            }
-          >
-            <option value={30}>Every 30 minutes</option>
-            <option value={60}>Every 60 minutes</option>
-            <option value={120}>Every 2 hours</option>
-          </select>
-        </div>
-      </div>
-
       {/* Detection */}
       <div style={sectionStyle}>
         <h2 style={sectionTitle}>Detection</h2>
