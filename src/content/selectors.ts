@@ -411,3 +411,39 @@ export function buildSlackPermalink(channelId: string, ts: string): string {
   const pTs = "p" + ts.replace(".", "");
   return `https://app.slack.com/archives/${channelId}/${pTs}`;
 }
+
+// ─── Thread Panel Detection ───
+
+const THREAD_PANEL_SELECTORS = [
+  '[data-qa="thread-panel"]',
+  '[data-qa="threads_view"]',
+  '.p-thread_view',
+  '.p-threads_flexpane',
+  '[data-qa="slack_kit_list"][aria-label*="thread"]',
+];
+
+/** Find the open thread panel element, if any */
+export function findThreadPanel(): Element | null {
+  return queryMulti(document, THREAD_PANEL_SELECTORS);
+}
+
+/** Check if an element is inside the thread panel */
+export function isInsideThreadPanel(el: Element): boolean {
+  for (const sel of THREAD_PANEL_SELECTORS) {
+    try {
+      if (el.closest(sel)) return true;
+    } catch {
+      // skip invalid selector
+    }
+  }
+  return false;
+}
+
+/**
+ * Extract thread_ts from the current URL.
+ * Thread URLs follow: /client/{workspaceId}/{channelId}/thread/{channelId}-{thread_ts}
+ */
+export function getThreadTsFromUrl(): string | null {
+  const match = window.location.pathname.match(/\/thread\/[A-Z0-9]+-([0-9]+\.[0-9]+)/i);
+  return match ? match[1] : null;
+}

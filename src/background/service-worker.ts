@@ -15,9 +15,11 @@ import { getUserProfile } from "@shared/user-profile";
 import { addMessages, flush } from "./batcher";
 import { pollGranola } from "./granola-poller";
 import { pollVoiceInbox } from "./voice-inbox";
-import { isGranolaConnected } from "./granola-local";
+import { isGranolaConnected, sendNative } from "./granola-local";
 import { restoreFromBackup, executeBackupSave, requestBackupSave, BACKUP_SAVE_ALARM } from "./backup-sync";
 import { generateMorningBrief } from "./morning-brief";
+import { backfillTags } from "./tag-backfill";
+import { runConfidenceTuner } from "./confidence-tuner";
 
 // ─── Badge ───
 
@@ -75,6 +77,11 @@ async function runCleanup(): Promise<void> {
     .delete();
 
   await logStatus("info", "worker", "Daily cleanup completed");
+
+  // Run confidence auto-tuner after cleanup (needs recent action_log)
+  await runConfidenceTuner().catch((err) =>
+    console.warn("[CT:worker] Confidence tuner failed:", err),
+  );
 }
 
 // ─── Snooze Wakeup ───
@@ -205,6 +212,43 @@ chrome.action.onClicked.addListener(async () => {
   }
 })();
 
+// ─── Content Script Re-injection ───
+
+/**
+ * Re-inject content scripts into already-open Slack/Google Docs tabs.
+ * This is needed after extension install/reload — manifest content_scripts
+ * only inject on new page loads, not into tabs that are already open.
+ */
+async function reinjectContentScripts(): Promise<void> {
+  const manifest = chrome.runtime.getManifest();
+  if (!manifest.content_scripts) return;
+
+  for (const cs of manifest.content_scripts) {
+    if (!cs.js?.length || !cs.matches?.length) continue;
+
+    let tabs: chrome.tabs.Tab[];
+    try {
+      tabs = await chrome.tabs.query({ url: cs.matches });
+    } catch {
+      continue;
+    }
+
+    for (const tab of tabs) {
+      if (!tab.id || tab.id === chrome.tabs.TAB_ID_NONE) continue;
+      try {
+        await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          files: cs.js,
+        });
+        console.log(`[CT:worker] Re-injected content script into tab ${tab.id} (${tab.url?.slice(0, 60)})`);
+      } catch (err) {
+        // Tab may be discarded, internal page, etc. — safe to ignore
+        console.warn(`[CT:worker] Could not inject into tab ${tab.id}:`, err);
+      }
+    }
+  }
+}
+
 // ─── Extension Lifecycle ───
 
 chrome.runtime.onInstalled.addListener(async () => {
@@ -227,6 +271,11 @@ chrome.runtime.onInstalled.addListener(async () => {
     periodInMinutes: 24 * 60,
   });
 
+  chrome.alarms.create(ALARMS.PERIODIC_BACKUP, {
+    delayInMinutes: 15,
+    periodInMinutes: 15,
+  });
+
   await scheduleMorningDigestAlarm();
   updateBadge();
 
@@ -235,12 +284,22 @@ chrome.runtime.onInstalled.addListener(async () => {
   const hasKey = !!result.anthropicApiKey;
   await updateStatus({ hasApiKey: hasKey });
   await logStatus("info", "worker", `Extension installed/updated. API key: ${hasKey ? "configured" : "NOT SET"}`);
+
+  // Re-inject content scripts into already-open Slack/Docs tabs
+  reinjectContentScripts();
+
+  // Run one-time tag backfill for existing commitments (non-blocking)
+  backfillTags().catch((err) =>
+    console.warn("[CT:worker] Tag backfill failed:", err),
+  );
 });
 
 chrome.runtime.onStartup.addListener(async () => {
   await restoreFromBackup();
   await applyUiMode();
   updateBadge();
+
+  reinjectContentScripts();
 
   // Re-create alarms — they may not survive browser restarts
   chrome.alarms.create(ALARMS.GRANOLA_POLL, {
@@ -255,11 +314,20 @@ chrome.runtime.onStartup.addListener(async () => {
     delayInMinutes: 1,
     periodInMinutes: 2,
   });
+  chrome.alarms.create(ALARMS.PERIODIC_BACKUP, {
+    delayInMinutes: 15,
+    periodInMinutes: 15,
+  });
   await scheduleMorningDigestAlarm();
 
   const result = await chrome.storage.local.get("anthropicApiKey");
   await updateStatus({ hasApiKey: !!result.anthropicApiKey });
   await logStatus("info", "worker", "Service worker started — alarms scheduled");
+
+  // Run one-time tag backfill (non-blocking)
+  backfillTags().catch((err) =>
+    console.warn("[CT:worker] Tag backfill failed:", err),
+  );
 });
 
 // ─── Message Handling ───
@@ -281,8 +349,9 @@ chrome.runtime.onMessage.addListener(
       return true;
     } else if (message.type === "MANUAL_FLUSH") {
       logStatus("info", "worker", "Manual scan triggered");
-      Promise.all([flush(), pollGranola(), pollVoiceInbox()]).then(() => {
+      Promise.all([flush(), pollGranola(true), pollVoiceInbox()]).then(() => {
         updateBadge();
+        requestBackupSave();
         sendResponse({ ok: true });
       });
       return true;
@@ -296,12 +365,89 @@ chrome.runtime.onMessage.addListener(
       sendResponse({ ok: true });
       return false;
     } else if (message.type === "RESTORE_BACKUP") {
-      restoreFromBackup()
-        .then(() => {
+      (async () => {
+        const steps: string[] = [];
+        try {
+          steps.push(`ext_id: ${chrome.runtime.id}`);
+
+          // Test native host first
+          const ping = await sendNative({ command: "ping" });
+          steps.push(`ping: ok=${ping.ok}`);
+
+          // Load backup
+          const loadResult = await sendNative({
+            command: "load_state",
+            extension_id: chrome.runtime.id,
+          });
+          const state = (loadResult as unknown as Record<string, unknown>).state as Record<string, unknown> | null;
+          steps.push(`load: ok=${loadResult.ok}, hasState=${!!state}, commitments=${(state?.commitments as unknown[])?.length ?? 0}`);
+
+          if (state) {
+            // Direct DB import — bypass mergeState to avoid any dedup issues
+            const commitments = (state.commitments ?? []) as Array<Record<string, unknown>>;
+            const existingCount = await db.commitments.count();
+            steps.push(`db_before: ${existingCount}`);
+
+            if (commitments.length > 0) {
+              // Deduplicate by hash — keep the first entry for each hash
+              const byHash = new Map<string, Record<string, unknown>>();
+              for (const c of commitments) {
+                const hash = c.hash as string;
+                if (hash && !byHash.has(hash)) byHash.set(hash, c);
+              }
+              const unique = [...byHash.values()];
+              steps.push(`deduped: ${unique.length} from ${commitments.length}`);
+
+              // Delete the entire database and re-open to guarantee clean state
+              await db.delete();
+              await db.open();
+              steps.push("db wiped and reopened");
+
+              // Now bulk-add with clean IDs
+              const cleaned = unique.map(({ id: _id, ...rest }) => rest);
+              await db.commitments.bulkAdd(cleaned as unknown as Parameters<typeof db.commitments.bulkAdd>[0]);
+              steps.push(`added: ${cleaned.length}`);
+            }
+
+            // Restore chrome.storage settings
+            const chromeStorage = state.chrome_storage as Record<string, unknown> | undefined;
+            if (chromeStorage) {
+              await chrome.storage.local.set(chromeStorage);
+              steps.push(`storage: ${Object.keys(chromeStorage).length} keys`);
+            }
+
+            // Kanban columns
+            const columns = (state.kanban_columns ?? []) as Array<Record<string, unknown>>;
+            if (columns.length > 0 && (await db.kanban_columns.count()) === 0) {
+              await db.kanban_columns.bulkAdd(columns as unknown as Parameters<typeof db.kanban_columns.bulkAdd>[0]);
+              steps.push(`columns: ${columns.length}`);
+            }
+
+            // Kanban assignments
+            const assignments = (state.kanban_assignments ?? []) as Array<Record<string, unknown>>;
+            if (assignments.length > 0) {
+              await db.kanban_assignments.bulkPut(assignments as unknown as Parameters<typeof db.kanban_assignments.bulkPut>[0]);
+              steps.push(`assignments: ${assignments.length}`);
+            }
+
+            // Dismissals
+            const dismissals = (state.dismissals ?? []) as Array<Record<string, unknown>>;
+            if (dismissals.length > 0 && (await db.dismissals.count()) === 0) {
+              const cleanedD = dismissals.map(({ id: _id, ...rest }) => rest);
+              await db.dismissals.bulkAdd(cleanedD as unknown as Parameters<typeof db.dismissals.bulkAdd>[0]);
+              steps.push(`dismissals: ${cleanedD.length}`);
+            }
+          }
+
+          const finalCount = await db.commitments.count();
+          steps.push(`db_after: ${finalCount}`);
           updateBadge();
-          sendResponse({ ok: true });
-        })
-        .catch((err) => sendResponse({ ok: false, error: err instanceof Error ? err.message : String(err) }));
+          sendResponse({ ok: finalCount > 0, steps });
+        } catch (err) {
+          steps.push(`ERROR: ${err instanceof Error ? err.message : String(err)}`);
+          sendResponse({ ok: false, error: err instanceof Error ? err.message : String(err), steps });
+        }
+      })();
       return true;
     } else if (message.type === "GRANOLA_STATUS") {
       isGranolaConnected()
@@ -357,6 +503,9 @@ chrome.alarms.onAlarm.addListener((alarm) => {
       flush();
       break;
     case BACKUP_SAVE_ALARM:
+      executeBackupSave();
+      break;
+    case ALARMS.PERIODIC_BACKUP:
       executeBackupSave();
       break;
     default:

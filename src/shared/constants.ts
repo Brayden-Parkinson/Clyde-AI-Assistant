@@ -5,7 +5,7 @@ export const COMMITMENT_REGEX =
 /** Default settings values */
 export const DEFAULTS = {
   slackScanFrequencyMin: 5,
-  granolaPollFrequencyMin: 60,
+  granolaPollFrequencyMin: 10,
   confidenceThreshold: 0.6,
   morningDigestHour: 8,
   morningDigestMinute: 0,
@@ -18,7 +18,9 @@ export const ALARMS = {
   VOICE_INBOX: "voice-inbox-poll",
   MORNING_DIGEST: "morning-digest",
   CLEANUP: "daily-cleanup",
+  PERIODIC_BACKUP: "periodic-backup",
   SNOOZE_PREFIX: "snooze-",
+  CONFIDENCE_TUNE: "confidence-tune",
 } as const;
 
 /** How long to keep raw messages (7 days in ms) */
@@ -51,8 +53,8 @@ export const CLAUDE_MODEL = "claude-sonnet-4-6";
 /** Cheaper model for simple tasks (completion detection, pattern matching) */
 export const CLAUDE_MODEL_FAST = "claude-haiku-4-5-20251001";
 
-/** API timeout for Claude calls (30 seconds) */
-export const API_TIMEOUT_MS = 30_000;
+/** API timeout for Claude calls (60 seconds) */
+export const API_TIMEOUT_MS = 60_000;
 
 /** Max retries on 429 rate limit */
 export const API_MAX_RETRIES = 2;

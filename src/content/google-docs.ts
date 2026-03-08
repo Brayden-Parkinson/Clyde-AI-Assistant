@@ -201,6 +201,8 @@ function buildMessages(): MessagePayload[] {
         channel_id: null,
         message_ts: null,
         slack_link: docLink,
+        thread_ts: null,
+        is_thread_reply: false,
       });
     }
   }
@@ -224,6 +226,8 @@ function buildMessages(): MessagePayload[] {
       channel_id: null,
       message_ts: null,
       slack_link: docLink,
+      thread_ts: null,
+      is_thread_reply: false,
     });
   }
 
@@ -367,8 +371,12 @@ function init(): void {
   });
 }
 
-if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", init);
-} else {
-  init();
+// Guard against double-injection (manifest load + programmatic re-inject)
+if (!(window as unknown as Record<string, boolean>).__clydeGDocsInjected) {
+  (window as unknown as Record<string, boolean>).__clydeGDocsInjected = true;
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init);
+  } else {
+    init();
+  }
 }

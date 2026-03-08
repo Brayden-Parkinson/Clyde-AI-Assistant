@@ -7,6 +7,16 @@ export type CommitmentStatus = "new" | "snoozed" | "actioned" | "done" | "dismis
 /** Where the commitment was captured from */
 export type SourceType = "meeting" | "slack" | "gdoc" | "voice";
 
+/** A smart tag for grouping commitments by theme */
+export interface Tag {
+  id?: number;
+  /** Display name, e.g. "AI Tooling", "1:1 Follow-ups" */
+  name: string;
+  /** Hex color for UI pill */
+  color: string;
+  createdAt: string;
+}
+
 /** Who owes the action */
 export type CommitmentDirection = "by_me" | "assigned_to_me";
 
@@ -55,6 +65,8 @@ export interface Commitment {
   triggered: boolean;
   /** Whether this commitment contains sensitive/personal content */
   sensitive: boolean;
+  /** FK to tags table, null if untagged */
+  tag_id: number | null;
   /** ISO timestamp when created */
   createdAt: string;
 }
@@ -117,6 +129,10 @@ export interface SlackMessagePayload {
     channel_id: string | null;
     message_ts: string | null;
     slack_link: string | null;
+    /** Timestamp of parent thread message (null for channel messages) */
+    thread_ts: string | null;
+    /** True if this message is a reply in a thread */
+    is_thread_reply: boolean;
   }>;
 }
 
@@ -136,6 +152,8 @@ export interface ExtractedCommitment {
   context_summary: string | null;
   triggered?: boolean;
   sensitive?: boolean;
+  tag_id?: number | null;
+  suggested_tag?: string | null;
 }
 
 /** A candidate that Claude considered but rejected */
@@ -206,6 +224,7 @@ export interface BackupState {
   settings_db: Settings[];
   kanban_columns?: CustomColumn[];
   kanban_assignments?: KanbanAssignment[];
+  tags?: Tag[];
   briefs?: MorningBrief[];
   chrome_storage: Record<string, unknown>;
   watermarks: {

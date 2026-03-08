@@ -1,5 +1,5 @@
-import { db, getDismissalPatterns, getNewCommitmentCount, getActiveCommitments } from "@shared/db";
-import { CLAUDE_MODEL, CLAUDE_MODEL_FAST, MAX_DISMISSAL_PATTERNS, API_TIMEOUT_MS, API_MAX_RETRIES, API_RETRY_DELAY_MS } from "@shared/constants";
+import { db, getDismissalPatterns, getNewCommitmentCount, getActiveCommitments, getAllTags, ensureGeneralTag, getNextTagColor } from "@shared/db";
+import { CLAUDE_MODEL, CLAUDE_MODEL_FAST, MAX_DISMISSAL_PATTERNS, API_TIMEOUT_MS, API_MAX_RETRIES, API_RETRY_DELAY_MS, DEFAULTS } from "@shared/constants";
 import type { SourceType, ExtractionResponse, ExtractedCommitment, RejectedCandidate, SlackMessagePayload, DecisionLogEntry, ConversationMessage, SlackWatermarks } from "@shared/types";
 import { logStatus, updateStatus, getStatus } from "@shared/status";
 import { getUserProfile } from "@shared/user-profile";
@@ -29,8 +29,26 @@ async function isDevModeEnabled(): Promise<boolean> {
   return result.developerMode === true;
 }
 
+async function buildTagBlock(): Promise<string> {
+  const tags = await getAllTags();
+  if (tags.length === 0) return "";
+  const tagLines = tags.map((t) => `  - ID ${t.id}: "${t.name}"`).join("\n");
+  return `
+
+SMART TAGS — assign exactly one tag to each commitment:
+Available tags:
+${tagLines}
+
+Rules:
+- Set "tag_id" to the ID of the best-matching tag.
+- If no existing tag fits well, set "tag_id" to null and add "suggested_tag" with a short theme name (e.g. "Hackathon", "AI Tooling").
+- Prefer existing tags over suggesting new ones. Default to "General" when unsure.
+- Only suggest a new tag if it represents a clear recurring theme.`;
+}
+
 async function buildSystemPrompt(sourceType: SourceType = "slack"): Promise<string> {
   const dismissalBlock = await buildDismissalBlock();
+  const tagBlock = await buildTagBlock();
   const devMode = await isDevModeEnabled();
   const profile = await getUserProfile();
   const userName = profile.userName || "the user";
@@ -159,7 +177,7 @@ Messages:
 [ME] [[User] in #engineering at 11:05 AM]: I'll try to look at it if I get time
 Output: {"commitments":[]}
 
-Return ONLY valid JSON. No markdown fences. No preamble.${rejectionBlock}${dismissalBlock}`;
+Return ONLY valid JSON. No markdown fences. No preamble.${tagBlock}${rejectionBlock}${dismissalBlock}`;
 }
 
 function buildUserMessage(
@@ -181,29 +199,46 @@ function buildUserMessage(
     byChannel.set(msg.channel, existing);
   }
 
-  // Sort each channel chronologically
+  // Sort each channel: channel messages first (chronological), then thread replies (chronological)
   for (const msgs of byChannel.values()) {
-    msgs.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+    msgs.sort((a, b) => {
+      const aIsThread = a.is_thread_reply ? 1 : 0;
+      const bIsThread = b.is_thread_reply ? 1 : 0;
+      if (aIsThread !== bIsThread) return aIsThread - bIsThread;
+      return a.timestamp.localeCompare(b.timestamp);
+    });
   }
 
   // Build output
   const sections: string[] = [];
   for (const [channel, msgs] of byChannel) {
     const lines: string[] = [`## #${channel}`, ""];
+    let inThreadSection = false;
+
     for (const msg of msgs) {
-      let prefix: string;
-      if (msg.isMine) {
-        prefix = "[ME]";
-      } else if (msg.mentionsMe && msg.tag === "candidate") {
-        prefix = "[MENTIONS ME]";
-      } else if (msg.tag === "context") {
-        prefix = "[context]";
-      } else {
-        // Non-mine candidate that doesn't mention me
-        prefix = "[MENTIONS ME]";
+      // Insert a separator when we transition from channel messages to thread replies
+      if (msg.is_thread_reply && !inThreadSection) {
+        inThreadSection = true;
+        lines.push("");
+        lines.push(`--- Thread replies in #${channel} ---`);
+        lines.push("");
       }
 
-      let line = `${prefix} [${msg.sender} in #${msg.channel} at ${msg.timestamp}]: ${msg.text}`;
+      let prefix: string;
+      if (msg.isMine) {
+        prefix = msg.is_thread_reply ? "[ME in thread]" : "[ME]";
+      } else if (msg.mentionsMe && msg.tag === "candidate") {
+        prefix = msg.is_thread_reply ? "[MENTIONS ME in thread]" : "[MENTIONS ME]";
+      } else if (msg.tag === "context") {
+        prefix = msg.is_thread_reply ? "[context in thread]" : "[context]";
+      } else {
+        prefix = msg.is_thread_reply ? "[MENTIONS ME in thread]" : "[MENTIONS ME]";
+      }
+
+      const location = msg.is_thread_reply
+        ? `replying in #${msg.channel}`
+        : `in #${msg.channel}`;
+      let line = `${prefix} [${msg.sender} ${location} at ${msg.timestamp}]: ${msg.text}`;
       if (msg.reactions && msg.reactions.length > 0) {
         line += ` [reactions: ${msg.reactions.join(", ")}]`;
       }
@@ -367,6 +402,23 @@ function buildConversationMessages(
   return { messages, slackLink };
 }
 
+// ─── Confidence Floor ───
+
+/**
+ * Get the effective confidence floor for extraction.
+ * Google Docs always uses 0.75 (stricter — docs are often stale).
+ * Slack uses the user-configured threshold (default 0.6), which may be auto-tuned.
+ */
+async function getConfidenceFloor(sourceType: SourceType): Promise<number> {
+  if (sourceType === "gdoc") return 0.75;
+  const result = await chrome.storage.local.get("confidenceThreshold");
+  const stored = result.confidenceThreshold;
+  if (typeof stored === "number" && stored >= 0.5 && stored <= 0.95) {
+    return stored;
+  }
+  return DEFAULTS.confidenceThreshold;
+}
+
 // ─── Main Extraction ───
 
 export async function extractCommitments(
@@ -409,13 +461,43 @@ export async function extractCommitments(
     const userMessage = buildUserMessage(candidates, contextMessages);
     const result = await callClaude(system, userMessage);
 
+    // ─── Confidence floor (user-configurable for Slack, fixed for Google Docs) ───
+    const confidenceFloor = await getConfidenceFloor(sourceType);
+
+    // ─── Resolve tags ───
+    const generalTagId = await ensureGeneralTag();
+    const existingTags = await getAllTags();
+    const tagIdSet = new Set(existingTags.map((t) => t.id));
+
+    // Batch-create suggested tags: collect unique suggestions first
+    const suggestedNames = new Set<string>();
+    for (const c of result.commitments) {
+      if (c.suggested_tag && !c.tag_id) {
+        suggestedNames.add(c.suggested_tag);
+      }
+    }
+    // Create any new suggested tags
+    const newTagMap = new Map<string, number>();
+    for (const name of suggestedNames) {
+      // Check if tag already exists (case-insensitive)
+      const existing = existingTags.find((t) => t.name.toLowerCase() === name.toLowerCase());
+      if (existing?.id != null) {
+        newTagMap.set(name, existing.id);
+      } else {
+        const tagCount = existingTags.length + newTagMap.size;
+        const newId = await db.tags.add({
+          name,
+          color: getNextTagColor(tagCount),
+          createdAt: new Date().toISOString(),
+        }) as number;
+        newTagMap.set(name, newId);
+      }
+    }
+
     const batchId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     let newCount = 0;
     let dupeCount = 0;
     let invalidCount = 0;
-
-    // For Google Docs, enforce a higher confidence floor (0.75)
-    const confidenceFloor = sourceType === "gdoc" ? 0.75 : 0.6;
 
     for (const commitment of result.commitments) {
       if (!isValidCommitment(commitment)) {
@@ -454,28 +536,46 @@ export async function extractCommitments(
 
       const isTriggered = commitment.triggered === true;
 
-      await db.commitments.add({
-        hash,
-        text: commitment.text,
-        original_quote: commitment.original_quote,
-        deadline: commitment.deadline,
-        urgency: commitment.urgency,
-        context: commitment.context,
-        source_type: commitment.source_type || sourceType,
-        confidence: isTriggered ? Math.max(commitment.confidence, 0.95) : commitment.confidence,
-        direction: commitment.direction,
-        likely_completed: commitment.likely_completed,
-        completion_signal: commitment.completion_signal ?? null,
-        message_timestamp: commitment.message_timestamp || new Date().toISOString(),
-        status: commitment.likely_completed ? "done" : "new",
-        snooze_until: null,
-        context_summary: commitment.context_summary ?? null,
-        conversation_messages: conversationMessages,
-        slack_link: slackLink,
-        triggered: isTriggered,
-        sensitive: commitment.sensitive === true,
-        createdAt: new Date().toISOString(),
-      });
+      // Resolve tag_id
+      let resolvedTagId: number = generalTagId;
+      if (commitment.tag_id != null && tagIdSet.has(commitment.tag_id)) {
+        resolvedTagId = commitment.tag_id;
+      } else if (commitment.suggested_tag && newTagMap.has(commitment.suggested_tag)) {
+        resolvedTagId = newTagMap.get(commitment.suggested_tag)!;
+      }
+
+      try {
+        await db.commitments.add({
+          hash,
+          text: commitment.text,
+          original_quote: commitment.original_quote,
+          deadline: commitment.deadline,
+          urgency: commitment.urgency,
+          context: commitment.context,
+          source_type: commitment.source_type || sourceType,
+          confidence: isTriggered ? Math.max(commitment.confidence, 0.95) : commitment.confidence,
+          direction: commitment.direction,
+          likely_completed: commitment.likely_completed,
+          completion_signal: commitment.completion_signal ?? null,
+          message_timestamp: commitment.message_timestamp || new Date().toISOString(),
+          status: commitment.likely_completed ? "done" : "new",
+          snooze_until: null,
+          context_summary: commitment.context_summary ?? null,
+          conversation_messages: conversationMessages,
+          slack_link: slackLink,
+          triggered: isTriggered,
+          sensitive: commitment.sensitive === true,
+          tag_id: resolvedTagId,
+          createdAt: new Date().toISOString(),
+        });
+      } catch (e) {
+        // Unique hash constraint violation — another extraction already inserted this
+        if (e instanceof Error && e.name === "ConstraintError") {
+          dupeCount++;
+          continue;
+        }
+        throw e;
+      }
 
       newCount++;
 

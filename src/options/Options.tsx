@@ -17,6 +17,7 @@ interface FormState {
   slackScanFrequency: number;
   granolaPollFrequency: number;
   confidenceThreshold: number;
+  confidenceAutoTune: boolean;
   morningDigestTime: string;
   uiMode: "popup" | "sidepanel";
   developerMode: boolean;
@@ -35,6 +36,7 @@ const DEFAULT_FORM: FormState = {
   slackScanFrequency: DEFAULTS.slackScanFrequencyMin,
   granolaPollFrequency: DEFAULTS.granolaPollFrequencyMin,
   confidenceThreshold: Math.round(DEFAULTS.confidenceThreshold * 100),
+  confidenceAutoTune: false,
   morningDigestTime: `${String(DEFAULTS.morningDigestHour).padStart(2, "0")}:${String(DEFAULTS.morningDigestMinute).padStart(2, "0")}`,
   uiMode: DEFAULTS.uiMode,
   developerMode: false,
@@ -161,6 +163,51 @@ function Toggle({ value, onChange, color }: { value: boolean; onChange: () => vo
   );
 }
 
+/** Restore backup state directly into IndexedDB (runs in Options/popup context) */
+async function doRestore(state: Record<string, unknown>): Promise<void> {
+  const commitments = (state.commitments ?? []) as Array<Record<string, unknown>>;
+
+  if (commitments.length > 0) {
+    // Deduplicate by hash
+    const byHash = new Map<string, Record<string, unknown>>();
+    for (const c of commitments) {
+      const hash = c.hash as string;
+      if (hash && !byHash.has(hash)) byHash.set(hash, c);
+    }
+    const unique = [...byHash.values()];
+
+    // Wipe and re-add — keep original IDs so kanban assignments still match
+    await db.delete();
+    await db.open();
+    await db.commitments.bulkPut(unique as unknown as Parameters<typeof db.commitments.bulkPut>[0]);
+  }
+
+  // Kanban columns
+  const columns = (state.kanban_columns ?? []) as Array<Record<string, unknown>>;
+  if (columns.length > 0 && (await db.kanban_columns.count()) === 0) {
+    await db.kanban_columns.bulkAdd(columns as unknown as Parameters<typeof db.kanban_columns.bulkAdd>[0]);
+  }
+
+  // Kanban assignments
+  const assignments = (state.kanban_assignments ?? []) as Array<Record<string, unknown>>;
+  if (assignments.length > 0) {
+    await db.kanban_assignments.bulkPut(assignments as unknown as Parameters<typeof db.kanban_assignments.bulkPut>[0]);
+  }
+
+  // Dismissals
+  const dismissals = (state.dismissals ?? []) as Array<Record<string, unknown>>;
+  if (dismissals.length > 0 && (await db.dismissals.count()) === 0) {
+    const cleaned = dismissals.map(({ id: _id, ...rest }) => rest);
+    await db.dismissals.bulkAdd(cleaned as unknown as Parameters<typeof db.dismissals.bulkAdd>[0]);
+  }
+
+  // Chrome storage settings
+  const chromeStorage = state.chrome_storage as Record<string, unknown> | undefined;
+  if (chromeStorage) {
+    await chrome.storage.local.set(chromeStorage);
+  }
+}
+
 export function SettingsPanel({ onBack }: { onBack?: () => void }) {
   const [form, setForm] = useState<FormState>(DEFAULT_FORM);
   const { toasts, showToast, dismissToast } = useToast();
@@ -174,6 +221,7 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
   const [restoring, setRestoring] = useState(false);
   const [channelFilter, setChannelFilter] = useState<Record<string, boolean>>({});
   const [discoveredChannels, setDiscoveredChannels] = useState<string[]>([]);
+  const [tuneInfo, setTuneInfo] = useState<{ lastChecked: string; dismissRate: number; totalSamples: number } | null>(null);
 
   // ─── Load settings from chrome.storage.local ───
 
@@ -189,6 +237,8 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
         "slackScanFrequency",
         "granolaPollFrequency",
         "confidenceThreshold",
+        "confidenceAutoTune",
+        "confidenceTuneInfo",
         "morningDigestTime",
         "uiMode",
         "developerMode",
@@ -209,8 +259,14 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
             result.slackScanFrequency ?? prev.slackScanFrequency,
           granolaPollFrequency:
             result.granolaPollFrequency ?? prev.granolaPollFrequency,
-          confidenceThreshold:
-            result.confidenceThreshold ?? prev.confidenceThreshold,
+          confidenceThreshold: (() => {
+            const stored = result.confidenceThreshold as number | undefined;
+            if (stored == null) return prev.confidenceThreshold;
+            // Handle old format (stored as integer %, e.g. 60) vs new format (decimal, e.g. 0.6)
+            return stored > 1 ? stored : Math.round(stored * 100);
+          })(),
+          confidenceAutoTune:
+            result.confidenceAutoTune ?? prev.confidenceAutoTune,
           morningDigestTime:
             result.morningDigestTime ?? prev.morningDigestTime,
           uiMode: result.uiMode ?? prev.uiMode,
@@ -219,6 +275,9 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
           morningBriefEnabled: result.morningBriefEnabled !== false,
           calendarIcsUrl: result.calendarIcsUrl ?? "",
         }));
+        if (result.confidenceTuneInfo) {
+          setTuneInfo(result.confidenceTuneInfo as { lastChecked: string; dismissRate: number; totalSamples: number });
+        }
         setLoaded(true);
       },
     );
@@ -281,7 +340,8 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
         slackDisplayNames: formData.slackDisplayNames,
         slackScanFrequency: formData.slackScanFrequency,
         granolaPollFrequency: formData.granolaPollFrequency,
-        confidenceThreshold: formData.confidenceThreshold,
+        confidenceThreshold: formData.confidenceThreshold / 100,
+        confidenceAutoTune: formData.confidenceAutoTune,
         morningDigestTime: formData.morningDigestTime,
         uiMode: formData.uiMode,
         developerMode: formData.developerMode,
@@ -630,7 +690,11 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
               {copiedInstall ? "Copied!" : "Copy"}
             </button>
           </div>
-          <div>Then click "Test Connection" above to verify.</div>
+          <div style={{ marginTop: 8, lineHeight: 1.6 }}>
+            After running the command:<br />
+            1. <strong>Quit Chrome completely</strong> (Cmd+Q / Ctrl+Q) and reopen it<br />
+            2. Come back here and click <strong>Test Connection</strong>
+          </div>
         </Disclosure>
       </div>
 
@@ -808,11 +872,14 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
       <div style={sectionStyle}>
         <h2 style={sectionTitle}>Detection</h2>
 
-        <div style={{ ...fieldRow, marginBottom: 0 }}>
+        <div style={fieldRow}>
           <div>
             <div style={labelStyle}>Confidence Threshold</div>
             <div style={subLabel}>
               Minimum confidence to show: {form.confidenceThreshold}%
+              {form.confidenceAutoTune && (
+                <span style={{ color: OS.blue, marginLeft: 8, fontSize: 11, fontWeight: 600 }}>AUTO</span>
+              )}
             </div>
           </div>
           <input
@@ -824,7 +891,26 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
             onChange={(e) =>
               update("confidenceThreshold", Number(e.target.value))
             }
-            style={{ width: 160, cursor: "pointer" }}
+            disabled={form.confidenceAutoTune}
+            style={{ width: 160, cursor: form.confidenceAutoTune ? "not-allowed" : "pointer", opacity: form.confidenceAutoTune ? 0.5 : 1 }}
+          />
+        </div>
+
+        <div style={{ ...fieldRow, marginBottom: 0 }}>
+          <div>
+            <div style={labelStyle}>Auto-tune Threshold</div>
+            <div style={subLabel}>
+              Adjusts threshold daily based on your dismiss rate
+              {tuneInfo && (
+                <span style={{ display: "block", marginTop: 2, color: OS.secondary, fontSize: 11 }}>
+                  Last check: {tuneInfo.dismissRate}% dismissed ({tuneInfo.totalSamples} actions)
+                </span>
+              )}
+            </div>
+          </div>
+          <Toggle
+            value={form.confidenceAutoTune}
+            onChange={() => update("confidenceAutoTune", !form.confidenceAutoTune)}
           />
         </div>
       </div>
@@ -1125,14 +1211,54 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
             onClick={async () => {
               setRestoring(true);
               try {
-                const res = await chrome.runtime.sendMessage({ type: "RESTORE_BACKUP" });
-                if (res?.ok) {
-                  showToast("Backup restored successfully", "success");
-                } else {
-                  showToast(res?.error || "No backup found", "error");
+                // Step 1: Load backup via native host (through service worker)
+                const pingRes = await chrome.runtime.sendMessage({ type: "GRANOLA_STATUS" });
+                if (!pingRes?.connected) {
+                  showToast("Native host not connected — install it first", "error");
+                  setRestoring(false);
+                  return;
                 }
+
+                // Step 2: Load backup directly via native messaging
+                const loadRes = await new Promise<Record<string, unknown>>((resolve, reject) => {
+                  chrome.runtime.sendNativeMessage(
+                    "com.commitment_tracker.granola_reader",
+                    { command: "load_state", extension_id: chrome.runtime.id },
+                    (response) => {
+                      if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+                      else resolve(response as Record<string, unknown>);
+                    }
+                  );
+                });
+
+                const state = loadRes.state as Record<string, unknown> | null;
+                if (!state) {
+                  // Try latest
+                  const latestRes = await new Promise<Record<string, unknown>>((resolve, reject) => {
+                    chrome.runtime.sendNativeMessage(
+                      "com.commitment_tracker.granola_reader",
+                      { command: "load_latest_state" },
+                      (response) => {
+                        if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+                        else resolve(response as Record<string, unknown>);
+                      }
+                    );
+                  });
+                  const latestState = latestRes.state as Record<string, unknown> | null;
+                  if (!latestState) {
+                    showToast("No backup found on disk", "error");
+                    setRestoring(false);
+                    return;
+                  }
+                  await doRestore(latestState);
+                } else {
+                  await doRestore(state);
+                }
+
+                showToast("Backup restored successfully!", "success");
               } catch (err) {
-                showToast("Failed — is the native host installed?", "error");
+                console.error("[Clyde:Settings] Restore error:", err);
+                showToast(`Restore failed: ${err instanceof Error ? err.message : String(err)}`, "error");
               } finally {
                 setRestoring(false);
               }
