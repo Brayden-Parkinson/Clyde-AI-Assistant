@@ -110,10 +110,31 @@ export function ViewToolbar({ filter, onFilterChange, search, onSearchChange, ta
         </div>
       </div>
 
-      {/* Tag filter chips */}
-      {hasTags && (
-        <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-          {tags!.filter((t) => t.name !== "General").map((t) => {
+      {/* Tag row: Smart Tags button + filter chips */}
+      {(hasTags || onSmartTags) && (
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+          {onSmartTags && (
+            <>
+              <button
+                onClick={onSmartTags}
+                style={{
+                  fontSize: 11, fontWeight: 700, fontFamily: OS.font,
+                  padding: "3px 9px", borderRadius: 6,
+                  border: `1px solid ${OS.blue}`,
+                  background: `${OS.blue}12`, color: OS.blue,
+                  cursor: "pointer", lineHeight: 1.6,
+                  whiteSpace: "nowrap" as const,
+                  letterSpacing: "0.01em",
+                }}
+              >
+                ✦ Tags
+              </button>
+              {hasTags && (
+                <span style={{ width: 1, height: 14, background: OS.border, flexShrink: 0 }} />
+              )}
+            </>
+          )}
+          {hasTags && tags!.filter((t) => t.name !== "General").map((t) => {
             const isActive = selectedTags?.includes(t.id!);
             return (
               <button
@@ -138,21 +159,6 @@ export function ViewToolbar({ filter, onFilterChange, search, onSearchChange, ta
               </button>
             );
           })}
-          {onSmartTags && (
-            <button
-              onClick={onSmartTags}
-              style={{
-                fontSize: 11, fontWeight: 600, fontFamily: OS.font,
-                padding: "2px 8px", borderRadius: 10,
-                border: `1px solid ${OS.border}`,
-                background: OS.white, color: OS.secondary,
-                cursor: "pointer", lineHeight: 1.6,
-                whiteSpace: "nowrap" as const,
-              }}
-            >
-              ✦ Smart Tags
-            </button>
-          )}
         </div>
       )}
     </div>
