@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useMemo, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { useLiveQuery } from "dexie-react-hooks";
 import { OS } from "@shared/tokens";
 import type { Commitment, CompletionSuggestion, Tag } from "@shared/types";
@@ -968,13 +969,13 @@ export function KanbanBoard({
 
   return (
     <div>
-      {/* Edit modal */}
-      {editingItem && editingItem.id != null && (
+      {/* Edit modal — portalled to body so it's not clipped by overflow containers */}
+      {editingItem && editingItem.id != null && createPortal(
         <div
           onClick={() => setEditingItem(null)}
           style={{
-            position: "fixed", inset: 0, zIndex: 200,
-            background: "rgba(0,0,0,0.35)",
+            position: "fixed", inset: 0, zIndex: 9999,
+            background: "rgba(0,0,0,0.4)",
             display: "flex", alignItems: "center", justifyContent: "center",
           }}
         >
@@ -983,49 +984,57 @@ export function KanbanBoard({
             style={{
               background: OS.white, borderRadius: 10,
               border: `1px solid ${OS.border}`,
-              boxShadow: "0 8px 32px rgba(0,0,0,0.18)",
-              padding: "20px 22px",
-              width: 320, maxWidth: "90vw",
+              boxShadow: "0 8px 32px rgba(0,0,0,0.22)",
+              padding: "18px 20px",
+              width: 300, maxWidth: "calc(100vw - 32px)",
+              boxSizing: "border-box",
             }}
           >
+            {/* Header */}
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
               <span style={{ fontSize: 13, fontWeight: 700, color: OS.text }}>Edit commitment</span>
               <button
                 onClick={() => setEditingItem(null)}
                 style={{
                   background: "none", border: "none", cursor: "pointer",
-                  color: OS.muted, fontSize: 16, lineHeight: 1, padding: 2,
+                  color: OS.muted, fontSize: 18, lineHeight: 1, padding: "0 2px",
+                  fontFamily: OS.font,
                 }}
               >
                 ×
               </button>
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "80px 1fr", rowGap: 10, alignItems: "center" }}>
+            {/* Fields — stacked layout avoids grid overflow issues */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+
               {/* Description */}
-              <span style={{ fontSize: 11, color: OS.muted, fontWeight: 500 }}>Description</span>
-              <textarea
-                value={editText}
-                onChange={(e) => setEditText(e.target.value)}
-                onBlur={() => {
-                  if (editText.trim() && editText !== editingItem.text) {
-                    onMetaUpdate?.(editingItem.id!, { text: editText.trim() });
-                    setEditingItem((prev) => prev ? { ...prev, text: editText.trim() } : prev);
-                  }
-                }}
-                rows={2}
-                style={{
-                  fontSize: 12, fontFamily: OS.font, color: OS.text,
-                  border: `1px solid ${OS.border}`, borderRadius: 4,
-                  padding: "4px 7px", resize: "vertical", width: "100%",
-                  boxSizing: "border-box", outline: "none", background: OS.white,
-                }}
-              />
+              <div>
+                <div style={{ fontSize: 11, color: OS.muted, fontWeight: 500, marginBottom: 4 }}>Description</div>
+                <textarea
+                  value={editText}
+                  onChange={(e) => setEditText(e.target.value)}
+                  onBlur={() => {
+                    if (editText.trim() && editText !== editingItem.text) {
+                      onMetaUpdate?.(editingItem.id!, { text: editText.trim() });
+                      setEditingItem((prev) => prev ? { ...prev, text: editText.trim() } : prev);
+                    }
+                  }}
+                  rows={3}
+                  style={{
+                    fontSize: 12, fontFamily: OS.font, color: OS.text,
+                    border: `1px solid ${OS.border}`, borderRadius: 5,
+                    padding: "6px 8px", resize: "vertical",
+                    width: "100%", boxSizing: "border-box",
+                    outline: "none", background: OS.white, lineHeight: 1.4,
+                  }}
+                />
+              </div>
 
               {/* Tag */}
               {allTags && allTags.length > 0 && (
-                <>
-                  <span style={{ fontSize: 11, color: OS.muted, fontWeight: 500 }}>Tag</span>
+                <div>
+                  <div style={{ fontSize: 11, color: OS.muted, fontWeight: 500, marginBottom: 4 }}>Tag</div>
                   <select
                     value={editingItem.tag_id ?? ""}
                     onChange={(e) => {
@@ -1035,8 +1044,9 @@ export function KanbanBoard({
                     }}
                     style={{
                       fontSize: 12, fontFamily: OS.font, color: OS.text,
-                      border: `1px solid ${OS.border}`, borderRadius: 4,
-                      padding: "4px 6px", background: OS.white, outline: "none", width: "100%",
+                      border: `1px solid ${OS.border}`, borderRadius: 5,
+                      padding: "5px 7px", background: OS.white, outline: "none",
+                      width: "100%", boxSizing: "border-box",
                     }}
                   >
                     <option value="">— none —</option>
@@ -1044,113 +1054,128 @@ export function KanbanBoard({
                       <option key={t.id} value={t.id}>{t.name}</option>
                     ))}
                   </select>
-                </>
+                </div>
               )}
 
               {/* Urgency */}
-              <span style={{ fontSize: 11, color: OS.muted, fontWeight: 500 }}>Urgency</span>
-              <div style={{ display: "flex", gap: 4 }}>
-                {(["high", "medium", "low"] as Urgency[]).map((u) => (
-                  <button
-                    key={u}
-                    onClick={() => {
-                      onMetaUpdate?.(editingItem.id!, { urgency: u });
-                      setEditingItem((prev) => prev ? { ...prev, urgency: u } : prev);
-                    }}
-                    style={{
-                      padding: "3px 8px", fontSize: 11, fontFamily: OS.font,
-                      fontWeight: editingItem.urgency === u ? 700 : 400,
-                      color: editingItem.urgency === u
-                        ? (u === "high" ? OS.red : u === "medium" ? "#b08d33" : OS.muted)
-                        : OS.muted,
-                      background: editingItem.urgency === u ? `${u === "high" ? OS.red : u === "medium" ? "#b08d33" : OS.faint}1a` : "transparent",
-                      border: `1px solid ${editingItem.urgency === u ? (u === "high" ? OS.red : u === "medium" ? "#b08d33" : OS.faint) : OS.border}`,
-                      borderRadius: 4, cursor: "pointer",
-                    }}
-                  >
-                    {u}
-                  </button>
-                ))}
+              <div>
+                <div style={{ fontSize: 11, color: OS.muted, fontWeight: 500, marginBottom: 4 }}>Urgency</div>
+                <div style={{ display: "flex", gap: 6 }}>
+                  {(["high", "medium", "low"] as Urgency[]).map((u) => {
+                    const active = editingItem.urgency === u;
+                    const accent = u === "high" ? OS.red : u === "medium" ? "#b08d33" : OS.faint;
+                    return (
+                      <button
+                        key={u}
+                        onClick={() => {
+                          onMetaUpdate?.(editingItem.id!, { urgency: u });
+                          setEditingItem((prev) => prev ? { ...prev, urgency: u } : prev);
+                        }}
+                        style={{
+                          flex: 1, padding: "5px 0", fontSize: 11, fontFamily: OS.font,
+                          fontWeight: active ? 700 : 400,
+                          color: active ? accent : OS.muted,
+                          background: active ? `${accent}18` : "transparent",
+                          border: `1px solid ${active ? accent : OS.border}`,
+                          borderRadius: 5, cursor: "pointer",
+                        }}
+                      >
+                        {u}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
 
               {/* Deadline */}
-              <span style={{ fontSize: 11, color: OS.muted, fontWeight: 500 }}>Deadline</span>
-              <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-                <input
-                  type="datetime-local"
-                  value={editingItem.deadline ? editingItem.deadline.slice(0, 16) : ""}
-                  onChange={(e) => {
-                    const iso = e.target.value ? new Date(e.target.value).toISOString() : null;
-                    onMetaUpdate?.(editingItem.id!, { deadline: iso });
-                    setEditingItem((prev) => prev ? { ...prev, deadline: iso } : prev);
-                  }}
-                  style={{
-                    fontSize: 11, fontFamily: OS.font, color: OS.text,
-                    border: `1px solid ${OS.border}`, borderRadius: 4,
-                    padding: "3px 5px", background: OS.white, outline: "none", flex: 1,
-                  }}
-                />
-                {editingItem.deadline && (
-                  <button
-                    onClick={() => {
-                      onMetaUpdate?.(editingItem.id!, { deadline: null });
-                      setEditingItem((prev) => prev ? { ...prev, deadline: null } : prev);
+              <div>
+                <div style={{ fontSize: 11, color: OS.muted, fontWeight: 500, marginBottom: 4 }}>Deadline</div>
+                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                  <input
+                    type="datetime-local"
+                    value={editingItem.deadline ? editingItem.deadline.slice(0, 16) : ""}
+                    onChange={(e) => {
+                      const iso = e.target.value ? new Date(e.target.value).toISOString() : null;
+                      onMetaUpdate?.(editingItem.id!, { deadline: iso });
+                      setEditingItem((prev) => prev ? { ...prev, deadline: iso } : prev);
                     }}
                     style={{
-                      padding: "3px 6px", fontSize: 11, fontFamily: OS.font,
-                      color: OS.muted, border: `1px solid ${OS.border}`,
-                      borderRadius: 4, background: OS.white, cursor: "pointer",
+                      fontSize: 11, fontFamily: OS.font, color: OS.text,
+                      border: `1px solid ${OS.border}`, borderRadius: 5,
+                      padding: "5px 7px", background: OS.white, outline: "none",
+                      flex: 1, minWidth: 0, boxSizing: "border-box",
                     }}
-                  >
-                    Clear
-                  </button>
-                )}
+                  />
+                  {editingItem.deadline && (
+                    <button
+                      onClick={() => {
+                        onMetaUpdate?.(editingItem.id!, { deadline: null });
+                        setEditingItem((prev) => prev ? { ...prev, deadline: null } : prev);
+                      }}
+                      style={{
+                        padding: "5px 8px", fontSize: 11, fontFamily: OS.font,
+                        color: OS.muted, border: `1px solid ${OS.border}`,
+                        borderRadius: 5, background: OS.white, cursor: "pointer",
+                        whiteSpace: "nowrap", flexShrink: 0,
+                      }}
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
               </div>
 
-              {/* Direction */}
-              <span style={{ fontSize: 11, color: OS.muted, fontWeight: 500 }}>Direction</span>
-              <div style={{ display: "flex", gap: 4 }}>
-                {(["by_me", "assigned_to_me"] as CommitmentDirection[]).map((d) => (
-                  <button
-                    key={d}
-                    onClick={() => {
-                      onMetaUpdate?.(editingItem.id!, { direction: d });
-                      setEditingItem((prev) => prev ? { ...prev, direction: d } : prev);
-                    }}
-                    style={{
-                      padding: "3px 8px", fontSize: 11, fontFamily: OS.font,
-                      fontWeight: editingItem.direction === d ? 700 : 400,
-                      color: editingItem.direction === d ? OS.blue : OS.muted,
-                      background: editingItem.direction === d ? `${OS.blue}14` : "transparent",
-                      border: `1px solid ${editingItem.direction === d ? OS.blue : OS.border}`,
-                      borderRadius: 4, cursor: "pointer",
-                    }}
-                  >
-                    {d === "by_me" ? "Mine" : "Assigned"}
-                  </button>
-                ))}
+              {/* Direction + Sensitive row */}
+              <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 11, color: OS.muted, fontWeight: 500, marginBottom: 4 }}>Direction</div>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    {(["by_me", "assigned_to_me"] as CommitmentDirection[]).map((d) => {
+                      const active = editingItem.direction === d;
+                      return (
+                        <button
+                          key={d}
+                          onClick={() => {
+                            onMetaUpdate?.(editingItem.id!, { direction: d });
+                            setEditingItem((prev) => prev ? { ...prev, direction: d } : prev);
+                          }}
+                          style={{
+                            flex: 1, padding: "5px 0", fontSize: 11, fontFamily: OS.font,
+                            fontWeight: active ? 700 : 400,
+                            color: active ? OS.blue : OS.muted,
+                            background: active ? `${OS.blue}14` : "transparent",
+                            border: `1px solid ${active ? OS.blue : OS.border}`,
+                            borderRadius: 5, cursor: "pointer",
+                          }}
+                        >
+                          {d === "by_me" ? "Mine" : "Assigned"}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 11, color: OS.muted, fontWeight: 500, marginBottom: 4 }}>Sensitive</div>
+                  <label style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer", marginTop: 3 }}>
+                    <input
+                      type="checkbox"
+                      checked={editingItem.sensitive}
+                      onChange={(e) => {
+                        onMetaUpdate?.(editingItem.id!, { sensitive: e.target.checked });
+                        setEditingItem((prev) => prev ? { ...prev, sensitive: e.target.checked } : prev);
+                      }}
+                      style={{ cursor: "pointer", width: 14, height: 14 }}
+                    />
+                    <span style={{ fontSize: 11, color: OS.muted, whiteSpace: "nowrap" }}>Hide</span>
+                  </label>
+                </div>
               </div>
-
-              {/* Sensitive */}
-              <span style={{ fontSize: 11, color: OS.muted, fontWeight: 500 }}>Sensitive</span>
-              <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
-                <input
-                  type="checkbox"
-                  checked={editingItem.sensitive}
-                  onChange={(e) => {
-                    onMetaUpdate?.(editingItem.id!, { sensitive: e.target.checked });
-                    setEditingItem((prev) => prev ? { ...prev, sensitive: e.target.checked } : prev);
-                  }}
-                  style={{ cursor: "pointer" }}
-                />
-                <span style={{ fontSize: 11, color: OS.muted }}>Hide in privacy mode</span>
-              </label>
             </div>
 
             <button
               onClick={() => setEditingItem(null)}
               style={{
-                marginTop: 18, width: "100%", padding: "8px 0",
+                marginTop: 16, width: "100%", padding: "8px 0",
                 fontSize: 12, fontWeight: 600, fontFamily: OS.font,
                 background: OS.blue, color: "#fff",
                 border: "none", borderRadius: 6, cursor: "pointer",
@@ -1159,7 +1184,8 @@ export function KanbanBoard({
               Done
             </button>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
 
       {/* Column grid — scroll wrapper clips to container, inner grid enforces min-width */}
