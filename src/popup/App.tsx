@@ -2265,6 +2265,8 @@ export default function App() {
                   privacyMode={privacyMode}
                   onTodoOverflow={handleTodoOverflow}
                   tagMap={tagMap}
+                  allTags={effectiveTags}
+                  onMetaUpdate={onMetaUpdate}
                 />
               </>
             )}
