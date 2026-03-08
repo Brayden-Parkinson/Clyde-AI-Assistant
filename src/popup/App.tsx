@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useEffect, useRef } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { OS } from "@shared/tokens";
-import type { Commitment, CompletionSuggestion, MorningBrief, DecisionLogEntry, ActionLogEntry } from "@shared/types";
+import type { Commitment, CompletionSuggestion, MorningBrief, DecisionLogEntry, ActionLogEntry, Tag } from "@shared/types";
 import type { PipelineStatus } from "@shared/status";
 import { db } from "@shared/db";
 import { useCommitments } from "./hooks/useCommitments";
@@ -15,6 +15,7 @@ import {
   DEMO_SUGGESTIONS,
   DEMO_BRIEFS,
   DEMO_DECISION_LOG,
+  DEMO_TAGS,
 } from "@shared/demo-data";
 import { CommitmentCard } from "./components/CommitmentCard";
 import { KanbanBoard } from "./components/KanbanBoard";
@@ -1567,12 +1568,11 @@ function LeftNav({
         </div>
 
         {/* Scan button */}
-        {(scanAgo || demoMode) && (
-          <div style={{ borderTop: "1px solid rgba(255,255,255,0.1)", padding: "8px 0", width: "100%", textAlign: "center" }}>
+        <div style={{ borderTop: "1px solid rgba(255,255,255,0.1)", padding: "8px 0", width: "100%", textAlign: "center" }}>
             <button
               onClick={onRescan}
               disabled={scanning}
-              title={scanning ? "Scanning..." : `Scanned ${demoMode ? "just now" : scanAgo}`}
+              title={scanning ? "Scanning..." : scanAgo ? `Scanned ${demoMode ? "just now" : scanAgo}` : "Scan now"}
               style={{
                 width: 36, height: 36, borderRadius: 8,
                 display: "inline-flex", alignItems: "center", justifyContent: "center",
@@ -1585,8 +1585,7 @@ function LeftNav({
             >
               {scanning ? <IconLoader size={12} /> : <IconRefresh size={12} />}
             </button>
-          </div>
-        )}
+        </div>
 
         {/* Settings icon */}
         <div style={{ borderTop: "1px solid rgba(255,255,255,0.1)", padding: "10px 0", width: "100%", textAlign: "center" }}>
@@ -1666,14 +1665,13 @@ function LeftNav({
       </div>
 
       {/* Scan status */}
-      {(scanAgo || demoMode) && (
-        <div style={{
+      <div style={{
           borderTop: "1px solid rgba(255,255,255,0.1)",
           padding: "10px 14px",
           display: "flex", alignItems: "center", gap: 8,
         }}>
           <span style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", flex: 1 }}>
-            {demoMode ? "Scanned just now" : `Scanned ${scanAgo}`}
+            {demoMode ? "Scanned just now" : scanAgo ? `Scanned ${scanAgo}` : "Not scanned yet"}
           </span>
           <button
             onClick={onRescan}
@@ -1689,8 +1687,7 @@ function LeftNav({
           >
             {scanning ? <IconLoader size={12} /> : <IconRefresh size={12} />}
           </button>
-        </div>
-      )}
+      </div>
 
       {/* Settings footer */}
       <div style={{ borderTop: "1px solid rgba(255,255,255,0.1)", padding: "10px 14px" }}>
@@ -1756,6 +1753,16 @@ export default function App() {
   const { settings: displaySettings, update: updateDisplay } = useDisplaySettings();
   const nav = useNavCollapsed();
 
+  const tags = useLiveQuery(() => db.tags.orderBy("name").toArray(), []) ?? [];
+  const [listSelectedTags, setListSelectedTags] = useState<number[]>([]);
+  const [boardSelectedTags, setBoardSelectedTags] = useState<number[]>([]);
+  const toggleListTag = useCallback((id: number) => {
+    setListSelectedTags((prev) => prev.includes(id) ? prev.filter((t) => t !== id) : [...prev, id]);
+  }, []);
+  const toggleBoardTag = useCallback((id: number) => {
+    setBoardSelectedTags((prev) => prev.includes(id) ? prev.filter((t) => t !== id) : [...prev, id]);
+  }, []);
+
   const realPendingSuggestions = useLiveQuery(
     () => db.completion_suggestions.where("status").equals("pending").toArray(),
     []
@@ -1795,6 +1802,12 @@ export default function App() {
   const counts = demoMode ? DEMO_COUNTS : realCounts;
   const kanban = demoMode ? DEMO_KANBAN : realKanban;
   const pendingSuggestions = demoMode ? DEMO_SUGGESTIONS : realPendingSuggestions;
+  const effectiveTags = demoMode ? DEMO_TAGS : tags;
+  const tagMap = React.useMemo(() => {
+    const m = new Map<number, Tag>();
+    for (const t of effectiveTags) if (t.id != null) m.set(t.id, t);
+    return m;
+  }, [effectiveTags]);
   const demoActions: Actions = {
     handleDismiss: async () => "Dismissed",
     handleClose: async () => "Closed",
@@ -1900,6 +1913,15 @@ export default function App() {
     [actions, showToast],
   );
 
+  const onMetaUpdate = useCallback(
+    async (id: number, changes: Partial<Pick<Commitment, "tag_id" | "urgency" | "deadline" | "text" | "direction" | "sensitive">>) => {
+      if (demoMode) return;
+      await db.commitments.update(id, changes);
+      showToast("Updated");
+    },
+    [demoMode, showToast],
+  );
+
   const onAcceptCompletion = useCallback(async (suggestionId: number, commitmentId: number) => {
     if (demoMode) { showToast("\u2713 Marked done"); return; }
     const now = new Date().toISOString();
@@ -1969,6 +1991,7 @@ export default function App() {
       return true;
     })
     .filter((c) => matchesSearch(c, listSearch))
+    .filter((c) => listSelectedTags.length === 0 || (c.tag_id != null && listSelectedTags.includes(c.tag_id)))
     .sort((a, b) => {
       if (a.likely_completed !== b.likely_completed) {
         return a.likely_completed ? 1 : -1;
@@ -1990,14 +2013,18 @@ export default function App() {
 
   // ─── Board view: apply search to kanban columns ───
 
-  const boardTodo = kanban.todo.filter((c) => matchesSearch(c, boardSearch));
-  const boardInProgress = kanban.inProgress.filter((c) => matchesSearch(c, boardSearch));
-  const boardDone = kanban.done.filter((c) => matchesSearch(c, boardSearch));
+  const matchesBoardTag = (c: Commitment) => boardSelectedTags.length === 0 || (c.tag_id != null && boardSelectedTags.includes(c.tag_id));
+  const boardTodo = kanban.todo.filter((c) => matchesSearch(c, boardSearch) && matchesBoardTag(c));
+  const boardInProgress = kanban.inProgress.filter((c) => matchesSearch(c, boardSearch) && matchesBoardTag(c));
+  const boardDone = kanban.done.filter((c) => matchesSearch(c, boardSearch) && matchesBoardTag(c));
 
   const renderCard = (item: Commitment) => (
     <CommitmentCard
       key={item.id}
       item={item}
+      allTags={effectiveTags}
+      onMetaUpdate={onMetaUpdate}
+      tag={item.tag_id != null ? tagMap.get(item.tag_id) : undefined}
       isExpanded={expandedId === item.id}
       isSelected={selectedId === item.id}
       isNarrow={!isWide}
@@ -2216,6 +2243,9 @@ export default function App() {
                   onFilterChange={setBoardFilter}
                   search={boardSearch}
                   onSearchChange={setBoardSearch}
+                  tags={effectiveTags}
+                  selectedTags={boardSelectedTags}
+                  onTagToggle={toggleBoardTag}
                 />
                 <KanbanBoard
                   todo={boardTodo}
@@ -2234,6 +2264,7 @@ export default function App() {
                   displaySettings={displaySettings}
                   privacyMode={privacyMode}
                   onTodoOverflow={handleTodoOverflow}
+                  tagMap={tagMap}
                 />
               </>
             )}
@@ -2247,6 +2278,9 @@ export default function App() {
                     onFilterChange={setListFilter}
                     search={listSearch}
                     onSearchChange={setListSearch}
+                    tags={effectiveTags}
+                    selectedTags={listSelectedTags}
+                    onTagToggle={toggleListTag}
                   />
                 </div>
                 {filtered.length === 0 ? (

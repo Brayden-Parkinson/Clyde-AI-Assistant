@@ -1,6 +1,6 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { OS } from "@shared/tokens";
-import type { Commitment, SourceType } from "@shared/types";
+import type { Commitment, SourceType, Tag, Urgency, CommitmentDirection } from "@shared/types";
 import { ActionButton } from "./ActionButton";
 import { IconChat, IconDocument, IconMic, IconCalendar, IconBell, IconCheck, IconX } from "./Icons";
 
@@ -45,8 +45,12 @@ interface DisplaySettings {
 
 // ─── Main component ───
 
+type MetaUpdate = Partial<Pick<Commitment, "tag_id" | "urgency" | "deadline" | "text" | "direction" | "sensitive">>;
+
 interface CommitmentCardProps {
   item: Commitment;
+  tag?: Tag;
+  allTags?: Tag[];
   isExpanded: boolean;
   isSelected?: boolean;
   isNarrow?: boolean;
@@ -62,10 +66,13 @@ interface CommitmentCardProps {
   onCalendar: (commitment: Commitment) => void;
   onSlack: (commitment: Commitment) => void;
   onReminder: (id: number) => void;
+  onMetaUpdate?: (id: number, changes: MetaUpdate) => void;
 }
 
 export function CommitmentCard({
   item,
+  tag,
+  allTags,
   isExpanded,
   isSelected,
   isNarrow,
@@ -81,8 +88,16 @@ export function CommitmentCard({
   onCalendar,
   onSlack,
   onReminder,
+  onMetaUpdate,
 }: CommitmentCardProps) {
   const [hovered, setHovered] = useState(false);
+  const [showEdit, setShowEdit] = useState(false);
+  const [editText, setEditText] = useState(item.text);
+
+  // Sync editText if the item changes externally (e.g. AI update)
+  useEffect(() => { setEditText(item.text); }, [item.text]);
+  // Close edit panel when card collapses
+  useEffect(() => { if (!isExpanded) setShowEdit(false); }, [isExpanded]);
   const timeLeft = formatTime(item.deadline);
   const isOverdue = timeLeft === "Overdue";
   const isUrgent = item.urgency === "high" || isOverdue;
@@ -148,15 +163,31 @@ export function CommitmentCard({
             style={{
               display: "flex",
               alignItems: "center",
-              gap: 6,
+              gap: 5,
               marginTop: 3,
               fontSize: 12.5,
               color: OS.secondary,
               fontFamily: OS.font,
+              flexWrap: "wrap",
+              rowGap: 2,
             }}
           >
-            {ds.showSourceBadges && <span style={{ display: "inline-flex", alignItems: "center" }}>{sourceIconEl(item.source_type)}</span>}
-            <span style={blurred ? { filter: "blur(4px)", userSelect: "none" } : undefined}>{item.context}</span>
+            {ds.showSourceBadges && <span style={{ display: "inline-flex", alignItems: "center", flexShrink: 0 }}>{sourceIconEl(item.source_type)}</span>}
+            <span style={{
+              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+              minWidth: 0, maxWidth: 180,
+              ...(blurred ? { filter: "blur(4px)", userSelect: "none" as const } : {}),
+            }}>{item.context}</span>
+            {tag && tag.name !== "General" && (
+              <span style={{
+                fontSize: 10, fontWeight: 600, padding: "1px 6px",
+                borderRadius: 3, background: tag.color + "18",
+                color: tag.color, lineHeight: 1.6, whiteSpace: "nowrap",
+                flexShrink: 0,
+              }}>
+                {tag.name}
+              </span>
+            )}
             {item.triggered && (
               <span style={{
                 fontSize: 10, fontWeight: 500, padding: "1px 5px",
@@ -318,17 +349,17 @@ export function CommitmentCard({
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             <ActionButton
               icon={<IconCalendar size={12} />}
-              label="Add to calendar"
+              label="Calendar"
               onClick={(e) => {
                 e.stopPropagation();
                 onCalendar(item);
               }}
-              variant="primary"
+              variant="default"
               shortcut="C"
             />
             <ActionButton
               icon={<IconBell size={12} />}
-              label="Remind me later"
+              label="Remind"
               onClick={(e) => {
                 e.stopPropagation();
                 if (item.id != null) onReminder(item.id);
@@ -338,7 +369,7 @@ export function CommitmentCard({
             />
             <ActionButton
               icon={<IconCheck size={12} />}
-              label="Already done"
+              label="Done"
               onClick={(e) => {
                 e.stopPropagation();
                 if (item.id != null) onDone(item.id);
@@ -348,7 +379,7 @@ export function CommitmentCard({
             />
             <ActionButton
               icon={<IconX size={12} />}
-              label="Close"
+              label="Dismiss"
               onClick={(e) => {
                 e.stopPropagation();
                 if (item.id != null) onClose(item.id);
@@ -358,7 +389,7 @@ export function CommitmentCard({
             />
             <ActionButton
               icon={<IconX size={12} />}
-              label="Not a commitment"
+              label="Never extract"
               onClick={(e) => {
                 e.stopPropagation();
                 if (item.id != null) onDismiss(item.id);
@@ -482,6 +513,159 @@ export function CommitmentCard({
                 >
                   Open in Slack
                 </a>
+              )}
+            </div>
+          )}
+
+          {/* ─ Override AI decisions ─ */}
+          {onMetaUpdate && item.id != null && (
+            <div
+              style={{ marginTop: 14, borderTop: `1px solid ${OS.border}`, paddingTop: 10 }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <button
+                onClick={() => setShowEdit((v) => !v)}
+                style={{
+                  background: "none", border: "none", padding: 0,
+                  fontSize: 11, fontWeight: 500, color: OS.muted,
+                  cursor: "pointer", fontFamily: OS.font,
+                  display: "flex", alignItems: "center", gap: 4,
+                }}
+              >
+                <span>{showEdit ? "▲" : "▼"}</span>
+                <span>Override AI decisions</span>
+              </button>
+
+              {showEdit && (
+                <div style={{
+                  marginTop: 10, display: "grid",
+                  gridTemplateColumns: "80px 1fr",
+                  rowGap: 8, columnGap: 10, alignItems: "center",
+                }}>
+                  {/* Description */}
+                  <span style={{ fontSize: 11, color: OS.muted, fontWeight: 500 }}>Description</span>
+                  <input
+                    value={editText}
+                    onChange={(e) => setEditText(e.target.value)}
+                    onBlur={() => { if (editText.trim() && editText !== item.text) onMetaUpdate(item.id!, { text: editText.trim() }); }}
+                    onClick={(e) => e.stopPropagation()}
+                    style={{
+                      fontSize: 12, padding: "4px 7px", fontFamily: OS.font,
+                      border: `1px solid ${OS.border}`, borderRadius: 4,
+                      outline: "none", background: OS.white, color: OS.text,
+                    }}
+                  />
+
+                  {/* Tag */}
+                  {allTags && allTags.length > 0 && (
+                    <>
+                      <span style={{ fontSize: 11, color: OS.muted, fontWeight: 500 }}>Tag</span>
+                      <select
+                        value={item.tag_id ?? ""}
+                        onChange={(e) => {
+                          const val = e.target.value ? Number(e.target.value) : null;
+                          onMetaUpdate(item.id!, { tag_id: val });
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                        style={{
+                          fontSize: 12, padding: "4px 7px", fontFamily: OS.font,
+                          border: `1px solid ${OS.border}`, borderRadius: 4,
+                          background: OS.white, color: OS.text, cursor: "pointer",
+                        }}
+                      >
+                        <option value="">— none —</option>
+                        {allTags.map((t) => (
+                          <option key={t.id} value={t.id}>{t.name}</option>
+                        ))}
+                      </select>
+                    </>
+                  )}
+
+                  {/* Urgency */}
+                  <span style={{ fontSize: 11, color: OS.muted, fontWeight: 500 }}>Urgency</span>
+                  <div style={{ display: "flex", gap: 4 }}>
+                    {(["high", "medium", "low"] as Urgency[]).map((u) => (
+                      <button
+                        key={u}
+                        onClick={(e) => { e.stopPropagation(); onMetaUpdate(item.id!, { urgency: u }); }}
+                        style={{
+                          padding: "3px 8px", fontSize: 11, fontFamily: OS.font,
+                          border: `1px solid ${item.urgency === u ? (u === "high" ? OS.red : u === "medium" ? "#b08d33" : OS.faint) : OS.border}`,
+                          borderRadius: 4, cursor: "pointer",
+                          background: item.urgency === u ? (u === "high" ? OS.red + "12" : u === "medium" ? "#b08d3312" : OS.bg) : OS.white,
+                          color: item.urgency === u ? (u === "high" ? OS.red : u === "medium" ? "#b08d33" : OS.secondary) : OS.secondary,
+                          fontWeight: item.urgency === u ? 600 : 400,
+                        }}
+                      >
+                        {u}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Deadline */}
+                  <span style={{ fontSize: 11, color: OS.muted, fontWeight: 500 }}>Deadline</span>
+                  <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                    <input
+                      type="datetime-local"
+                      value={item.deadline ? item.deadline.slice(0, 16) : ""}
+                      onChange={(e) => {
+                        onMetaUpdate(item.id!, { deadline: e.target.value ? new Date(e.target.value).toISOString() : null });
+                      }}
+                      onClick={(e) => e.stopPropagation()}
+                      style={{
+                        fontSize: 11, padding: "3px 6px", fontFamily: OS.font,
+                        border: `1px solid ${OS.border}`, borderRadius: 4,
+                        background: OS.white, color: OS.text, cursor: "pointer",
+                      }}
+                    />
+                    {item.deadline && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); onMetaUpdate(item.id!, { deadline: null }); }}
+                        style={{
+                          padding: "3px 6px", fontSize: 11, fontFamily: OS.font,
+                          border: `1px solid ${OS.border}`, borderRadius: 4,
+                          background: OS.white, color: OS.muted, cursor: "pointer",
+                        }}
+                        title="Clear deadline"
+                      >×</button>
+                    )}
+                  </div>
+
+                  {/* Direction */}
+                  <span style={{ fontSize: 11, color: OS.muted, fontWeight: 500 }}>Direction</span>
+                  <div style={{ display: "flex", gap: 4 }}>
+                    {(["by_me", "assigned_to_me"] as CommitmentDirection[]).map((d) => (
+                      <button
+                        key={d}
+                        onClick={(e) => { e.stopPropagation(); onMetaUpdate(item.id!, { direction: d }); }}
+                        style={{
+                          padding: "3px 8px", fontSize: 11, fontFamily: OS.font,
+                          border: `1px solid ${item.direction === d ? OS.blue : OS.border}`,
+                          borderRadius: 4, cursor: "pointer",
+                          background: item.direction === d ? OS.blue + "12" : OS.white,
+                          color: item.direction === d ? OS.blue : OS.secondary,
+                          fontWeight: item.direction === d ? 600 : 400,
+                        }}
+                      >
+                        {d === "by_me" ? "My commitment" : "Assigned to me"}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Sensitive */}
+                  <span style={{ fontSize: 11, color: OS.muted, fontWeight: 500 }}>Sensitive</span>
+                  <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }} onClick={(e) => e.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      checked={item.sensitive}
+                      onChange={(e) => { e.stopPropagation(); onMetaUpdate(item.id!, { sensitive: e.target.checked }); }}
+                      style={{ cursor: "pointer" }}
+                    />
+                    <span style={{ fontSize: 11, color: OS.secondary }}>
+                      {item.sensitive ? "Marked sensitive (blurred in privacy mode)" : "Not sensitive"}
+                    </span>
+                  </label>
+                </div>
               )}
             </div>
           )}

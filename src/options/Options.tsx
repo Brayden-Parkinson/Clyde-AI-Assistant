@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { OS } from "@shared/tokens";
-import { db } from "@shared/db";
+import { db, ensureGeneralTag, getNextTagColor } from "@shared/db";
 import { DEFAULTS } from "@shared/constants";
 import { IconChevronRight, IconChevronLeft, IconLogo } from "../popup/components/Icons";
 import { USER_PROFILE_DEFAULTS } from "@shared/user-profile";
 import { ToastContainer, useToast } from "../popup/components/Toast";
+import { retagAll } from "../background/tag-backfill";
 
 interface FormState {
   anthropicApiKey: string;
@@ -224,6 +225,11 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
   const [tuneInfo, setTuneInfo] = useState<{ lastChecked: string; dismissRate: number; totalSamples: number } | null>(null);
   const [deleteColConfirm, setDeleteColConfirm] = useState<{ id: string; label: string; itemCount: number } | null>(null);
   const [deleteMoveTarget, setDeleteMoveTarget] = useState<string>("todo");
+  const [retagging, setRetagging] = useState(false);
+  const [retagResult, setRetagResult] = useState<string | null>(null);
+  const [newTagLabel, setNewTagLabel] = useState("");
+  const [editingTagId, setEditingTagId] = useState<number | null>(null);
+  const [editingTagLabel, setEditingTagLabel] = useState("");
 
   // ─── Load settings from chrome.storage.local ───
 
@@ -404,6 +410,10 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
     URL.revokeObjectURL(url);
   }, []);
 
+  // ─── Tags (reactive from IndexedDB) ───
+
+  const allTagDefs = useLiveQuery(() => db.tags.orderBy("name").toArray(), []) ?? [];
+
   // ─── Board columns (reactive from IndexedDB) ───
 
   const allColDefs = useLiveQuery(() => db.kanban_columns.orderBy("position").toArray(), []) ?? [];
@@ -429,6 +439,45 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
       }
     });
   }, []);
+
+  // ─── Tag management ───
+
+  const handleTagAdd = useCallback(async (label: string) => {
+    const trimmed = label.trim();
+    if (!trimmed) return;
+    const existingCount = await db.tags.count();
+    await db.tags.add({ name: trimmed, color: getNextTagColor(existingCount), createdAt: new Date().toISOString() });
+    setNewTagLabel("");
+  }, []);
+
+  const handleTagRename = useCallback(async (id: number, label: string) => {
+    const trimmed = label.trim();
+    if (trimmed) await db.tags.update(id, { name: trimmed });
+    setEditingTagId(null);
+  }, []);
+
+  const handleTagDelete = useCallback(async (id: number) => {
+    const generalTagId = await ensureGeneralTag();
+    if (id === generalTagId) return; // can't delete General
+    // Move all commitments using this tag to General
+    await db.commitments.where("tag_id").equals(id).modify({ tag_id: generalTagId });
+    await db.tags.delete(id);
+  }, []);
+
+  const handleRetagAll = useCallback(async () => {
+    setRetagging(true);
+    setRetagResult(null);
+    try {
+      const { tagCount, commitmentCount } = await retagAll();
+      setRetagResult(`Done — ${commitmentCount} commitments re-tagged across ${tagCount} tags`);
+    } catch (err) {
+      setRetagResult(`Error: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setRetagging(false);
+    }
+  }, []);
+
+  // ─── Column management ───
 
   const handleColReorder = useCallback(async (sourceId: string, targetId: string) => {
     if (sourceId === targetId) return;
@@ -964,6 +1013,154 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
             placeholder="https://calendar.google.com/calendar/ical/..."
             onChange={(e) => update("calendarIcsUrl", e.target.value)}
           />
+        </div>
+      </div>
+
+      {/* Tags */}
+      <div style={sectionStyle}>
+        <h2 style={sectionTitle}>Tags</h2>
+        <p style={{ fontSize: 12, color: OS.muted, marginBottom: 16, lineHeight: 1.5 }}>
+          Tags are auto-assigned by Claude. Add or rename tags here, then re-tag all commitments to apply your changes.
+          "General" is the catch-all and cannot be deleted.
+        </p>
+
+        {/* Tag list */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 14 }}>
+          {allTagDefs.map((tag) => {
+            const isGeneral = tag.name === "General";
+            const isEditing = editingTagId === tag.id;
+            return (
+              <div key={tag.id} style={{
+                display: "flex", alignItems: "center", gap: 8,
+                padding: "8px 10px",
+                background: OS.bg, border: `1px solid ${OS.border}`, borderRadius: 8,
+              }}>
+                {/* Color swatch */}
+                <span style={{
+                  width: 10, height: 10, borderRadius: "50%",
+                  background: tag.color, flexShrink: 0,
+                }} />
+
+                {/* Label */}
+                {isEditing ? (
+                  <input
+                    autoFocus
+                    value={editingTagLabel}
+                    onChange={(e) => setEditingTagLabel(e.target.value)}
+                    onBlur={() => handleTagRename(tag.id!, editingTagLabel)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") handleTagRename(tag.id!, editingTagLabel);
+                      if (e.key === "Escape") setEditingTagId(null);
+                    }}
+                    style={{
+                      flex: 1, fontSize: 13, padding: "2px 6px",
+                      border: `1px solid ${OS.blue}`, borderRadius: 4,
+                      fontFamily: OS.font, outline: "none",
+                    }}
+                  />
+                ) : (
+                  <span
+                    style={{ flex: 1, fontSize: 13, fontWeight: 500, color: OS.text }}
+                    onDoubleClick={() => { if (!isGeneral) { setEditingTagId(tag.id!); setEditingTagLabel(tag.name); } }}
+                    title={isGeneral ? undefined : "Double-click to rename"}
+                  >
+                    {tag.name}
+                    {isGeneral && <span style={{ fontSize: 10, color: OS.faint, marginLeft: 6 }}>(built-in)</span>}
+                  </span>
+                )}
+
+                {/* Rename button */}
+                {!isGeneral && !isEditing && (
+                  <button
+                    onClick={() => { setEditingTagId(tag.id!); setEditingTagLabel(tag.name); }}
+                    style={{
+                      padding: "2px 8px", fontSize: 11, fontFamily: OS.font,
+                      border: `1px solid ${OS.border}`, borderRadius: 4,
+                      background: OS.white, color: OS.secondary, cursor: "pointer",
+                    }}
+                  >
+                    Rename
+                  </button>
+                )}
+
+                {/* Delete — non-General only */}
+                {!isGeneral && !isEditing && (
+                  <button
+                    onClick={() => handleTagDelete(tag.id!)}
+                    style={{
+                      padding: "2px 8px", fontSize: 11, fontFamily: OS.font,
+                      border: "1px solid #fca5a5", borderRadius: 4,
+                      background: OS.white, color: OS.red, cursor: "pointer",
+                    }}
+                  >
+                    Delete
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Add tag */}
+        <div style={{ display: "flex", gap: 6, marginBottom: 20 }}>
+          <input
+            value={newTagLabel}
+            onChange={(e) => setNewTagLabel(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") handleTagAdd(newTagLabel);
+              if (e.key === "Escape") setNewTagLabel("");
+            }}
+            placeholder="New tag name..."
+            style={{
+              flex: 1, padding: "7px 10px",
+              border: `1px solid ${OS.border}`, borderRadius: 6,
+              fontSize: 13, fontFamily: OS.font, outline: "none",
+            }}
+          />
+          <button
+            onClick={() => handleTagAdd(newTagLabel)}
+            disabled={!newTagLabel.trim()}
+            style={{
+              padding: "7px 16px", background: newTagLabel.trim() ? OS.blue : OS.faint,
+              color: OS.white, border: "none", borderRadius: 6,
+              fontSize: 13, fontFamily: OS.font, cursor: newTagLabel.trim() ? "pointer" : "default",
+            }}
+          >
+            Add
+          </button>
+        </div>
+
+        {/* Re-tag all */}
+        <div style={{
+          padding: "14px 16px",
+          background: OS.bg,
+          border: `1px solid ${OS.border}`,
+          borderRadius: 8,
+        }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: OS.text, marginBottom: 4 }}>Re-tag all commitments</div>
+          <div style={{ fontSize: 12, color: OS.secondary, marginBottom: 12, lineHeight: 1.5 }}>
+            Uses Claude to re-assign tags across all your commitments based on the current tag list.
+            Useful after adding or renaming tags.
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <button
+              onClick={handleRetagAll}
+              disabled={retagging}
+              style={{
+                padding: "8px 18px", fontSize: 13, fontWeight: 600,
+                background: retagging ? OS.faint : OS.blue,
+                color: OS.white, border: "none", borderRadius: 6,
+                fontFamily: OS.font, cursor: retagging ? "default" : "pointer",
+              }}
+            >
+              {retagging ? "Re-tagging…" : "Re-tag all commitments"}
+            </button>
+            {retagResult && (
+              <span style={{ fontSize: 12, color: retagResult.startsWith("Error") ? OS.red : OS.green }}>
+                {retagResult}
+              </span>
+            )}
+          </div>
         </div>
       </div>
 
