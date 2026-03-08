@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { useLiveQuery } from "dexie-react-hooks";
 import { OS } from "@shared/tokens";
 import { db, ensureGeneralTag, getNextTagColor } from "@shared/db";
-import { retagAll } from "../../background/tag-backfill";
+import { retagAll, reanalyzeSensitivity } from "../../background/tag-backfill";
 
 interface SmartTagsModalProps {
   onClose: () => void;
@@ -16,6 +16,8 @@ export function SmartTagsModal({ onClose }: SmartTagsModalProps) {
   const [editingLabel, setEditingLabel] = useState("");
   const [retagging, setRetagging] = useState(false);
   const [retagResult, setRetagResult] = useState<string | null>(null);
+  const [recheckingSensitivity, setRecheckingSensitivity] = useState(false);
+  const [recheckResult, setRecheckResult] = useState<string | null>(null);
 
   const handleAdd = useCallback(async (label: string) => {
     const trimmed = label.trim();
@@ -36,6 +38,19 @@ export function SmartTagsModal({ onClose }: SmartTagsModalProps) {
     if (id === generalTagId) return;
     await db.commitments.where("tag_id").equals(id).modify({ tag_id: generalTagId });
     await db.tags.delete(id);
+  }, []);
+
+  const handleRecheckSensitivity = useCallback(async () => {
+    setRecheckingSensitivity(true);
+    setRecheckResult(null);
+    try {
+      const { updated, total } = await reanalyzeSensitivity();
+      setRecheckResult(`Done — ${updated} of ${total} commitments evaluated`);
+    } catch (e) {
+      setRecheckResult("Error: " + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setRecheckingSensitivity(false);
+    }
   }, []);
 
   const handleRetagAll = useCallback(async () => {
@@ -198,7 +213,7 @@ export function SmartTagsModal({ onClose }: SmartTagsModalProps) {
         {/* Re-tag all */}
         <div style={{
           padding: "12px 14px", background: OS.bg,
-          border: `1px solid ${OS.border}`, borderRadius: 8,
+          border: `1px solid ${OS.border}`, borderRadius: 8, marginBottom: 8,
         }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: OS.text, marginBottom: 3 }}>Re-tag all commitments</div>
           <div style={{ fontSize: 12, color: OS.secondary, marginBottom: 10, lineHeight: 1.5 }}>
@@ -220,6 +235,36 @@ export function SmartTagsModal({ onClose }: SmartTagsModalProps) {
             {retagResult && (
               <span style={{ fontSize: 11, color: retagResult.startsWith("Error") ? OS.red : OS.green }}>
                 {retagResult}
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Re-check sensitivity */}
+        <div style={{
+          padding: "12px 14px", background: OS.bg,
+          border: `1px solid ${OS.border}`, borderRadius: 8,
+        }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: OS.text, marginBottom: 3 }}>Re-check sensitivity</div>
+          <div style={{ fontSize: 12, color: OS.secondary, marginBottom: 10, lineHeight: 1.5 }}>
+            Re-evaluates all existing commitments with the updated privacy rules (including your role/title).
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <button
+              onClick={handleRecheckSensitivity}
+              disabled={recheckingSensitivity}
+              style={{
+                padding: "7px 16px", fontSize: 12, fontWeight: 600,
+                background: recheckingSensitivity ? OS.faint : "#7c3aed",
+                color: OS.white, border: "none", borderRadius: 6,
+                fontFamily: OS.font, cursor: recheckingSensitivity ? "default" : "pointer",
+              }}
+            >
+              {recheckingSensitivity ? "Checking…" : "Re-check sensitivity"}
+            </button>
+            {recheckResult && (
+              <span style={{ fontSize: 11, color: recheckResult.startsWith("Error") ? OS.red : OS.green }}>
+                {recheckResult}
               </span>
             )}
           </div>

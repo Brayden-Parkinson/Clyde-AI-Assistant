@@ -2,6 +2,7 @@ import { db, getAllTags, ensureGeneralTag, getNextTagColor, getSetting, setSetti
 import { CLAUDE_MODEL_FAST, API_TIMEOUT_MS } from "@shared/constants";
 import { logStatus } from "@shared/status";
 import type { Tag } from "@shared/types";
+import { getUserProfile } from "@shared/user-profile";
 
 const BACKFILL_SETTING = "tagsBackfilled";
 const BATCH_SIZE = 30;
@@ -167,4 +168,105 @@ export async function retagAll(): Promise<{ tagCount: number; commitmentCount: n
   await backfillTags(true);
   const finalTags = await getAllTags();
   return { tagCount: finalTags.length, commitmentCount };
+}
+
+/**
+ * Re-evaluate the sensitive flag on all existing commitments using the current
+ * (updated) sensitivity criteria, including title-aware prompting.
+ */
+export async function reanalyzeSensitivity(): Promise<{ updated: number; total: number }> {
+  const commitments = await db.commitments.toArray();
+  if (commitments.length === 0) return { updated: 0, total: 0 };
+
+  const result = await chrome.storage.local.get("anthropicApiKey");
+  const apiKey = result.anthropicApiKey as string | undefined;
+  if (!apiKey) throw new Error("No API key configured");
+
+  const profile = await getUserProfile();
+  const userName = profile.userName || "the user";
+  const titleLower = (profile.userTitle || "").toLowerCase();
+  const isLeadership = /\b(vp|ceo|cto|coo|cfo|chief|director|head of|president|founder|partner)\b/.test(titleLower);
+  const isPeopleManager = /\b(manager|lead|head|principal|staff|director|senior manager|eng manager|em)\b/.test(titleLower);
+  const isHR = /\b(hr|people|talent|recruiting|recruiter|people ops|human resources)\b/.test(titleLower);
+  const titleHint = isLeadership
+    ? `${userName} is in a leadership role (${profile.userTitle}). Commitments involving strategy, roadmap, headcount, budget, org changes, exec decisions, or anything about specific employees are highly likely to be sensitive.`
+    : isPeopleManager
+    ? `${userName} manages people (${profile.userTitle}). Commitments involving individual team members (performance, comp, promotions, PIPs, terminations, hiring decisions) or internal team dynamics should be marked sensitive.`
+    : isHR
+    ? `${userName} works in People/HR (${profile.userTitle}). The vast majority of their commitments touch confidential people data — err strongly on the side of marking sensitive.`
+    : profile.userTitle
+    ? `${userName}'s title is ${profile.userTitle}. Use this context to help judge whether a commitment would be considered confidential for someone in that role.`
+    : "";
+
+  const systemPrompt = `You are re-evaluating whether work commitments should be marked sensitive/private.
+
+A commitment is sensitive if seeing it on someone's screen would be awkward, embarrassing, or risky — for them, a colleague, or the company. Ask yourself: would someone minimize their screen if a colleague walked by?
+
+Mark sensitive=true for:
+- HR: hiring/firing/layoffs, performance, compensation, PIPs, promotions, investigations
+- Confidential business: unreleased product/roadmap, financials, M&A, legal, pricing strategy, security incidents
+- Interpersonal: conflicts, specific person mentioned negatively, 1:1 dynamics, personal/health matters
+- "Wouldn't want seen" info: org changes, internal politics, strategic bets, things that would embarrass the company publicly
+${titleHint ? `\nROLE CONTEXT:\n${titleHint}` : ""}
+Routine tasks (code reviews, docs, tickets, external deliverables, scheduling meetings) should be sensitive=false.
+
+Return ONLY valid JSON (no markdown):
+{ "results": [ { "id": <commitment_id>, "sensitive": true|false } ] }`;
+
+  let totalUpdated = 0;
+
+  for (let i = 0; i < commitments.length; i += BATCH_SIZE) {
+    const batch = commitments.slice(i, i + BATCH_SIZE);
+    const list = batch
+      .map((c) => `[ID:${c.id}] "${c.text}" (source: ${c.source_type}, context: ${c.context})`)
+      .join("\n");
+
+    try {
+      const response = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+          "anthropic-dangerous-direct-browser-access": "true",
+        },
+        body: JSON.stringify({
+          model: CLAUDE_MODEL_FAST,
+          max_tokens: 1024,
+          system: systemPrompt,
+          messages: [{ role: "user", content: `Re-evaluate sensitivity for these commitments:\n\n${list}` }],
+        }),
+        signal: AbortSignal.timeout(API_TIMEOUT_MS),
+      });
+
+      if (!response.ok) {
+        await logStatus("warn", "sensitivity", `API error (${response.status}) — skipping batch`);
+        continue;
+      }
+
+      const data = await response.json();
+      const textBlock = data.content?.find((b: { type: string }) => b.type === "text");
+      if (!textBlock?.text) continue;
+
+      let cleaned = textBlock.text.trim().replace(/^```json?\s*/, "").replace(/\s*```$/, "");
+      const firstBrace = cleaned.indexOf("{");
+      const lastBrace = cleaned.lastIndexOf("}");
+      if (firstBrace >= 0 && lastBrace > firstBrace) cleaned = cleaned.slice(firstBrace, lastBrace + 1);
+
+      const parsed = JSON.parse(cleaned) as { results?: Array<{ id: number; sensitive: boolean }> };
+      if (!Array.isArray(parsed.results)) continue;
+
+      for (const r of parsed.results) {
+        await db.commitments.update(r.id, { sensitive: r.sensitive === true });
+        totalUpdated++;
+      }
+
+      await logStatus("info", "sensitivity", `Batch done: ${parsed.results.length} commitments evaluated`);
+    } catch (err) {
+      await logStatus("warn", "sensitivity", `Batch error: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  await logStatus("success", "sensitivity", `Sensitivity re-analysis complete: ${totalUpdated} updated`);
+  return { updated: totalUpdated, total: commitments.length };
 }
