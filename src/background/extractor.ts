@@ -55,6 +55,22 @@ async function buildSystemPrompt(sourceType: SourceType = "slack"): Promise<stri
   const userTitle = profile.userTitle ? `, ${profile.userTitle}` : "";
   const userCompany = profile.userCompany ? ` at ${profile.userCompany}` : "";
 
+  // Title-aware sensitivity hints: if we know the user's role, we can give Claude
+  // better guidance about what categories of info are sensitive for that person.
+  const titleLower = (profile.userTitle || "").toLowerCase();
+  const isLeadership = /\b(vp|ceo|cto|coo|cfo|chief|director|head of|president|founder|partner)\b/.test(titleLower);
+  const isPeopleManager = /\b(manager|lead|head|principal|staff|director|senior manager|eng manager|em)\b/.test(titleLower);
+  const isHR = /\b(hr|people|talent|recruiting|recruiter|people ops|human resources)\b/.test(titleLower);
+  const sensitivityTitleHint = isLeadership
+    ? `${userName} is in a leadership role (${profile.userTitle}). Commitments involving strategy, roadmap, headcount, budget, org changes, exec decisions, or anything about specific employees are highly likely to be sensitive.`
+    : isPeopleManager
+    ? `${userName} manages people (${profile.userTitle}). Commitments involving individual team members (performance, comp, promotions, PIPs, terminations, hiring decisions) or internal team dynamics should be marked sensitive.`
+    : isHR
+    ? `${userName} works in People/HR (${profile.userTitle}). The vast majority of their commitments touch confidential people data — err strongly on the side of marking sensitive.`
+    : profile.userTitle
+    ? `${userName}'s title is ${profile.userTitle}. Use this context to help judge whether a commitment would be considered confidential for someone in that role.`
+    : "";
+
   const rejectionBlock = devMode ? `
 
 DECISION LOG (Developer Mode is ON):
@@ -147,12 +163,38 @@ Confidence scoring:
 Only return items with confidence >= 0.6.
 
 SENSITIVITY TAGGING:
-For each commitment, also return a "sensitive" boolean field (true/false). Mark as sensitive=true if the content involves:
-- HR matters (performance reviews, complaints, hiring/firing, compensation)
-- Personal/interpersonal issues (conflicts, personal favors, health, family)
-- Confidential business info (unreleased financials, M&A, legal issues)
-- Private 1:1 matters that would be embarrassing or inappropriate if seen on a shared screen
-When in doubt, lean towards marking as sensitive. Most routine work tasks should be sensitive=false.
+For each commitment, return a "sensitive" boolean. The goal is: would seeing this commitment on someone's screen be awkward, embarrassing, or risky — for the person, for a colleague, or for the company?
+
+Mark sensitive=true for ANY of the following:
+
+PEOPLE & HR:
+- Hiring, firing, layoffs, RIFs, headcount changes
+- Performance reviews, PIPs, ratings, improvement plans
+- Salary, comp, equity, bonuses, raises, budget for people
+- Promotions, demotions, title changes, role changes
+- Complaints, HR investigations, conduct issues
+- References, background checks, offer negotiations
+- Specific individuals' performance or behavior ("follow up with Alex about their attendance")
+
+INTERNAL / CONFIDENTIAL BUSINESS:
+- Unreleased product plans, roadmap, launch dates, feature flags
+- Revenue numbers, financial projections, burn rate, fundraising
+- M&A activity, partnerships, acquisitions, due diligence
+- Legal matters, contracts under NDA, disputes, settlements
+- Pricing strategy, deal terms, customer contract specifics
+- Security vulnerabilities, incidents, internal postmortems
+
+INTERPERSONAL / POLITICAL:
+- Conflicts between colleagues or teams
+- Anything that names a specific person negatively
+- Personal favors, health, family, or non-work matters
+- Manager/report dynamics (feedback, coaching, skip-levels)
+- Anything discussed in a private 1:1 that wasn't meant for a wider audience
+
+"WOULDN'T WANT THIS SEEN" TEST:
+If you can imagine someone minimizing their laptop when a colleague walks by while this commitment is visible — mark it sensitive. This includes things like discussions about org changes, internal politics, strategic bets, or anything that would embarrass the company if posted publicly.
+${sensitivityTitleHint ? `\nROLE CONTEXT:\n${sensitivityTitleHint}` : ""}
+Default: routine work tasks (code reviews, docs, meetings, tickets, external deliverables) should be sensitive=false.
 
 CONTEXT SUMMARY:
 For each commitment, also return a "context_summary" field: 1-3 sentences summarizing the conversation that led to the commitment. Focus on: what was being discussed, who was involved, and why the commitment arose. If there's not enough surrounding context, set it to null.
