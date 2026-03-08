@@ -23,6 +23,7 @@ import type { FilterKey } from "./components/FilterBar";
 import { ViewToolbar, matchesSearch } from "./components/ViewToolbar";
 import { Toast } from "./components/Toast";
 import { TranscriptPanel } from "./components/TranscriptPanel";
+import { SmartTagsModal } from "./components/SmartTagsModal";
 import { SetupWizard } from "./components/SetupWizard";
 import { SettingsPanel } from "../options/Options";
 import { ClydeChat } from "./components/ClydeChat";
@@ -1738,6 +1739,7 @@ export default function App() {
   const [hasApiKey, setHasApiKey] = useState<boolean | null>(null);
   const [isFirstRun, setIsFirstRun] = useState<boolean | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [showSmartTags, setShowSmartTags] = useState(false);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [isWide, setIsWide] = useState(false);
   const isNarrow = !isWide;
@@ -2246,6 +2248,7 @@ export default function App() {
                   tags={effectiveTags}
                   selectedTags={boardSelectedTags}
                   onTagToggle={toggleBoardTag}
+                  onSmartTags={() => setShowSmartTags(true)}
                 />
                 <KanbanBoard
                   todo={boardTodo}
@@ -2265,8 +2268,6 @@ export default function App() {
                   privacyMode={privacyMode}
                   onTodoOverflow={handleTodoOverflow}
                   tagMap={tagMap}
-                  allTags={effectiveTags}
-                  onMetaUpdate={onMetaUpdate}
                 />
               </>
             )}
@@ -2283,6 +2284,7 @@ export default function App() {
                     tags={effectiveTags}
                     selectedTags={listSelectedTags}
                     onTagToggle={toggleListTag}
+                    onSmartTags={() => setShowSmartTags(true)}
                   />
                 </div>
                 {filtered.length === 0 ? (
@@ -2375,9 +2377,13 @@ export default function App() {
             onDismiss={() => selectedItem.id != null && onDismiss(selectedItem.id)}
             onReminder={() => selectedItem.id != null && onReminder(selectedItem.id)}
             privacyMode={privacyMode}
+            allTags={effectiveTags}
+            onMetaUpdate={onMetaUpdate}
           />
         </div>
       )}
+
+      {showSmartTags && <SmartTagsModal onClose={() => setShowSmartTags(false)} />}
 
       {toast && <Toast message={toast.message} variant={toast.variant} onClose={() => setToast(null)} />}
       <ClydeChat showToast={showToast} sidePanelOpen={showPanel} proactiveMessage={proactiveMsg} onProactiveHandled={() => setProactiveMsg(null)} />
