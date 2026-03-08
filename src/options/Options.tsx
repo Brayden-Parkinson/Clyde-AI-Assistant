@@ -222,6 +222,8 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
   const [channelFilter, setChannelFilter] = useState<Record<string, boolean>>({});
   const [discoveredChannels, setDiscoveredChannels] = useState<string[]>([]);
   const [tuneInfo, setTuneInfo] = useState<{ lastChecked: string; dismissRate: number; totalSamples: number } | null>(null);
+  const [deleteColConfirm, setDeleteColConfirm] = useState<{ id: string; label: string; itemCount: number } | null>(null);
+  const [deleteMoveTarget, setDeleteMoveTarget] = useState<string>("todo");
 
   // ─── Load settings from chrome.storage.local ───
 
@@ -450,12 +452,33 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
     setEditingColId(null);
   }, []);
 
-  const handleColDelete = useCallback(async (id: string) => {
+  const handleColDeleteRequest = useCallback(async (id: string) => {
     if (id === "inProgress") return;
-    if (!window.confirm(`Delete this column? Items will return to their natural column.`)) return;
-    await db.kanban_assignments.where("column_id").equals(id).delete();
+    const col = allColDefs.find((c) => c.id === id);
+    if (!col) return;
+    const itemCount = await db.kanban_assignments.where("column_id").equals(id).count();
+    setDeleteMoveTarget("todo");
+    setDeleteColConfirm({ id, label: col.label, itemCount });
+  }, [allColDefs]);
+
+  const handleColDeleteConfirm = useCallback(async () => {
+    if (!deleteColConfirm) return;
+    const { id } = deleteColConfirm;
+    if (deleteMoveTarget === "todo") {
+      // Drop assignments — cards return to Todo naturally
+      await db.kanban_assignments.where("column_id").equals(id).delete();
+    } else {
+      // Move assignments to the chosen column
+      const toMove = await db.kanban_assignments.where("column_id").equals(id).toArray();
+      await db.transaction("rw", db.kanban_assignments, async () => {
+        for (const a of toMove) {
+          await db.kanban_assignments.put({ ...a, column_id: deleteMoveTarget });
+        }
+      });
+    }
     await db.kanban_columns.delete(id);
-  }, []);
+    setDeleteColConfirm(null);
+  }, [deleteColConfirm, deleteMoveTarget]);
 
   const handleColAdd = useCallback(async (label: string) => {
     const trimmed = label.trim();
@@ -1044,7 +1067,7 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
                 {/* Delete — custom only */}
                 {!isIP && !isEditing && (
                   <button
-                    onClick={() => handleColDelete(col.id)}
+                    onClick={() => handleColDeleteRequest(col.id)}
                     style={{
                       padding: "2px 8px", fontSize: 11, fontFamily: OS.font,
                       border: "1px solid #fca5a5", borderRadius: 4,
@@ -1058,6 +1081,73 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
             );
           })}
         </div>
+
+        {/* Delete confirmation dialog */}
+        {deleteColConfirm && (
+          <div style={{
+            marginBottom: 14,
+            padding: "14px 16px",
+            background: "#fff8f8",
+            border: `1px solid #fca5a5`,
+            borderRadius: 8,
+          }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: OS.red, marginBottom: 6 }}>
+              Delete "{deleteColConfirm.label}"?
+            </div>
+            <div style={{ fontSize: 12, color: OS.secondary, marginBottom: 12, lineHeight: 1.5 }}>
+              {deleteColConfirm.itemCount > 0
+                ? `${deleteColConfirm.itemCount} card${deleteColConfirm.itemCount === 1 ? "" : "s"} will be moved. Choose where:`
+                : "This column is empty. It will be permanently removed."}
+            </div>
+
+            {deleteColConfirm.itemCount > 0 && (
+              <div style={{ marginBottom: 12 }}>
+                <select
+                  value={deleteMoveTarget}
+                  onChange={(e) => setDeleteMoveTarget(e.target.value)}
+                  style={{
+                    width: "100%", padding: "6px 10px", fontSize: 13,
+                    border: `1px solid ${OS.border}`, borderRadius: 6,
+                    fontFamily: OS.font, background: OS.white, color: OS.text,
+                    cursor: "pointer",
+                  }}
+                >
+                  <option value="todo">Todo (default)</option>
+                  {allColDefs
+                    .filter((c) => c.id !== deleteColConfirm.id)
+                    .map((c) => (
+                      <option key={c.id} value={c.id}>{c.label}</option>
+                    ))}
+                </select>
+              </div>
+            )}
+
+            <div style={{ display: "flex", gap: 8 }}>
+              <button
+                onClick={handleColDeleteConfirm}
+                style={{
+                  padding: "6px 14px", fontSize: 12, fontWeight: 600,
+                  background: OS.red, color: OS.white,
+                  border: "none", borderRadius: 6,
+                  fontFamily: OS.font, cursor: "pointer",
+                }}
+              >
+                Delete column
+              </button>
+              <button
+                onClick={() => setDeleteColConfirm(null)}
+                style={{
+                  padding: "6px 14px", fontSize: 12,
+                  background: OS.white, color: OS.secondary,
+                  border: `1px solid ${OS.border}`, borderRadius: 6,
+                  fontFamily: OS.font, cursor: "pointer",
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Add column */}
         {addingCol ? (
