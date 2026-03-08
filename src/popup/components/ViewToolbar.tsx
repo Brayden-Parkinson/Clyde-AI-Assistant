@@ -26,7 +26,7 @@ const filters: Array<{ key: FilterKey; label: string }> = [
 ];
 
 export function ViewToolbar({ filter, onFilterChange, search, onSearchChange, tags, selectedTags, onTagToggle, onSmartTags }: ViewToolbarProps) {
-  const hasTags = tags && tags.length > 1 && onTagToggle; // More than just "General"
+  const hasTags = tags && tags.length > 0 && onTagToggle;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 6, padding: "8px 0", marginBottom: 8 }}>
       <div
@@ -134,7 +134,7 @@ export function ViewToolbar({ filter, onFilterChange, search, onSearchChange, ta
               )}
             </>
           )}
-          {hasTags && tags!.filter((t) => t.name !== "General").map((t) => {
+          {hasTags && tags!.map((t) => {
             const isActive = selectedTags?.includes(t.id!);
             return (
               <button
