@@ -16,6 +16,7 @@ on:
 permissions:
   contents: read
   pull-requests: write
+  id-token: write
 
 jobs:
   # ── Phase 1: Triage ── Cheap Haiku check; skip noise before running full review
