@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useMemo, useEffect } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { OS } from "@shared/tokens";
-import type { Commitment, CompletionSuggestion } from "@shared/types";
+import type { Commitment, CompletionSuggestion, Tag } from "@shared/types";
 import type { Actions } from "../hooks/useActions";
 import { db } from "@shared/db";
 import { IconChat, IconDocument, IconMic, IconCheck, IconPlay, IconSort, IconChevronDown } from "./Icons";
@@ -144,6 +144,7 @@ interface CardDisplaySettings {
 
 function KanbanCard({
   item,
+  tag,
   isSelected,
   verboseMode,
   onSelect,
@@ -157,6 +158,7 @@ function KanbanCard({
   privacyMode,
 }: {
   item: Commitment;
+  tag?: Tag;
   isSelected: boolean;
   verboseMode: boolean;
   onSelect: (id: number) => void;
@@ -202,17 +204,30 @@ function KanbanCard({
       }}>
         {blurred ? "Sensitive commitment" : item.text}
       </div>
-      <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6, fontSize: 11.5, color: OS.muted }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 6, fontSize: 11.5, color: OS.muted, flexWrap: "wrap", rowGap: 2 }}>
         {(displaySettings?.showSourceBadges !== false) && (
-          <span style={{ display: "inline-flex", alignItems: "center" }}>
+          <span style={{ display: "inline-flex", alignItems: "center", flexShrink: 0 }}>
             {item.source_type === "slack" ? <IconChat size={12} /> : item.source_type === "gdoc" ? <IconDocument size={12} /> : <IconMic size={12} />}
           </span>
         )}
-        <span style={blurred ? { filter: "blur(4px)", userSelect: "none" } : undefined}>{item.context}</span>
+        <span style={{
+          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 120,
+          ...(blurred ? { filter: "blur(4px)", userSelect: "none" as const } : {}),
+        }}>{item.context}</span>
+        {tag && tag.name !== "General" && (
+          <span style={{
+            fontSize: 10, fontWeight: 600, padding: "1px 5px",
+            borderRadius: 3, background: tag.color + "18",
+            color: tag.color, lineHeight: 1.5, whiteSpace: "nowrap",
+            flexShrink: 0,
+          }}>
+            {tag.name}
+          </span>
+        )}
         {(displaySettings?.showDeadlines !== false) && deadlineStr && (
           <>
-            <span style={{ color: OS.faint }}>&middot;</span>
-            <span style={{ color: isUrgent ? OS.red : OS.muted, fontWeight: isUrgent ? 600 : 400 }}>
+            <span style={{ color: OS.faint, flexShrink: 0 }}>&middot;</span>
+            <span style={{ color: isUrgent ? OS.red : OS.muted, fontWeight: isUrgent ? 600 : 400, whiteSpace: "nowrap", flexShrink: 0 }}>
               {deadlineStr}
             </span>
           </>
@@ -384,6 +399,7 @@ function KanbanColumn({
   onDismissCompletion,
   displaySettings,
   privacyMode,
+  tagMap,
 }: {
   column: KanbanColumnData;
   selectedId: number | null;
@@ -412,6 +428,7 @@ function KanbanColumn({
   onDismissCompletion?: (suggestionId: number, commitmentId: number) => void;
   displaySettings?: CardDisplaySettings;
   privacyMode?: boolean;
+  tagMap?: Map<number, Tag>;
 }) {
   const [cardDragOver, setCardDragOver] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -554,21 +571,6 @@ function KanbanColumn({
           {!isNarrow && column.items.length > 1 && (
             <SortDropdown sortKey={sortKey} onSort={onSortChange} />
           )}
-          {column.isCustom && !editingLabel && (
-            <button
-              onClick={(e) => { e.stopPropagation(); onDelete?.(); }}
-              title="Delete column"
-              style={{
-                width: 18, height: 18, borderRadius: 3,
-                border: `1px solid ${OS.border}`, background: "transparent",
-                color: OS.muted, fontSize: 14, cursor: "pointer",
-                display: "flex", alignItems: "center", justifyContent: "center",
-                padding: 0, lineHeight: 1, fontFamily: OS.font,
-              }}
-            >
-              ×
-            </button>
-          )}
           {isNarrow && (
             <span style={{
               color: OS.muted, display: "inline-flex",
@@ -603,6 +605,7 @@ function KanbanColumn({
             <KanbanCard
               key={item.id}
               item={item}
+              tag={item.tag_id != null ? tagMap?.get(item.tag_id) : undefined}
               isSelected={selectedId === item.id}
               verboseMode={verboseMode}
               onSelect={onSelect}
@@ -656,6 +659,7 @@ interface KanbanBoardProps {
   displaySettings?: CardDisplaySettings;
   privacyMode?: boolean;
   onTodoOverflow?: (count: number) => void;
+  tagMap?: Map<number, Tag>;
 }
 
 export function KanbanBoard({
@@ -675,6 +679,7 @@ export function KanbanBoard({
   displaySettings,
   privacyMode,
   onTodoOverflow,
+  tagMap,
 }: KanbanBoardProps) {
   const [draggedId, setDraggedId] = useState<number | null>(null);
   const [collapsedCols, setCollapsedCols] = useState<Set<string>>(new Set());
@@ -924,6 +929,7 @@ export function KanbanBoard({
     onDismissCompletion,
     displaySettings,
     privacyMode,
+    tagMap,
   };
 
   return (

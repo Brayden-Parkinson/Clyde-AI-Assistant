@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useEffect, useRef } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { OS } from "@shared/tokens";
-import type { Commitment, CompletionSuggestion, MorningBrief, DecisionLogEntry, ActionLogEntry } from "@shared/types";
+import type { Commitment, CompletionSuggestion, MorningBrief, DecisionLogEntry, ActionLogEntry, Tag } from "@shared/types";
 import type { PipelineStatus } from "@shared/status";
 import { db } from "@shared/db";
 import { useCommitments } from "./hooks/useCommitments";
@@ -15,6 +15,7 @@ import {
   DEMO_SUGGESTIONS,
   DEMO_BRIEFS,
   DEMO_DECISION_LOG,
+  DEMO_TAGS,
 } from "@shared/demo-data";
 import { CommitmentCard } from "./components/CommitmentCard";
 import { KanbanBoard } from "./components/KanbanBoard";
@@ -22,6 +23,7 @@ import type { FilterKey } from "./components/FilterBar";
 import { ViewToolbar, matchesSearch } from "./components/ViewToolbar";
 import { Toast } from "./components/Toast";
 import { TranscriptPanel } from "./components/TranscriptPanel";
+import { SmartTagsModal } from "./components/SmartTagsModal";
 import { SetupWizard } from "./components/SetupWizard";
 import { SettingsPanel } from "../options/Options";
 import { ClydeChat } from "./components/ClydeChat";
@@ -888,6 +890,17 @@ function CompletionSuggestionCard({
 
 // ─── Morning Brief Card ───
 
+function formatEventTime(iso: string): string {
+  if (!iso || iso === "All day") return iso;
+  try {
+    return new Date(iso).toLocaleTimeString("en-US", {
+      hour: "numeric", minute: "2-digit", hour12: true,
+    });
+  } catch {
+    return iso;
+  }
+}
+
 function MorningBriefCard({
   brief,
   commitments,
@@ -941,7 +954,7 @@ function MorningBriefCard({
     <div style={{ fontFamily: OS.font }}>
       {/* ── a) Header ── */}
       <div style={{
-        padding: "20px 20px 16px",
+        padding: "20px 24px 16px",
         borderBottom: `1px solid ${OS.border}`,
         background: OS.white,
       }}>
@@ -972,7 +985,7 @@ function MorningBriefCard({
                   border: `1px solid ${OS.border}`, borderRadius: 6, cursor: "pointer",
                 }}
               >
-                <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><IconRefresh size={11} /> Refresh</span>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><IconRefresh size={11} /> ✦ Refresh brief</span>
               </button>
             )}
             <button
@@ -991,7 +1004,7 @@ function MorningBriefCard({
 
       {/* ── b) Today's priorities ── */}
       {brief.priorities.length > 0 && (
-        <div style={{ padding: "14px 20px", borderBottom: `1px solid ${OS.border}` }}>
+        <div style={{ padding: "14px 24px", borderBottom: `1px solid ${OS.border}` }}>
           <div style={{
             fontSize: 10, fontWeight: 700, color: OS.muted,
             textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10,
@@ -1089,7 +1102,7 @@ function MorningBriefCard({
       )}
 
       {/* ── c) Your day timeline ── */}
-      <div style={{ padding: "14px 20px", borderBottom: `1px solid ${OS.border}` }}>
+      <div style={{ padding: "14px 24px", borderBottom: `1px solid ${OS.border}` }}>
         <div style={{
           fontSize: 10, fontWeight: 700, color: OS.muted,
           textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10,
@@ -1106,7 +1119,7 @@ function MorningBriefCard({
                   <span style={{
                     fontSize: 11, color: OS.muted, width: 72, flexShrink: 0, textAlign: "right",
                   }}>
-                    {ev.start}
+                    {formatEventTime(ev.start)}
                   </span>
                   <div style={{
                     flex: 1, height: 28, borderRadius: 4,
@@ -1116,7 +1129,7 @@ function MorningBriefCard({
                     <span style={{ fontSize: 12, color: OS.text, fontWeight: 500 }}>{ev.title}</span>
                     {ev.end !== ev.start && ev.end !== "All day" && (
                       <span style={{ fontSize: 10, color: OS.muted, marginLeft: 6 }}>
-                        <InlineIcon><IconArrowRight size={11} /></InlineIcon> {ev.end}
+                        <InlineIcon><IconArrowRight size={11} /></InlineIcon> {formatEventTime(ev.end)}
                       </span>
                     )}
                   </div>
@@ -1140,7 +1153,7 @@ function MorningBriefCard({
 
       {/* ── d) Suggested moves ── */}
       {activeMoves.length > 0 && (
-        <div style={{ padding: "14px 20px", borderBottom: `1px solid ${OS.border}` }}>
+        <div style={{ padding: "14px 24px", borderBottom: `1px solid ${OS.border}` }}>
           <div style={{
             fontSize: 10, fontWeight: 700, color: OS.muted,
             textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10,
@@ -1206,7 +1219,7 @@ function MorningBriefCard({
 
       {/* ── f) Footer ── */}
       <div style={{
-        padding: "10px 20px", display: "flex", alignItems: "center", justifyContent: "space-between",
+        padding: "10px 24px", display: "flex", alignItems: "center", justifyContent: "space-between",
         fontSize: 11, color: OS.muted,
       }}>
         <span>
@@ -1279,7 +1292,7 @@ function BriefView({
   }, [todayBrief, demoMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <div style={{ maxWidth: 640, margin: "0 auto", fontFamily: OS.font, paddingTop: 12 }}>
+    <div style={{ fontFamily: OS.font, paddingTop: 0 }}>
       {/* Auto-generating indicator when no brief exists */}
       {!todayBrief && generating && (
         <div style={{
@@ -1287,7 +1300,7 @@ function BriefView({
           padding: "16px", background: OS.white, borderBottom: `1px solid ${OS.border}`,
           fontSize: 13, color: OS.muted, gap: 8,
         }}>
-          Generating your morning brief...
+          ✦ Generating your morning brief...
         </div>
       )}
 
@@ -1337,7 +1350,7 @@ function BriefView({
           <div style={{ textAlign: "center", padding: "52px 16px" }}>
             <div style={{ marginBottom: 10, color: OS.muted, display: "inline-flex" }}><IconSun size={28} /></div>
             <div style={{ fontSize: 14, fontWeight: 600, color: OS.text, marginBottom: 6 }}>
-              Building your brief...
+              ✦ Building your brief...
             </div>
           </div>
         )}
@@ -1567,12 +1580,11 @@ function LeftNav({
         </div>
 
         {/* Scan button */}
-        {(scanAgo || demoMode) && (
-          <div style={{ borderTop: "1px solid rgba(255,255,255,0.1)", padding: "8px 0", width: "100%", textAlign: "center" }}>
+        <div style={{ borderTop: "1px solid rgba(255,255,255,0.1)", padding: "8px 0", width: "100%", textAlign: "center" }}>
             <button
               onClick={onRescan}
               disabled={scanning}
-              title={scanning ? "Scanning..." : `Scanned ${demoMode ? "just now" : scanAgo}`}
+              title={scanning ? "Scanning..." : scanAgo ? `Scanned ${demoMode ? "just now" : scanAgo}` : "Scan now"}
               style={{
                 width: 36, height: 36, borderRadius: 8,
                 display: "inline-flex", alignItems: "center", justifyContent: "center",
@@ -1585,8 +1597,7 @@ function LeftNav({
             >
               {scanning ? <IconLoader size={12} /> : <IconRefresh size={12} />}
             </button>
-          </div>
-        )}
+        </div>
 
         {/* Settings icon */}
         <div style={{ borderTop: "1px solid rgba(255,255,255,0.1)", padding: "10px 0", width: "100%", textAlign: "center" }}>
@@ -1666,14 +1677,13 @@ function LeftNav({
       </div>
 
       {/* Scan status */}
-      {(scanAgo || demoMode) && (
-        <div style={{
+      <div style={{
           borderTop: "1px solid rgba(255,255,255,0.1)",
           padding: "10px 14px",
           display: "flex", alignItems: "center", gap: 8,
         }}>
           <span style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", flex: 1 }}>
-            {demoMode ? "Scanned just now" : `Scanned ${scanAgo}`}
+            {demoMode ? "Scanned just now" : scanAgo ? `Scanned ${scanAgo}` : "Not scanned yet"}
           </span>
           <button
             onClick={onRescan}
@@ -1689,8 +1699,7 @@ function LeftNav({
           >
             {scanning ? <IconLoader size={12} /> : <IconRefresh size={12} />}
           </button>
-        </div>
-      )}
+      </div>
 
       {/* Settings footer */}
       <div style={{ borderTop: "1px solid rgba(255,255,255,0.1)", padding: "10px 14px" }}>
@@ -1741,6 +1750,7 @@ export default function App() {
   const [hasApiKey, setHasApiKey] = useState<boolean | null>(null);
   const [isFirstRun, setIsFirstRun] = useState<boolean | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [showSmartTags, setShowSmartTags] = useState(false);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [isWide, setIsWide] = useState(false);
   const isNarrow = !isWide;
@@ -1755,6 +1765,16 @@ export default function App() {
   const realKanban = useKanban(boardFilter);
   const { settings: displaySettings, update: updateDisplay } = useDisplaySettings();
   const nav = useNavCollapsed();
+
+  const tags = useLiveQuery(() => db.tags.orderBy("name").toArray(), []) ?? [];
+  const [listSelectedTags, setListSelectedTags] = useState<number[]>([]);
+  const [boardSelectedTags, setBoardSelectedTags] = useState<number[]>([]);
+  const toggleListTag = useCallback((id: number) => {
+    setListSelectedTags((prev) => prev.includes(id) ? prev.filter((t) => t !== id) : [...prev, id]);
+  }, []);
+  const toggleBoardTag = useCallback((id: number) => {
+    setBoardSelectedTags((prev) => prev.includes(id) ? prev.filter((t) => t !== id) : [...prev, id]);
+  }, []);
 
   const realPendingSuggestions = useLiveQuery(
     () => db.completion_suggestions.where("status").equals("pending").toArray(),
@@ -1795,6 +1815,12 @@ export default function App() {
   const counts = demoMode ? DEMO_COUNTS : realCounts;
   const kanban = demoMode ? DEMO_KANBAN : realKanban;
   const pendingSuggestions = demoMode ? DEMO_SUGGESTIONS : realPendingSuggestions;
+  const effectiveTags = demoMode ? DEMO_TAGS : tags;
+  const tagMap = React.useMemo(() => {
+    const m = new Map<number, Tag>();
+    for (const t of effectiveTags) if (t.id != null) m.set(t.id, t);
+    return m;
+  }, [effectiveTags]);
   const demoActions: Actions = {
     handleDismiss: async () => "Dismissed",
     handleClose: async () => "Closed",
@@ -1900,6 +1926,15 @@ export default function App() {
     [actions, showToast],
   );
 
+  const onMetaUpdate = useCallback(
+    async (id: number, changes: Partial<Pick<Commitment, "tag_id" | "urgency" | "deadline" | "text" | "direction" | "sensitive">>) => {
+      if (demoMode) return;
+      await db.commitments.update(id, changes);
+      showToast("Updated");
+    },
+    [demoMode, showToast],
+  );
+
   const onAcceptCompletion = useCallback(async (suggestionId: number, commitmentId: number) => {
     if (demoMode) { showToast("\u2713 Marked done"); return; }
     const now = new Date().toISOString();
@@ -1969,6 +2004,7 @@ export default function App() {
       return true;
     })
     .filter((c) => matchesSearch(c, listSearch))
+    .filter((c) => listSelectedTags.length === 0 || (c.tag_id != null && listSelectedTags.includes(c.tag_id)))
     .sort((a, b) => {
       if (a.likely_completed !== b.likely_completed) {
         return a.likely_completed ? 1 : -1;
@@ -1990,14 +2026,18 @@ export default function App() {
 
   // ─── Board view: apply search to kanban columns ───
 
-  const boardTodo = kanban.todo.filter((c) => matchesSearch(c, boardSearch));
-  const boardInProgress = kanban.inProgress.filter((c) => matchesSearch(c, boardSearch));
-  const boardDone = kanban.done.filter((c) => matchesSearch(c, boardSearch));
+  const matchesBoardTag = (c: Commitment) => boardSelectedTags.length === 0 || (c.tag_id != null && boardSelectedTags.includes(c.tag_id));
+  const boardTodo = kanban.todo.filter((c) => matchesSearch(c, boardSearch) && matchesBoardTag(c));
+  const boardInProgress = kanban.inProgress.filter((c) => matchesSearch(c, boardSearch) && matchesBoardTag(c));
+  const boardDone = kanban.done.filter((c) => matchesSearch(c, boardSearch) && matchesBoardTag(c));
 
   const renderCard = (item: Commitment) => (
     <CommitmentCard
       key={item.id}
       item={item}
+      allTags={effectiveTags}
+      onMetaUpdate={onMetaUpdate}
+      tag={item.tag_id != null ? tagMap.get(item.tag_id) : undefined}
       isExpanded={expandedId === item.id}
       isSelected={selectedId === item.id}
       isNarrow={!isWide}
@@ -2029,6 +2069,9 @@ export default function App() {
     setIsFirstRun(false);
     if (!demoMode) setHasApiKey(true);
   };
+
+  // Wait for storage read before rendering to avoid wizard flash
+  if (isFirstRun === null) return null;
 
   return (
     <>
@@ -2197,11 +2240,17 @@ export default function App() {
 
         {/* Scrollable content area */}
         <div style={{ flex: isWide ? 1 : undefined, overflowY: isWide ? "auto" : undefined }}>
-          <div style={{
-            maxWidth: (viewMode === "board" || viewMode === "devlog") ? "none" : 640,
-            margin: (viewMode === "board" || viewMode === "devlog") ? undefined : "0 auto",
-            padding: (viewMode === "board" || viewMode === "devlog") ? "12px 16px" : 0,
-          }}>
+          <div style={(() => {
+            const isFullWidth = viewMode === "board" || viewMode === "devlog"
+              || viewMode === "brief"
+              || (viewMode === "list" && isWide);
+            const needsBoardPadding = viewMode === "board" || viewMode === "devlog";
+            return {
+              maxWidth: isFullWidth ? "none" : 640,
+              margin: isFullWidth ? undefined : "0 auto",
+              padding: needsBoardPadding ? "12px 16px" : 0,
+            };
+          })()}>
             {hasApiKey === false && (
               <div style={{ padding: "20px 16px" }}>
                 <ApiKeySetup onSaved={() => setHasApiKey(true)} />
@@ -2216,6 +2265,10 @@ export default function App() {
                   onFilterChange={setBoardFilter}
                   search={boardSearch}
                   onSearchChange={setBoardSearch}
+                  tags={effectiveTags}
+                  selectedTags={boardSelectedTags}
+                  onTagToggle={toggleBoardTag}
+                  onSmartTags={() => setShowSmartTags(true)}
                 />
                 <KanbanBoard
                   todo={boardTodo}
@@ -2234,6 +2287,7 @@ export default function App() {
                   displaySettings={displaySettings}
                   privacyMode={privacyMode}
                   onTodoOverflow={handleTodoOverflow}
+                  tagMap={tagMap}
                 />
               </>
             )}
@@ -2247,6 +2301,10 @@ export default function App() {
                     onFilterChange={setListFilter}
                     search={listSearch}
                     onSearchChange={setListSearch}
+                    tags={effectiveTags}
+                    selectedTags={listSelectedTags}
+                    onTagToggle={toggleListTag}
+                    onSmartTags={() => setShowSmartTags(true)}
                   />
                 </div>
                 {filtered.length === 0 ? (
@@ -2339,12 +2397,16 @@ export default function App() {
             onDismiss={() => selectedItem.id != null && onDismiss(selectedItem.id)}
             onReminder={() => selectedItem.id != null && onReminder(selectedItem.id)}
             privacyMode={privacyMode}
+            allTags={effectiveTags}
+            onMetaUpdate={onMetaUpdate}
           />
         </div>
       )}
 
+      {showSmartTags && <SmartTagsModal onClose={() => setShowSmartTags(false)} />}
+
       {toast && <Toast message={toast.message} variant={toast.variant} onClose={() => setToast(null)} />}
-      <ClydeChat showToast={showToast} sidePanelOpen={showPanel} proactiveMessage={proactiveMsg} onProactiveHandled={() => setProactiveMsg(null)} />
+      <ClydeChat showToast={showToast} sidePanelOpen={showPanel} proactiveMessage={proactiveMsg} onProactiveHandled={() => setProactiveMsg(null)} demoMode={demoMode} hasApiKey={hasApiKey === true} />
     </div>
     </>
   );

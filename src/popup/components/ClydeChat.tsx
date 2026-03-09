@@ -11,19 +11,29 @@ import { OS } from "@shared/tokens";
 import { db } from "@shared/db";
 import type { Commitment, Urgency, CommitmentDirection, CommitmentStatus } from "@shared/types";
 import {
-  CLAUDE_MODEL_FAST,
+  CLAUDE_MODEL,
   API_TIMEOUT_MS,
   API_MAX_RETRIES,
   API_RETRY_DELAY_MS,
 } from "@shared/constants";
 import { computeHash } from "../../background/dedup";
-import { IconMic, IconStop, IconChat, IconX, IconSend } from "./Icons";
+import { IconMic, IconStop, IconChat, IconX, IconSend, IconRefresh, IconCheck, IconChevronUp, IconChevronDown } from "./Icons";
 
 // ─── Types ───
+
+interface CommitmentSnapshot {
+  id: number;
+  text: string;
+  urgency: string;
+  deadline: string | null;
+  context: string;
+  status: string;
+}
 
 interface ChatMessage {
   role: "user" | "assistant";
   content: string;
+  snapshots?: CommitmentSnapshot[];
 }
 
 interface ToolDefinition {
@@ -191,6 +201,7 @@ async function executeCreateCommitment(input: {
     slack_link: null,
     triggered: false,
     sensitive: false,
+    tag_id: null,
     createdAt: now,
   });
 
@@ -473,7 +484,8 @@ Rules:
 - Today is ${new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}
 - Be concise — 1-2 sentences max for responses
 - When voice input is ambiguous, lean toward creating a task
-- For search results, format as a numbered list with key details`;
+- When returning commitment results, respond with ONLY a short summary line like "5 overdue items:" or "Found 3 tasks matching that." — never list them in text. The UI renders them as cards automatically.
+- For non-list responses (confirmations, answers, errors) write normally`;
 
 async function buildContextMessage(): Promise<string> {
   const active = await db.commitments
@@ -521,8 +533,8 @@ async function callClaude(
           "anthropic-dangerous-direct-browser-access": "true",
         },
         body: JSON.stringify({
-          model: CLAUDE_MODEL_FAST,
-          max_tokens: 1024,
+          model: CLAUDE_MODEL,
+          max_tokens: 512,
           system: SYSTEM_PROMPT,
           tools: TOOLS,
           messages,
@@ -567,9 +579,10 @@ async function callClaude(
 // Run the full tool-use loop: call Claude, execute tools, call Claude again with results
 async function runConversation(
   chatHistory: Array<{ role: string; content: string | object[] }>,
-): Promise<string> {
+): Promise<{ text: string; foundIds: number[] }> {
   const messages = [...chatHistory];
   let finalText = "";
+  const foundIds: number[] = [];
 
   // Allow up to 5 tool-use rounds to prevent infinite loops
   for (let round = 0; round < 5; round++) {
@@ -588,11 +601,20 @@ async function runConversation(
     }
     messages.push({ role: "assistant", content: assistantContent });
 
-    // Execute all tools and add results
+    // Execute all tools and collect results + extract commitment IDs
     const toolResults: object[] = [];
     for (const tc of toolCalls) {
       const result = await executeTool(tc.name, tc.input);
       toolResults.push({ type: "tool_result", tool_use_id: tc.id, content: result });
+      // Extract IDs from any tool result that returns commitment arrays
+      try {
+        const parsed = JSON.parse(result);
+        if (Array.isArray(parsed)) {
+          for (const item of parsed) {
+            if (typeof item?.id === "number") foundIds.push(item.id);
+          }
+        }
+      } catch { /* not JSON or not an array */ }
     }
     messages.push({ role: "user", content: toolResults });
 
@@ -603,7 +625,153 @@ async function runConversation(
     }
   }
 
-  return finalText || "Done.";
+  return { text: finalText || "Done.", foundIds };
+}
+
+// ─── Helpers ───
+
+function urgencyColor(urgency: string): string {
+  if (urgency === "high") return OS.red;
+  if (urgency === "low") return OS.muted;
+  return OS.yellowBorder;
+}
+
+function formatDeadline(iso: string | null): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  const now = new Date();
+  const diffDays = Math.round((d.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+  if (diffDays < 0) return `${Math.abs(diffDays)}d overdue`;
+  if (diffDays === 0) return "due today";
+  if (diffDays === 1) return "due tomorrow";
+  return `due in ${diffDays}d`;
+}
+
+// Render **bold** markdown inline
+function renderMarkdown(text: string): React.ReactNode[] {
+  const parts = text.split(/(\*\*[^*]+\*\*)/g);
+  return parts.map((part, i) => {
+    if (part.startsWith("**") && part.endsWith("**")) {
+      return <strong key={i}>{part.slice(2, -2)}</strong>;
+    }
+    return part;
+  });
+}
+
+// ─── CommitmentMiniCard ───
+
+function CommitmentMiniCard({
+  snapshot,
+  onAction,
+}: {
+  snapshot: CommitmentSnapshot;
+  onAction: (id: number, action: "done" | "dismiss") => void;
+}) {
+  const [actioned, setActioned] = useState<"done" | "dismiss" | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const handle = async (action: "done" | "dismiss") => {
+    setLoading(true);
+    try {
+      await executeUpdateCommitment({ id: snapshot.id, status: action === "done" ? "done" : "dismissed" });
+      setActioned(action);
+      onAction(snapshot.id, action);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const deadline = formatDeadline(snapshot.deadline);
+  const color = urgencyColor(snapshot.urgency);
+  const isDone = actioned === "done";
+  const isDismissed = actioned === "dismiss";
+  const isActioned = isDone || isDismissed;
+
+  // Truncate context to a short channel-style label
+  const contextLabel = snapshot.context && snapshot.context !== "chat"
+    ? "#" + snapshot.context.replace(/^#/, "").split(/[\s/]/)[0].slice(0, 18)
+    : null;
+
+  return (
+    <div style={{
+      background: OS.white,
+      border: `1px solid ${OS.border}`,
+      borderLeft: `3px solid ${isActioned ? OS.border : color}`,
+      borderRadius: 8,
+      padding: "7px 10px",
+      display: "flex",
+      alignItems: "flex-start",
+      gap: 8,
+      opacity: isActioned ? 0.5 : 1,
+      transition: "opacity 0.2s",
+      minHeight: 44,
+    }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{
+          fontSize: 12, fontWeight: 500, color: isActioned ? OS.muted : OS.text,
+          display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical",
+          overflow: "hidden",
+          textDecoration: isDone ? "line-through" : undefined,
+          marginBottom: 3, lineHeight: 1.35,
+        }}>
+          {snapshot.text}
+        </div>
+        <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
+          <span style={{
+            fontSize: 10, fontWeight: 700, color: isActioned ? OS.faint : color,
+            textTransform: "uppercase", letterSpacing: "0.05em",
+          }}>
+            {snapshot.urgency}
+          </span>
+          {deadline && (
+            <span style={{ fontSize: 10, color: OS.muted }}>{deadline}</span>
+          )}
+          {contextLabel && (
+            <span style={{
+              fontSize: 10, color: OS.faint,
+              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 80,
+            }}>
+              {contextLabel}
+            </span>
+          )}
+        </div>
+      </div>
+      {isActioned ? (
+        <span style={{ fontSize: 10, color: OS.muted, flexShrink: 0, fontStyle: "italic" }}>
+          {isDone ? "done" : "dismissed"}
+        </span>
+      ) : (
+        <div style={{ display: "flex", gap: 2, flexShrink: 0, marginTop: 1 }}>
+          <button
+            onClick={() => handle("done")}
+            disabled={loading}
+            title="Mark done"
+            style={{
+              width: 28, height: 28, borderRadius: "50%", border: "none",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              cursor: "pointer", background: `${OS.green}18`, color: OS.green,
+              opacity: loading ? 0.5 : 1, flexShrink: 0,
+            }}
+          >
+            <IconCheck size={14} />
+          </button>
+          <button
+            onClick={() => handle("dismiss")}
+            disabled={loading}
+            title="Dismiss"
+            style={{
+              width: 28, height: 28, borderRadius: "50%", border: "none",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              cursor: "pointer", background: `${OS.muted}18`, color: OS.muted,
+              opacity: loading ? 0.5 : 1, flexShrink: 0,
+            }}
+          >
+            <IconX size={13} />
+          </button>
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ─── Voice Hook ───
@@ -662,20 +830,31 @@ function useVoice(onResult: (transcript: string) => void, onInterim?: (transcrip
 
 // ─── Component ───
 
-export function ClydeChat({ showToast, sidePanelOpen, proactiveMessage, onProactiveHandled }: {
+export function ClydeChat({ showToast, sidePanelOpen, proactiveMessage, onProactiveHandled, demoMode, hasApiKey }: {
   showToast: (msg: string, variant?: "success" | "error" | "warning" | "info") => void;
   sidePanelOpen?: boolean;
   proactiveMessage?: string | null;
   onProactiveHandled?: () => void;
+  demoMode?: boolean;
+  hasApiKey?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [interimVoice, setInterimVoice] = useState("");
+  const [thinkingDots, setThinkingDots] = useState(".");
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const sendMessageRef = useRef<(text: string) => void>(() => {});
+
+  // Animate thinking dots
+  useEffect(() => {
+    if (!loading) return;
+    const id = setInterval(() => setThinkingDots((d) => (d.length >= 3 ? "." : d + ".")), 400);
+    return () => clearInterval(id);
+  }, [loading]);
 
   // Handle proactive messages (e.g. column suggestions)
   useEffect(() => {
@@ -704,7 +883,7 @@ export function ClydeChat({ showToast, sidePanelOpen, proactiveMessage, onProact
 
   const sendMessage = useCallback(
     async (text: string) => {
-      if (!text.trim() || loading) return;
+      if (!text.trim() || loading || demoMode || !hasApiKey) return;
       const userMsg: ChatMessage = { role: "user", content: text.trim() };
       setMessages((prev) => [...prev, userMsg]);
       setInput("");
@@ -725,8 +904,27 @@ export function ClydeChat({ showToast, sidePanelOpen, proactiveMessage, onProact
           apiMessages.push({ role: recentMessages[i].role, content: recentMessages[i].content });
         }
 
-        const response = await runConversation(apiMessages);
-        setMessages((prev) => [...prev, { role: "assistant", content: response }]);
+        const { text: response, foundIds } = await runConversation(apiMessages);
+
+        // Look up commitments from IDs returned by tool calls
+        let snapshots: CommitmentSnapshot[] | undefined;
+        const uniqueIds = [...new Set(foundIds)];
+        if (uniqueIds.length > 0) {
+          const found = await Promise.all(uniqueIds.map((id) => db.commitments.get(id)));
+          const valid = found.filter((c): c is NonNullable<typeof c> => c != null && c.id != null);
+          if (valid.length > 0) {
+            snapshots = valid.map((c) => ({
+              id: c.id!,
+              text: c.text,
+              urgency: c.urgency,
+              deadline: c.deadline,
+              context: c.context,
+              status: c.status,
+            }));
+          }
+        }
+
+        setMessages((prev) => [...prev, { role: "assistant", content: response, snapshots }]);
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : "Something went wrong";
         setMessages((prev) => [...prev, { role: "assistant", content: `Error: ${errMsg}` }]);
@@ -737,6 +935,12 @@ export function ClydeChat({ showToast, sidePanelOpen, proactiveMessage, onProact
     [messages, loading],
   );
   sendMessageRef.current = sendMessage;
+
+  const clearChat = useCallback(() => {
+    setMessages([]);
+    setInput("");
+    setInterimVoice("");
+  }, []);
 
   // Quick mic: one-shot voice → immediate task creation
   const handleQuickMic = useCallback(
@@ -751,7 +955,7 @@ export function ClydeChat({ showToast, sidePanelOpen, proactiveMessage, onProact
             content: `[Context]\n${contextSnapshot}\n\n[Voice dictation — create a task from this]\n${transcript}`,
           },
         ];
-        const response = await runConversation(apiMessages);
+        const { text: response } = await runConversation(apiMessages);
         // Extract the created task text for the toast
         const shortText = transcript.length > 40 ? transcript.slice(0, 40) + "..." : transcript;
         showToast(`Created: ${shortText}`, "success");
@@ -821,9 +1025,9 @@ export function ClydeChat({ showToast, sidePanelOpen, proactiveMessage, onProact
     position: "fixed",
     bottom: 68,
     right: fabRight,
-    transition: "right 0.15s ease",
-    width: 360,
-    height: 480,
+    transition: "right 0.15s ease, width 0.2s ease, height 0.2s ease",
+    width: expanded ? 500 : 360,
+    height: expanded ? 640 : 480,
     background: OS.white,
     border: `1px solid ${OS.border}`,
     borderRadius: 12,
@@ -843,7 +1047,7 @@ export function ClydeChat({ showToast, sidePanelOpen, proactiveMessage, onProact
           {/* Header */}
           <div
             style={{
-              padding: "12px 16px",
+              padding: "10px 14px",
               borderBottom: `1px solid ${OS.border}`,
               display: "flex",
               alignItems: "center",
@@ -851,14 +1055,46 @@ export function ClydeChat({ showToast, sidePanelOpen, proactiveMessage, onProact
               background: OS.bg,
             }}
           >
-            <span style={{ fontWeight: 600, fontSize: 14, color: OS.text }}>Clyde</span>
-            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <div style={{
+                width: 28, height: 28, borderRadius: "50%",
+                background: OS.blue, display: "flex", alignItems: "center",
+                justifyContent: "center", flexShrink: 0,
+              }}>
+                <span style={{ fontSize: 13, fontWeight: 700, color: OS.white, fontFamily: OS.font }}>C</span>
+              </div>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 13, color: OS.text, lineHeight: 1.2 }}>Clyde</div>
+                <div style={{ fontSize: 10, color: OS.green, fontWeight: 600 }}>online</div>
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              {messages.length > 0 && (
+                <button
+                  onClick={clearChat}
+                  title="Clear conversation"
+                  style={{
+                    ...btnBase, width: 28, height: 28,
+                    background: "transparent", color: OS.muted, boxShadow: "none",
+                  }}
+                >
+                  <IconRefresh size={14} />
+                </button>
+              )}
+              <button
+                onClick={() => setExpanded((e) => !e)}
+                title={expanded ? "Collapse" : "Expand"}
+                style={{
+                  ...btnBase, width: 28, height: 28,
+                  background: "transparent", color: OS.muted, boxShadow: "none",
+                }}
+              >
+                {expanded ? <IconChevronDown size={14} /> : <IconChevronUp size={14} />}
+              </button>
               <button
                 onClick={() => (chatMicVoice.listening ? chatMicVoice.stop() : chatMicVoice.start())}
                 style={{
-                  ...btnBase,
-                  width: 28,
-                  height: 28,
+                  ...btnBase, width: 28, height: 28,
                   background: chatMicVoice.listening ? OS.red : "transparent",
                   color: chatMicVoice.listening ? OS.white : OS.muted,
                   boxShadow: "none",
@@ -870,12 +1106,8 @@ export function ClydeChat({ showToast, sidePanelOpen, proactiveMessage, onProact
               <button
                 onClick={() => setOpen(false)}
                 style={{
-                  ...btnBase,
-                  width: 28,
-                  height: 28,
-                  background: "transparent",
-                  color: OS.muted,
-                  boxShadow: "none",
+                  ...btnBase, width: 28, height: 28,
+                  background: "transparent", color: OS.muted, boxShadow: "none",
                 }}
               >
                 <IconX />
@@ -896,29 +1128,122 @@ export function ClydeChat({ showToast, sidePanelOpen, proactiveMessage, onProact
             }}
           >
             {messages.length === 0 && !loading && (
-              <div style={{ color: OS.muted, fontSize: 13, textAlign: "center", marginTop: 40 }}>
-                Ask me to create tasks, search your board, or manage items.
+              <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 8 }}>
+                {demoMode ? (
+                  /* Demo mode — explain chat requires real account */
+                  <div style={{
+                    alignSelf: "flex-start", maxWidth: "88%",
+                    padding: "10px 14px", borderRadius: 12,
+                    background: OS.bg, fontSize: 13, lineHeight: 1.5, color: OS.text,
+                  }}>
+                    <div style={{ fontWeight: 600, marginBottom: 4 }}>Hey! I'm Clyde.</div>
+                    <div style={{ color: OS.secondary }}>
+                      Chat is available once you exit demo mode and add your Anthropic API key in Settings.
+                    </div>
+                  </div>
+                ) : !hasApiKey ? (
+                  /* No API key — guide to settings */
+                  <div style={{
+                    alignSelf: "flex-start", maxWidth: "88%",
+                    padding: "10px 14px", borderRadius: 12,
+                    background: OS.bg, fontSize: 13, lineHeight: 1.5, color: OS.text,
+                  }}>
+                    <div style={{ fontWeight: 600, marginBottom: 4 }}>Hey! I'm Clyde.</div>
+                    <div style={{ color: OS.secondary }}>
+                      To use chat, add your Anthropic API key in Settings first.
+                    </div>
+                  </div>
+                ) : (
+                  /* Ready to chat */
+                  <>
+                    <div style={{
+                      alignSelf: "flex-start", maxWidth: "88%",
+                      padding: "10px 14px", borderRadius: 12,
+                      background: OS.bg, fontSize: 13, lineHeight: 1.5, color: OS.text,
+                    }}>
+                      <div style={{ fontWeight: 600, marginBottom: 4 }}>Hey! I'm Clyde.</div>
+                      <div style={{ color: OS.secondary }}>
+                        I keep track of your commitments so nothing slips through. Ask me anything — or try one of these:
+                      </div>
+                    </div>
+                    {[
+                      "What's overdue?",
+                      "Add task: review PR by Friday",
+                      "Show my urgent items",
+                      "Summarize my board",
+                    ].map((prompt) => (
+                      <button
+                        key={prompt}
+                        onClick={() => sendMessage(prompt)}
+                        style={{
+                          alignSelf: "flex-end",
+                          padding: "7px 12px",
+                          border: `1px solid ${OS.blue}`,
+                          borderRadius: 16,
+                          background: OS.white,
+                          color: OS.blue,
+                          fontSize: 12,
+                          fontWeight: 500,
+                          fontFamily: OS.font,
+                          cursor: "pointer",
+                          textAlign: "left",
+                        }}
+                      >
+                        {prompt}
+                      </button>
+                    ))}
+                  </>
+                )}
               </div>
             )}
-            {messages.map((msg, i) => (
-              <div
-                key={i}
-                style={{
-                  alignSelf: msg.role === "user" ? "flex-end" : "flex-start",
-                  maxWidth: "85%",
-                  padding: "8px 12px",
-                  borderRadius: 12,
-                  fontSize: 13,
-                  lineHeight: 1.4,
-                  background: msg.role === "user" ? OS.blue : OS.bg,
-                  color: msg.role === "user" ? OS.white : OS.text,
-                  wordBreak: "break-word",
-                  whiteSpace: "pre-wrap",
-                }}
-              >
-                {msg.content}
-              </div>
-            ))}
+            {messages.map((msg, i) => {
+              const hasCards = msg.role === "assistant" && msg.snapshots && msg.snapshots.length > 0;
+              return (
+                <React.Fragment key={i}>
+                  {/* Text bubble — compact label when cards follow, full bubble otherwise */}
+                  {hasCards ? (
+                    msg.content.trim() && (
+                      <div style={{
+                        alignSelf: "flex-start",
+                        fontSize: 11, color: OS.muted, fontWeight: 500,
+                        paddingLeft: 2, paddingBottom: 2,
+                      }}>
+                        {renderMarkdown(msg.content.trim())}
+                      </div>
+                    )
+                  ) : (
+                    <div
+                      style={{
+                        alignSelf: msg.role === "user" ? "flex-end" : "flex-start",
+                        maxWidth: "85%",
+                        padding: "8px 12px",
+                        borderRadius: 12,
+                        fontSize: 13,
+                        lineHeight: 1.4,
+                        background: msg.role === "user" ? OS.blue : OS.bg,
+                        color: msg.role === "user" ? OS.white : OS.text,
+                        wordBreak: "break-word",
+                        whiteSpace: "pre-wrap",
+                      }}
+                    >
+                      {msg.role === "assistant" ? renderMarkdown(msg.content) : msg.content}
+                    </div>
+                  )}
+                  {/* Commitment cards */}
+                  {hasCards && (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 5, alignSelf: "stretch" }}>
+                      {msg.snapshots!.map((snap) => (
+                        <CommitmentMiniCard
+                          key={snap.id}
+                          snapshot={snap}
+                          onAction={() => {}}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </React.Fragment>
+              );
+            })}
             {loading && (
               <div
                 style={{
@@ -928,9 +1253,10 @@ export function ClydeChat({ showToast, sidePanelOpen, proactiveMessage, onProact
                   fontSize: 13,
                   background: OS.bg,
                   color: OS.muted,
+                  minWidth: 52,
                 }}
               >
-                Thinking...
+                Thinking{thinkingDots}
               </div>
             )}
           </div>
@@ -957,8 +1283,8 @@ export function ClydeChat({ showToast, sidePanelOpen, proactiveMessage, onProact
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="Type a message..."
-              disabled={loading}
+              placeholder={demoMode ? "Chat unavailable in demo mode" : !hasApiKey ? "Add API key in Settings to chat" : "Type a message..."}
+              disabled={loading || !!demoMode || !hasApiKey}
               style={{
                 flex: 1,
                 padding: "8px 12px",
@@ -973,7 +1299,7 @@ export function ClydeChat({ showToast, sidePanelOpen, proactiveMessage, onProact
             />
             <button
               onClick={() => sendMessage(input)}
-              disabled={loading || !input.trim()}
+              disabled={loading || !input.trim() || !!demoMode || !hasApiKey}
               style={{
                 ...btnBase,
                 width: 32,

@@ -1,0 +1,206 @@
+# Claude Security Review — Triggered on security-sensitive file changes
+#
+# SETUP REQUIRED: Add ANTHROPIC_API_KEY to this repo's secrets
+# GitHub → Settings → Secrets and variables → Actions → New repository secret
+#
+# Runs a focused security review when PRs touch high-risk paths.
+# Always requests changes if any finding scores ≥75.
+
+name: Claude Security Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [main, master]
+    paths:
+      # Claude API calls and secret handling
+      - 'src/background/extractor.ts'
+      - 'src/background/service-worker.ts'
+      - 'src/background/granola-local.ts'
+      - 'src/background/granola-poller.ts'
+      - 'src/background/backup-sync.ts'
+      # DOM scraping (XSS surface)
+      - 'src/content/**'
+      # Data storage (sensitive data handling)
+      - 'src/shared/db.ts'
+      - 'src/shared/types.ts'
+      - 'src/shared/constants.ts'
+      # Chat (prompt injection surface)
+      - 'src/popup/components/ClydeChat.tsx'
+      # Settings (API key input)
+      - 'src/options/Options.tsx'
+      # Extension manifest (permissions)
+      - 'manifest.json'
+      # Native host (RCE surface)
+      - 'native-host/**'
+      # Dependencies
+      - 'package.json'
+      - 'package-lock.json'
+
+permissions:
+  contents: read
+  pull-requests: write
+  id-token: write
+
+jobs:
+  security-review:
+    name: Security Review
+    runs-on: ubuntu-latest
+
+    # Skip draft PRs, bots, and skip-ai-review label
+    if: |
+      github.event.pull_request.draft == false &&
+      !contains(fromJson('["dependabot[bot]", "renovate[bot]", "github-actions[bot]"]'), github.event.pull_request.user.login) &&
+      (!contains(github.event.pull_request.labels.*.name, 'skip-ai-review') || contains(github.event.pull_request.labels.*.name, 'force-ai-review'))
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - run: npm ci
+
+      - name: Run Claude Security Review
+        id: security-scan
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          model: claude-sonnet-4-6
+          timeout_minutes: 10
+          prompt: |
+            You are running a security review on a pull request for the Clyde Chrome extension.
+
+            This extension:
+            - Scrapes Slack DOM content including potentially private messages
+            - Sends workspace data to the Anthropic API (via direct fetch in a service worker)
+            - Stores an Anthropic API key in chrome.storage.local
+            - Runs a Python native host for Granola integration
+            - Renders user-controlled text (Slack messages) in a React UI
+
+            PR: ${{ github.event.pull_request.title }}
+            Branch: ${{ github.head_ref }}
+
+            Run the full security review as defined in .claude/commands/security-review.md.
+
+            Security threshold: 75 (report ALL findings at or above this score).
+
+            Output each finding in this format:
+
+            ---FINDING---
+            FILE: <relative/path>
+            LINE: <line number>
+            VULN_CLASS: <PROMPT_INJECTION|API_KEY|XSS|PERMISSIONS|DATA_EXPOSURE|NATIVE_MESSAGING|DEPENDENCY|STORAGE>
+            CONFIDENCE: <0-100>
+            TITLE: <one-line summary>
+            IMPACT: <what an attacker could do>
+            FIX: <specific remediation>
+            ---END---
+
+            Then output:
+            ---SUMMARY---
+            HAS_CRITICAL: <true if any finding ≥ 90>
+            HAS_HIGH: <true if any finding 75-89>
+            FINDING_COUNT: <total at or above 75>
+            ---END---
+
+      - name: Post security findings
+        uses: actions/github-script@v7
+        if: always()
+        env:
+          SECURITY_OUTPUT: ${{ steps.security-scan.outputs.result }}
+        with:
+          script: |
+            const output = process.env.SECURITY_OUTPUT || '';
+
+            const findingRegex = /---FINDING---([\s\S]*?)---END---/g;
+            const summaryRegex = /---SUMMARY---([\s\S]*?)---END---/;
+
+            const findings = [];
+            let match;
+            while ((match = findingRegex.exec(output)) !== null) {
+              const block = match[1];
+              const get = (key) => {
+                const m = block.match(new RegExp(`${key}: (.+)`));
+                return m ? m[1].trim() : '';
+              };
+              const conf = parseInt(get('CONFIDENCE'), 10);
+              if (conf >= 75) {
+                findings.push({
+                  file: get('FILE'),
+                  line: parseInt(get('LINE'), 10) || 1,
+                  vulnClass: get('VULN_CLASS'),
+                  confidence: conf,
+                  title: get('TITLE'),
+                  impact: get('IMPACT'),
+                  fix: get('FIX'),
+                });
+              }
+            }
+
+            const summaryMatch = summaryRegex.exec(output);
+            const getSum = (key) => {
+              if (!summaryMatch) return '';
+              const m = summaryMatch[1].match(new RegExp(`${key}: (.+)`));
+              return m ? m[1].trim() : '';
+            };
+            const hasCritical = getSum('HAS_CRITICAL') === 'true';
+            const hasHigh = getSum('HAS_HIGH') === 'true';
+            const shouldBlock = hasCritical || hasHigh; // Block on ≥75
+
+            const vulnEmoji = {
+              PROMPT_INJECTION: '💉',
+              API_KEY: '🔑',
+              XSS: '📜',
+              PERMISSIONS: '🛡️',
+              DATA_EXPOSURE: '📤',
+              NATIVE_MESSAGING: '🖥️',
+              DEPENDENCY: '📦',
+              STORAGE: '💾',
+            };
+
+            const comments = findings.map(f => ({
+              path: f.file,
+              line: f.line,
+              body: [
+                `${vulnEmoji[f.vulnClass] || '🔒'} **[SECURITY: ${f.vulnClass}]** ${f.title}`,
+                '',
+                `**Impact:** ${f.impact}`,
+                `**Fix:** ${f.fix}`,
+                '',
+                `_Confidence: ${f.confidence}/100_`,
+              ].join('\n'),
+            }));
+
+            let reviewBody;
+            if (findings.length === 0) {
+              reviewBody = '✅ **Security Review**: No security issues found at or above confidence threshold 75.';
+            } else {
+              reviewBody = [
+                '## 🔒 Security Review',
+                '',
+                `Found **${findings.length} security issue(s)** requiring attention:`,
+                '',
+                ...findings.map(f =>
+                  `- ${vulnEmoji[f.vulnClass] || '🔒'} **${f.title}** (\`${f.file}\`) — ${f.vulnClass}, confidence ${f.confidence}`
+                ),
+                '',
+                shouldBlock
+                  ? '> ⛔ **This PR requires changes before merging** — security findings at or above threshold 75.'
+                  : '> ⚠️ Review security findings before merging.',
+              ].join('\n');
+            }
+
+            await github.rest.pulls.createReview({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+              commit_id: context.payload.pull_request.head.sha,
+              body: reviewBody,
+              event: shouldBlock ? 'REQUEST_CHANGES' : (findings.length > 0 ? 'COMMENT' : 'APPROVE'),
+              comments: comments.filter(c => c.path && c.line),
+            });

@@ -26,6 +26,8 @@ const SOURCE_LABELS: Record<StatusEntry["source"], string> = {
   backup: "Backup",
   "morning-brief": "Brief",
   "voice-inbox": "Voice",
+  tags: "Tags",
+  sensitivity: "Privacy",
 };
 
 function timeAgo(iso: string | null): string {

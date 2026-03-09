@@ -13,7 +13,7 @@ const filters: Array<{ key: FilterKey; label: string }> = [
   { key: "overdue", label: "Overdue" },
   { key: "has_deadline", label: "Has deadline" },
   { key: "high", label: "High priority" },
-  { key: "meetings", label: "Meetings" },
+  { key: "meetings", label: "Granola" },
   { key: "slack", label: "Slack" },
   { key: "gdoc", label: "Google Docs" },
 ];

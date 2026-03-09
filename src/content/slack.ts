@@ -11,6 +11,8 @@ import {
   getSlackIds,
   extractMessageTs,
   buildSlackPermalink,
+  isInsideThreadPanel,
+  getThreadTsFromUrl,
 } from "./selectors";
 
 // ─── State ───
@@ -210,6 +212,8 @@ function scanVisibleMessages(): void {
 
     const messageTs = extractMessageTs(msg.blockEl);
     const slackLink = (channelId && messageTs) ? buildSlackPermalink(channelId, messageTs) : null;
+    const isThreadReply = isInsideThreadPanel(msg.blockEl);
+    const threadTs = isThreadReply ? getThreadTsFromUrl() : null;
 
     bufferMessage({
       text: msg.text,
@@ -222,6 +226,8 @@ function scanVisibleMessages(): void {
       channel_id: channelId,
       message_ts: messageTs,
       slack_link: slackLink,
+      thread_ts: threadTs,
+      is_thread_reply: isThreadReply,
     });
     captured++;
   }
@@ -291,6 +297,8 @@ function processAddedNode(node: Element, text: string): void {
   const { channelId } = getSlackIds();
   const messageTs = extractMessageTs(node);
   const slackLink = (channelId && messageTs) ? buildSlackPermalink(channelId, messageTs) : null;
+  const isThreadReply = isInsideThreadPanel(node);
+  const threadTs = isThreadReply ? getThreadTsFromUrl() : null;
 
   const key = messageKey(sender, text, timestamp);
   if (seenMessages.has(key)) return;
@@ -314,6 +322,8 @@ function processAddedNode(node: Element, text: string): void {
     channel_id: channelId,
     message_ts: messageTs,
     slack_link: slackLink,
+    thread_ts: threadTs,
+    is_thread_reply: isThreadReply,
   });
 }
 
@@ -457,8 +467,12 @@ async function init(): Promise<void> {
   });
 }
 
-if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", init);
-} else {
-  init();
+// Guard against double-injection (manifest load + programmatic re-inject)
+if (!(window as unknown as Record<string, boolean>).__clydeSlackInjected) {
+  (window as unknown as Record<string, boolean>).__clydeSlackInjected = true;
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init);
+  } else {
+    init();
+  }
 }

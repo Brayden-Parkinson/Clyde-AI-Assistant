@@ -35,6 +35,8 @@ function formatTranscriptForExtraction(
     channel_id: null,
     message_ts: null,
     slack_link: null,
+    thread_ts: null,
+    is_thread_reply: false,
   }));
 
   // Candidates = user's own speech + any segment matching commitment patterns
@@ -55,7 +57,14 @@ function formatTranscriptForExtraction(
  * Uses a date watermark + processed-ID set for efficient dedup.
  * Returns structured speaker-tagged transcripts to the extractor.
  */
-export async function pollGranola(): Promise<void> {
+/**
+ * @param forceFullScan If true, ignores the `since` watermark and scans
+ *   all recent meetings. Used for manual "Scan" button presses.
+ */
+export async function pollGranola(forceFullScan = false): Promise<void> {
+  const settings = await chrome.storage.local.get("granolaEnabled");
+  if (settings.granolaEnabled === false) return;
+
   try {
     const connected = await isGranolaConnected();
     await updateStatus({ granolaConnected: connected });
@@ -78,8 +87,12 @@ export async function pollGranola(): Promise<void> {
     const processedSet = new Set(processedIds);
 
     // Use the more recent of lastPoll and watermark as the `since` filter
+    // For manual scans, look back 7 days to catch anything that was missed
     let since: string | undefined;
-    if (lastPoll && watermark) {
+    if (forceFullScan) {
+      since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+      await logStatus("info", "granola", `Full scan — looking back 7 days`);
+    } else if (lastPoll && watermark) {
       since = lastPoll > watermark ? lastPoll : watermark;
     } else {
       since = lastPoll || watermark || undefined;
@@ -150,6 +163,8 @@ export async function pollGranola(): Promise<void> {
           channel_id: null,
           message_ts: null,
           slack_link: null,
+          thread_ts: null,
+          is_thread_reply: false,
         };
 
         await extractCommitments(candidates, [headerMsg, ...context], "meeting");
@@ -176,6 +191,8 @@ export async function pollGranola(): Promise<void> {
               channel_id: null,
               message_ts: null,
               slack_link: null,
+              thread_ts: null,
+              is_thread_reply: false,
             },
           ],
           [],

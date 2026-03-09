@@ -201,6 +201,8 @@ function buildMessages(): MessagePayload[] {
         channel_id: null,
         message_ts: null,
         slack_link: docLink,
+        thread_ts: null,
+        is_thread_reply: false,
       });
     }
   }
@@ -224,6 +226,8 @@ function buildMessages(): MessagePayload[] {
       channel_id: null,
       message_ts: null,
       slack_link: docLink,
+      thread_ts: null,
+      is_thread_reply: false,
     });
   }
 
@@ -338,6 +342,19 @@ function attachObserver(retries = 10): void {
 // ─── Initialization ───
 
 function init(): void {
+  // Check if the integration is enabled before doing anything
+  chrome.storage.local.get("googleDocsEnabled").then((settings) => {
+    if (settings.googleDocsEnabled === false) {
+      console.log("[Clyde:GDocs] Integration disabled — skipping");
+      return;
+    }
+    initActive();
+  }).catch(() => initActive()); // On error (permissions etc.), default to active
+
+  return;
+}
+
+function initActive(): void {
   console.log("[Clyde:GDocs] Google Docs content script loaded on", window.location.href);
 
   chrome.runtime.sendMessage({
@@ -367,8 +384,12 @@ function init(): void {
   });
 }
 
-if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", init);
-} else {
-  init();
+// Guard against double-injection (manifest load + programmatic re-inject)
+if (!(window as unknown as Record<string, boolean>).__clydeGDocsInjected) {
+  (window as unknown as Record<string, boolean>).__clydeGDocsInjected = true;
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init);
+  } else {
+    init();
+  }
 }

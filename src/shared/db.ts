@@ -11,6 +11,7 @@ import type {
   CompletionSuggestion,
   DismissedCompletion,
   MorningBrief,
+  Tag,
 } from "./types";
 
 class ClydeDB extends Dexie {
@@ -25,6 +26,7 @@ class ClydeDB extends Dexie {
   completion_suggestions!: EntityTable<CompletionSuggestion, "id">;
   dismissed_completions!: EntityTable<DismissedCompletion, "commitmentId">;
   briefs!: EntityTable<MorningBrief, "id">;
+  tags!: EntityTable<Tag, "id">;
 
   constructor() {
     super("CommitmentTracker");
@@ -118,6 +120,25 @@ class ClydeDB extends Dexie {
         if (commitment.triggered === undefined) commitment.triggered = false;
       });
     });
+
+    this.version(8).stores({
+      commitments: "++id, &hash, urgency, status, source_type, confidence, direction, createdAt",
+    });
+
+    this.version(9).stores({
+      commitments: "++id, &hash, urgency, status, source_type, confidence, direction, tag_id, createdAt",
+      tags: "++id, &name, createdAt",
+    }).upgrade(async (tx) => {
+      await tx.table("commitments").toCollection().modify((commitment) => {
+        if (commitment.tag_id === undefined) commitment.tag_id = null;
+      });
+      // Seed the "General" catch-all tag
+      await tx.table("tags").add({
+        name: "General",
+        color: "#6B7280",
+        createdAt: new Date().toISOString(),
+      });
+    });
   }
 }
 
@@ -166,4 +187,39 @@ export async function getDismissalPatterns(): Promise<Dismissal[]> {
 /** Count commitments with status 'new' for badge */
 export async function getNewCommitmentCount(): Promise<number> {
   return db.commitments.where("status").equals("new").count();
+}
+
+/** Get all tags ordered by name */
+export async function getAllTags(): Promise<Tag[]> {
+  return db.tags.orderBy("name").toArray();
+}
+
+/** Preset palette for auto-assigning tag colors */
+const TAG_COLORS = [
+  "#6B7280", // gray (General)
+  "#2563EB", // blue
+  "#7C3AED", // violet
+  "#DB2777", // pink
+  "#EA580C", // orange
+  "#059669", // emerald
+  "#D97706", // amber
+  "#0891B2", // cyan
+  "#4F46E5", // indigo
+  "#DC2626", // red
+];
+
+/** Get the next color from the palette based on current tag count */
+export function getNextTagColor(existingCount: number): string {
+  return TAG_COLORS[existingCount % TAG_COLORS.length];
+}
+
+/** Ensure the General tag exists (idempotent, for startup) */
+export async function ensureGeneralTag(): Promise<number> {
+  const existing = await db.tags.where("name").equals("General").first();
+  if (existing?.id != null) return existing.id;
+  return db.tags.add({
+    name: "General",
+    color: TAG_COLORS[0],
+    createdAt: new Date().toISOString(),
+  }) as Promise<number>;
 }

@@ -7,7 +7,7 @@
 export interface StatusEntry {
   timestamp: string;
   level: "info" | "warn" | "error" | "success";
-  source: "content" | "batcher" | "extractor" | "granola" | "worker" | "backup" | "morning-brief" | "voice-inbox";
+  source: "content" | "batcher" | "extractor" | "granola" | "worker" | "backup" | "morning-brief" | "voice-inbox" | "tags" | "sensitivity";
   message: string;
 }
 

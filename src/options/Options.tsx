@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { OS } from "@shared/tokens";
-import { db } from "@shared/db";
+import { db, ensureGeneralTag, getNextTagColor } from "@shared/db";
 import { DEFAULTS } from "@shared/constants";
 import { IconChevronRight, IconChevronLeft, IconLogo } from "../popup/components/Icons";
 import { USER_PROFILE_DEFAULTS } from "@shared/user-profile";
 import { ToastContainer, useToast } from "../popup/components/Toast";
+import { retagAll, reanalyzeSensitivity } from "../background/tag-backfill";
 
 interface FormState {
   anthropicApiKey: string;
@@ -17,12 +18,18 @@ interface FormState {
   slackScanFrequency: number;
   granolaPollFrequency: number;
   confidenceThreshold: number;
+  confidenceAutoTune: boolean;
   morningDigestTime: string;
   uiMode: "popup" | "sidepanel";
   developerMode: boolean;
   demoMode: boolean;
   morningBriefEnabled: boolean;
   calendarIcsUrl: string;
+  voiceInboxEnabled: boolean;
+  googleDocsEnabled: boolean;
+  slackEnabled: boolean;
+  granolaEnabled: boolean;
+  calendarEnabled: boolean;
 }
 
 const DEFAULT_FORM: FormState = {
@@ -35,12 +42,18 @@ const DEFAULT_FORM: FormState = {
   slackScanFrequency: DEFAULTS.slackScanFrequencyMin,
   granolaPollFrequency: DEFAULTS.granolaPollFrequencyMin,
   confidenceThreshold: Math.round(DEFAULTS.confidenceThreshold * 100),
+  confidenceAutoTune: false,
   morningDigestTime: `${String(DEFAULTS.morningDigestHour).padStart(2, "0")}:${String(DEFAULTS.morningDigestMinute).padStart(2, "0")}`,
   uiMode: DEFAULTS.uiMode,
   developerMode: false,
   demoMode: false,
   morningBriefEnabled: true,
   calendarIcsUrl: "",
+  voiceInboxEnabled: false,
+  googleDocsEnabled: false,
+  slackEnabled: true,
+  granolaEnabled: true,
+  calendarEnabled: true,
 };
 
 type SettingsTab = "profile" | "integrations" | "detection" | "advanced";
@@ -48,7 +61,7 @@ type SettingsTab = "profile" | "integrations" | "detection" | "advanced";
 const TABS: { key: SettingsTab; label: string }[] = [
   { key: "profile", label: "Profile" },
   { key: "integrations", label: "Integrations" },
-  { key: "detection", label: "Detection" },
+  { key: "detection", label: "Preferences" },
   { key: "advanced", label: "Advanced" },
 ];
 
@@ -161,6 +174,74 @@ function Toggle({ value, onChange, color }: { value: boolean; onChange: () => vo
   );
 }
 
+/** Restore backup state directly into IndexedDB (runs in Options/popup context) */
+async function doRestore(state: Record<string, unknown>): Promise<void> {
+  const commitments = (state.commitments ?? []) as Array<Record<string, unknown>>;
+
+  if (commitments.length > 0) {
+    // Deduplicate by hash
+    const byHash = new Map<string, Record<string, unknown>>();
+    for (const c of commitments) {
+      const hash = c.hash as string;
+      if (hash && !byHash.has(hash)) byHash.set(hash, c);
+    }
+    const unique = [...byHash.values()];
+
+    // Snapshot existing data so we can roll back if the write fails
+    const existingCommitments = await db.commitments.toArray();
+    try {
+      // Wipe and re-add — keep original IDs so kanban assignments still match
+      await db.delete();
+      await db.open();
+      await db.commitments.bulkPut(unique as unknown as Parameters<typeof db.commitments.bulkPut>[0]);
+    } catch (err) {
+      // Write failed — attempt to restore original data before re-throwing
+      try {
+        await db.delete();
+        await db.open();
+        if (existingCommitments.length > 0) {
+          await db.commitments.bulkPut(existingCommitments as unknown as Parameters<typeof db.commitments.bulkPut>[0]);
+        }
+      } catch {
+        // Best-effort rollback; original error is more important
+      }
+      throw err;
+    }
+  }
+
+  // Tags — must be restored before commitments reference them via tag_id
+  const tags = (state.tags ?? []) as Array<Record<string, unknown>>;
+  if (tags.length > 0) {
+    await db.tags.bulkPut(tags as unknown as Parameters<typeof db.tags.bulkPut>[0]);
+  }
+
+  // Kanban columns
+  const columns = (state.kanban_columns ?? []) as Array<Record<string, unknown>>;
+  if (columns.length > 0 && (await db.kanban_columns.count()) === 0) {
+    await db.kanban_columns.bulkAdd(columns as unknown as Parameters<typeof db.kanban_columns.bulkAdd>[0]);
+  }
+
+  // Kanban assignments
+  const assignments = (state.kanban_assignments ?? []) as Array<Record<string, unknown>>;
+  if (assignments.length > 0) {
+    await db.kanban_assignments.bulkPut(assignments as unknown as Parameters<typeof db.kanban_assignments.bulkPut>[0]);
+  }
+
+  // Dismissals
+  const dismissals = (state.dismissals ?? []) as Array<Record<string, unknown>>;
+  if (dismissals.length > 0 && (await db.dismissals.count()) === 0) {
+    const cleaned = dismissals.map(({ id: _id, ...rest }) => rest);
+    await db.dismissals.bulkAdd(cleaned as unknown as Parameters<typeof db.dismissals.bulkAdd>[0]);
+  }
+
+  // Chrome storage settings — strip API key to prevent malicious backup from overwriting it
+  const chromeStorage = state.chrome_storage as Record<string, unknown> | undefined;
+  if (chromeStorage) {
+    const { anthropicApiKey: _drop, ...safeStorage } = chromeStorage;
+    await chrome.storage.local.set(safeStorage);
+  }
+}
+
 export function SettingsPanel({ onBack }: { onBack?: () => void }) {
   const [form, setForm] = useState<FormState>(DEFAULT_FORM);
   const { toasts, showToast, dismissToast } = useToast();
@@ -174,6 +255,16 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
   const [restoring, setRestoring] = useState(false);
   const [channelFilter, setChannelFilter] = useState<Record<string, boolean>>({});
   const [discoveredChannels, setDiscoveredChannels] = useState<string[]>([]);
+  const [tuneInfo, setTuneInfo] = useState<{ lastChecked: string; dismissRate: number; totalSamples: number } | null>(null);
+  const [deleteColConfirm, setDeleteColConfirm] = useState<{ id: string; label: string; itemCount: number } | null>(null);
+  const [deleteMoveTarget, setDeleteMoveTarget] = useState<string>("todo");
+  const [retagging, setRetagging] = useState(false);
+  const [retagResult, setRetagResult] = useState<string | null>(null);
+  const [recheckingSensitivity, setRecheckingSensitivity] = useState(false);
+  const [recheckSensitivityResult, setRecheckSensitivityResult] = useState<string | null>(null);
+  const [newTagLabel, setNewTagLabel] = useState("");
+  const [editingTagId, setEditingTagId] = useState<number | null>(null);
+  const [editingTagLabel, setEditingTagLabel] = useState("");
 
   // ─── Load settings from chrome.storage.local ───
 
@@ -189,12 +280,19 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
         "slackScanFrequency",
         "granolaPollFrequency",
         "confidenceThreshold",
+        "confidenceAutoTune",
+        "confidenceTuneInfo",
         "morningDigestTime",
         "uiMode",
         "developerMode",
         "demoMode",
         "morningBriefEnabled",
         "calendarIcsUrl",
+        "voiceInboxEnabled",
+        "googleDocsEnabled",
+        "slackEnabled",
+        "granolaEnabled",
+        "calendarEnabled",
       ],
       (result) => {
         setForm((prev) => ({
@@ -209,8 +307,14 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
             result.slackScanFrequency ?? prev.slackScanFrequency,
           granolaPollFrequency:
             result.granolaPollFrequency ?? prev.granolaPollFrequency,
-          confidenceThreshold:
-            result.confidenceThreshold ?? prev.confidenceThreshold,
+          confidenceThreshold: (() => {
+            const stored = result.confidenceThreshold as number | undefined;
+            if (stored == null) return prev.confidenceThreshold;
+            // Handle old format (stored as integer %, e.g. 60) vs new format (decimal, e.g. 0.6)
+            return stored > 1 ? stored : Math.round(stored * 100);
+          })(),
+          confidenceAutoTune:
+            result.confidenceAutoTune ?? prev.confidenceAutoTune,
           morningDigestTime:
             result.morningDigestTime ?? prev.morningDigestTime,
           uiMode: result.uiMode ?? prev.uiMode,
@@ -218,7 +322,15 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
           demoMode: result.demoMode === true,
           morningBriefEnabled: result.morningBriefEnabled !== false,
           calendarIcsUrl: result.calendarIcsUrl ?? "",
+          voiceInboxEnabled: result.voiceInboxEnabled === true,
+          googleDocsEnabled: result.googleDocsEnabled === true,
+          slackEnabled: result.slackEnabled !== false,
+          granolaEnabled: result.granolaEnabled !== false,
+          calendarEnabled: result.calendarEnabled !== false,
         }));
+        if (result.confidenceTuneInfo) {
+          setTuneInfo(result.confidenceTuneInfo as { lastChecked: string; dismissRate: number; totalSamples: number });
+        }
         setLoaded(true);
       },
     );
@@ -281,13 +393,19 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
         slackDisplayNames: formData.slackDisplayNames,
         slackScanFrequency: formData.slackScanFrequency,
         granolaPollFrequency: formData.granolaPollFrequency,
-        confidenceThreshold: formData.confidenceThreshold,
+        confidenceThreshold: formData.confidenceThreshold / 100,
+        confidenceAutoTune: formData.confidenceAutoTune,
         morningDigestTime: formData.morningDigestTime,
         uiMode: formData.uiMode,
         developerMode: formData.developerMode,
         demoMode: formData.demoMode,
         morningBriefEnabled: formData.morningBriefEnabled,
         calendarIcsUrl: formData.calendarIcsUrl,
+        voiceInboxEnabled: formData.voiceInboxEnabled,
+        googleDocsEnabled: formData.googleDocsEnabled,
+        slackEnabled: formData.slackEnabled,
+        granolaEnabled: formData.granolaEnabled,
+        calendarEnabled: formData.calendarEnabled,
       },
       () => {
         showToast("Settings saved", "success");
@@ -329,8 +447,9 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
     const raw_messages = await db.raw_messages.toArray();
     const dismissals = await db.dismissals.toArray();
     const action_log = await db.action_log.toArray();
+    const tags = await db.tags.toArray();
 
-    const data = { commitments, raw_messages, dismissals, action_log };
+    const data = { commitments, raw_messages, dismissals, action_log, tags };
     const blob = new Blob([JSON.stringify(data, null, 2)], {
       type: "application/json",
     });
@@ -341,6 +460,10 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
     a.click();
     URL.revokeObjectURL(url);
   }, []);
+
+  // ─── Tags (reactive from IndexedDB) ───
+
+  const allTagDefs = useLiveQuery(() => db.tags.orderBy("name").toArray(), []) ?? [];
 
   // ─── Board columns (reactive from IndexedDB) ───
 
@@ -368,6 +491,58 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
     });
   }, []);
 
+  // ─── Tag management ───
+
+  const handleTagAdd = useCallback(async (label: string) => {
+    const trimmed = label.trim();
+    if (!trimmed) return;
+    const existingCount = await db.tags.count();
+    await db.tags.add({ name: trimmed, color: getNextTagColor(existingCount), createdAt: new Date().toISOString() });
+    setNewTagLabel("");
+  }, []);
+
+  const handleTagRename = useCallback(async (id: number, label: string) => {
+    const trimmed = label.trim();
+    if (trimmed) await db.tags.update(id, { name: trimmed });
+    setEditingTagId(null);
+  }, []);
+
+  const handleTagDelete = useCallback(async (id: number) => {
+    const generalTagId = await ensureGeneralTag();
+    if (id === generalTagId) return; // can't delete General
+    // Move all commitments using this tag to General
+    await db.commitments.where("tag_id").equals(id).modify({ tag_id: generalTagId });
+    await db.tags.delete(id);
+  }, []);
+
+  const handleRecheckSensitivity = useCallback(async () => {
+    setRecheckingSensitivity(true);
+    setRecheckSensitivityResult(null);
+    try {
+      const { updated, total } = await reanalyzeSensitivity();
+      setRecheckSensitivityResult(`Done — ${updated} of ${total} commitments evaluated`);
+    } catch (e) {
+      setRecheckSensitivityResult("Error: " + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setRecheckingSensitivity(false);
+    }
+  }, []);
+
+  const handleRetagAll = useCallback(async () => {
+    setRetagging(true);
+    setRetagResult(null);
+    try {
+      const { tagCount, commitmentCount } = await retagAll();
+      setRetagResult(`Done — ${commitmentCount} commitments re-tagged across ${tagCount} tags`);
+    } catch (err) {
+      setRetagResult(`Error: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setRetagging(false);
+    }
+  }, []);
+
+  // ─── Column management ───
+
   const handleColReorder = useCallback(async (sourceId: string, targetId: string) => {
     if (sourceId === targetId) return;
     const cols = [...allColDefs];
@@ -390,12 +565,33 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
     setEditingColId(null);
   }, []);
 
-  const handleColDelete = useCallback(async (id: string) => {
+  const handleColDeleteRequest = useCallback(async (id: string) => {
     if (id === "inProgress") return;
-    if (!window.confirm(`Delete this column? Items will return to their natural column.`)) return;
-    await db.kanban_assignments.where("column_id").equals(id).delete();
+    const col = allColDefs.find((c) => c.id === id);
+    if (!col) return;
+    const itemCount = await db.kanban_assignments.where("column_id").equals(id).count();
+    setDeleteMoveTarget("todo");
+    setDeleteColConfirm({ id, label: col.label, itemCount });
+  }, [allColDefs]);
+
+  const handleColDeleteConfirm = useCallback(async () => {
+    if (!deleteColConfirm) return;
+    const { id } = deleteColConfirm;
+    if (deleteMoveTarget === "todo") {
+      // Drop assignments — cards return to Todo naturally
+      await db.kanban_assignments.where("column_id").equals(id).delete();
+    } else {
+      // Move assignments to the chosen column
+      const toMove = await db.kanban_assignments.where("column_id").equals(id).toArray();
+      await db.transaction("rw", db.kanban_assignments, async () => {
+        for (const a of toMove) {
+          await db.kanban_assignments.put({ ...a, column_id: deleteMoveTarget });
+        }
+      });
+    }
     await db.kanban_columns.delete(id);
-  }, []);
+    setDeleteColConfirm(null);
+  }, [deleteColConfirm, deleteMoveTarget]);
 
   const handleColAdd = useCallback(async (label: string) => {
     const trimmed = label.trim();
@@ -412,14 +608,17 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
 
   const renderProfileTab = () => (
     <>
-      {/* Identity */}
+      {/* About You */}
       <div style={sectionStyle}>
-        <h2 style={sectionTitle}>Identity</h2>
+        <h2 style={sectionTitle}>About You</h2>
+        <p style={{ fontSize: 12, color: OS.muted, marginBottom: 16, lineHeight: 1.5 }}>
+          Clyde uses this to personalize AI prompts and identify which commitments are yours.
+        </p>
 
         <div style={fieldRow}>
           <div>
             <div style={labelStyle}>Full Name</div>
-            <div style={subLabel}>Used in AI prompts to identify your commitments</div>
+            <div style={subLabel}>How Clyde identifies you in conversations</div>
           </div>
           <input
             type="text"
@@ -433,7 +632,7 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
         <div style={fieldRow}>
           <div>
             <div style={labelStyle}>Title / Role</div>
-            <div style={subLabel}>Optional — adds context for the AI</div>
+            <div style={subLabel}>Helps Clyde flag sensitive topics appropriately (e.g. HR, leadership)</div>
           </div>
           <input
             type="text"
@@ -447,7 +646,7 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
         <div style={fieldRow}>
           <div>
             <div style={labelStyle}>Company</div>
-            <div style={subLabel}>Optional</div>
+            <div style={subLabel}>Optional — used for context in the morning brief</div>
           </div>
           <input
             type="text"
@@ -458,10 +657,10 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
           />
         </div>
 
-        <div style={fieldRow}>
+        <div style={{ ...fieldRow, marginBottom: 0 }}>
           <div>
             <div style={labelStyle}>Timezone</div>
-            <div style={subLabel}>Auto-detected from your browser. Used for morning brief scheduling.</div>
+            <div style={subLabel}>Used to schedule your morning brief at the right time</div>
           </div>
           <input
             type="text"
@@ -471,34 +670,17 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
             onChange={(e) => update("timezone", e.target.value)}
           />
         </div>
-
-        <div style={{ ...fieldRow, marginBottom: 0 }}>
-          <div>
-            <div style={labelStyle}>Slack Display Name(s)</div>
-            <div style={subLabel}>
-              Comma-separated. Used to identify your messages.
-              Falls back to your profile name if empty.
-            </div>
-          </div>
-          <input
-            type="text"
-            style={inputStyle}
-            value={form.slackDisplayNames}
-            placeholder="Your Name, First Name"
-            onChange={(e) => update("slackDisplayNames", e.target.value)}
-          />
-        </div>
       </div>
 
-      {/* Display */}
+      {/* Appearance */}
       <div style={sectionStyle}>
-        <h2 style={sectionTitle}>Display</h2>
+        <h2 style={sectionTitle}>Appearance</h2>
 
         <div style={{ ...fieldRow, marginBottom: 0 }}>
           <div>
-            <div style={labelStyle}>UI Mode</div>
+            <div style={labelStyle}>Open As</div>
             <div style={subLabel}>
-              How the extension opens when you click the icon
+              How the extension opens when you click the toolbar icon
             </div>
           </div>
           <div style={{ display: "flex", gap: 0 }}>
@@ -536,14 +718,17 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
 
   const renderIntegrationsTab = () => (
     <>
-      {/* API Keys */}
-      <div style={sectionStyle}>
-        <h2 style={sectionTitle}>Anthropic API</h2>
+      {/* AI Setup — required, goes first */}
+      <div style={{ ...sectionStyle, border: `1.5px solid ${OS.blue}` }}>
+        <h2 style={sectionTitle}>AI Setup <span style={{ fontSize: 11, fontWeight: 600, color: OS.red, marginLeft: 6 }}>Required</span></h2>
+        <p style={{ fontSize: 12, color: OS.muted, marginBottom: 14, lineHeight: 1.5 }}>
+          Clyde uses Claude (Anthropic) to read your messages and find commitments. You need an API key to use Clyde.
+        </p>
 
         <div style={{ ...fieldRow, marginBottom: 0 }}>
           <div>
-            <div style={labelStyle}>API Key</div>
-            <div style={subLabel}>Required for commitment extraction</div>
+            <div style={labelStyle}>Anthropic API Key</div>
+            <div style={subLabel}>Get one at console.anthropic.com — costs ~$0.003 per extraction</div>
           </div>
           <input
             type="password"
@@ -555,14 +740,74 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
         </div>
       </div>
 
+      {/* Slack */}
+      <div style={sectionStyle}>
+        <h2 style={sectionTitle}>Slack</h2>
+
+        <div style={{ ...fieldRow, alignItems: "flex-start" }}>
+          <div style={{ flex: 1 }}>
+            <div style={labelStyle}>Monitor Slack</div>
+            <div style={subLabel}>Watches messages you view in Slack for commitments and action items</div>
+          </div>
+          <Toggle value={form.slackEnabled} onChange={() => update("slackEnabled", !form.slackEnabled)} />
+        </div>
+
+        {form.slackEnabled && (
+          <div style={{ ...fieldRow, alignItems: "flex-start" }}>
+            <div style={{ flex: 1 }}>
+              <div style={labelStyle}>Your Slack Display Name(s)</div>
+              <div style={subLabel}>
+                Comma-separated. Clyde uses this to find messages <em>you</em> sent.
+                Defaults to your profile name if empty.
+              </div>
+            </div>
+            <input
+              type="text"
+              style={inputStyle}
+              value={form.slackDisplayNames}
+              placeholder="Your Name, First Name"
+              onChange={(e) => update("slackDisplayNames", e.target.value)}
+            />
+          </div>
+        )}
+
+        <Disclosure label="How Slack monitoring works">
+          <div style={{ fontWeight: 600, color: OS.text, marginBottom: 6 }}>Browser-based — no Slack API or admin access needed</div>
+          <div>Clyde reads Slack as you browse it in Chrome. It only sees the conversations you actually open — it never reads your entire Slack workspace in the background.</div>
+          <div style={{ marginTop: 8 }}>
+            <span style={{ fontWeight: 600, color: OS.text }}>To use it:</span>
+          </div>
+          <div style={{ paddingLeft: 12, marginTop: 4, lineHeight: 1.8 }}>
+            &bull; Open <strong>Slack in Chrome</strong> (slack.com) — the desktop app is not supported{"\n"}
+            &bull; Clyde captures messages from <strong>channels and DMs you open</strong>{"\n"}
+            &bull; Messages batch every ~5 minutes, then Claude scans for commitments{"\n"}
+            &bull; Only commitment-like messages are extracted (not every message)
+          </div>
+          <div style={{ marginTop: 8, fontSize: 11, color: OS.muted }}>
+            Tip: Keep Slack pinned as a tab in Chrome so Clyde captures messages throughout the day.
+          </div>
+        </Disclosure>
+      </div>
+
       {/* Granola */}
       <div style={sectionStyle}>
         <h2 style={sectionTitle}>Granola Meetings</h2>
+        <p style={{ fontSize: 12, color: OS.muted, marginBottom: 14, lineHeight: 1.5 }}>
+          Reads your meeting notes from Granola and extracts commitments from transcripts.
+        </p>
+
+        <div style={{ ...fieldRow, alignItems: "flex-start" }}>
+          <div style={{ flex: 1 }}>
+            <div style={labelStyle}>Enable Granola</div>
+            <div style={subLabel}>Scans new meetings automatically in the background</div>
+          </div>
+          <Toggle value={form.granolaEnabled} onChange={() => update("granolaEnabled", !form.granolaEnabled)} />
+        </div>
 
         <div style={{ ...fieldRow, marginBottom: 0, alignItems: "flex-start" }}>
           <div style={{ flex: 1 }}>
-            <div style={labelStyle}>Meeting Notes</div>
-            <div style={subLabel}>Reads from local Granola cache via native messaging</div>
+            <div style={labelStyle}>Native Host</div>
+            <div style={subLabel}>Reads from local Granola cache — requires a one-time install</div>
           </div>
           <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
             <span style={{
@@ -572,7 +817,7 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
               padding: "5px 12px", borderRadius: 8,
               border: `1px solid ${OS.border}`,
             }}>
-              {granolaConnected ? "Connected (Local)" : "Not Connected"}
+              {granolaConnected ? "Connected" : "Not Connected"}
             </span>
             <button
               onClick={async () => {
@@ -602,8 +847,8 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
             </button>
           </div>
         </div>
-        <Disclosure label="Setup instructions">
-          <div style={{ fontWeight: 600, color: OS.text, marginBottom: 6 }}>Copy this into Terminal and hit Enter:</div>
+        <Disclosure label="First-time setup">
+          <div style={{ fontWeight: 600, color: OS.text, marginBottom: 6 }}>Run this once in Terminal:</div>
           <div style={{
             margin: "8px 0", padding: "8px 10px", borderRadius: 6,
             background: OS.white, border: `1px solid ${OS.border}`,
@@ -630,28 +875,34 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
               {copiedInstall ? "Copied!" : "Copy"}
             </button>
           </div>
-          <div>Then click "Test Connection" above to verify.</div>
+          <div style={{ marginTop: 8, lineHeight: 1.6 }}>
+            After running the command:<br />
+            1. <strong>Quit Chrome completely</strong> (Cmd+Q / Ctrl+Q) and reopen it<br />
+            2. Come back here and click <strong>Test Connection</strong>
+          </div>
         </Disclosure>
       </div>
 
       {/* Google Docs */}
       <div style={sectionStyle}>
-        <h2 style={sectionTitle}>Google Docs</h2>
+        <h2 style={{ ...sectionTitle, display: "flex", alignItems: "center", gap: 8 }}>
+          Google Docs
+          <span style={{
+            fontSize: 10, fontWeight: 700, color: "#7c3aed",
+            background: "#ede9fe", padding: "2px 7px", borderRadius: 4,
+            letterSpacing: "0.03em",
+          }}>BETA</span>
+        </h2>
 
         <div style={{ ...fieldRow, marginBottom: 0, alignItems: "flex-start" }}>
           <div style={{ flex: 1 }}>
             <div style={labelStyle}>Document Scanning</div>
             <div style={subLabel}>Extracts commitments from document text and comments</div>
           </div>
-          <span style={{
-            fontSize: 12, fontWeight: 700,
-            color: OS.green,
-            background: OS.bg,
-            padding: "5px 12px", borderRadius: 8,
-            border: `1px solid ${OS.border}`,
-          }}>
-            Active
-          </span>
+          <Toggle
+            value={form.googleDocsEnabled}
+            onChange={() => update("googleDocsEnabled", !form.googleDocsEnabled)}
+          />
         </div>
 
         <Disclosure label="How it works">
@@ -668,6 +919,9 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
           <div style={{ marginTop: 8, fontSize: 11, color: OS.muted }}>
             No setup required. Just open a Google Doc and Clyde will pick it up. Commitments from docs show the document title as the source context.
           </div>
+          <div style={{ marginTop: 6, fontSize: 11, color: "#b08d33" }}>
+            Note: toggling this on/off takes effect on the next page load — reload any open Google Docs tabs after changing this setting.
+          </div>
         </Disclosure>
       </div>
 
@@ -675,41 +929,53 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
       <div style={sectionStyle}>
         <h2 style={sectionTitle}>Google Calendar</h2>
 
-        <div style={{ ...fieldRow, marginBottom: 0, alignItems: "flex-start" }}>
-          <div style={{ flex: 1, marginRight: 16 }}>
-            <div style={labelStyle}>ICS Feed URL</div>
-            <div style={subLabel}>
-              Calendar &rarr; Settings &rarr; [your calendar] &rarr; Integrate calendar &rarr; "Secret address in iCal format"
-            </div>
+        <div style={{ ...fieldRow, alignItems: "flex-start" }}>
+          <div style={{ flex: 1 }}>
+            <div style={labelStyle}>Enable Calendar</div>
+            <div style={subLabel}>Uses your calendar to schedule priorities in the morning brief</div>
           </div>
-          <input
-            type="password"
-            style={{ ...inputStyle, width: 260 }}
-            value={form.calendarIcsUrl}
-            placeholder="https://calendar.google.com/calendar/ical/..."
-            onChange={(e) => update("calendarIcsUrl", e.target.value)}
-          />
+          <Toggle value={form.calendarEnabled} onChange={() => update("calendarEnabled", !form.calendarEnabled)} />
         </div>
+
+        {form.calendarEnabled && (
+          <div style={{ ...fieldRow, marginBottom: 0, alignItems: "flex-start" }}>
+            <div style={{ flex: 1, marginRight: 16 }}>
+              <div style={labelStyle}>ICS Feed URL</div>
+              <div style={subLabel}>
+                Calendar &rarr; Settings &rarr; [your calendar] &rarr; Integrate calendar &rarr; "Secret address in iCal format"
+              </div>
+            </div>
+            <input
+              type="password"
+              style={{ ...inputStyle, width: 260 }}
+              value={form.calendarIcsUrl}
+              placeholder="https://calendar.google.com/calendar/ical/..."
+              onChange={(e) => update("calendarIcsUrl", e.target.value)}
+            />
+          </div>
+        )}
       </div>
 
       {/* Voice Inbox */}
       <div style={sectionStyle}>
-        <h2 style={sectionTitle}>Voice Inbox</h2>
+        <h2 style={{ ...sectionTitle, display: "flex", alignItems: "center", gap: 8 }}>
+          Voice Inbox
+          <span style={{
+            fontSize: 10, fontWeight: 700, color: "#7c3aed",
+            background: "#ede9fe", padding: "2px 7px", borderRadius: 4,
+            letterSpacing: "0.03em",
+          }}>BETA</span>
+        </h2>
 
         <div style={{ ...fieldRow, marginBottom: 0, alignItems: "flex-start" }}>
           <div style={{ flex: 1 }}>
             <div style={labelStyle}>Dictate Tasks by Voice</div>
             <div style={subLabel}>Say a task via Siri and Clyde picks it up automatically</div>
           </div>
-          <span style={{
-            fontSize: 12, fontWeight: 700,
-            color: OS.green,
-            background: OS.bg,
-            padding: "5px 12px", borderRadius: 8,
-            border: `1px solid ${OS.border}`,
-          }}>
-            Ready
-          </span>
+          <Toggle
+            value={form.voiceInboxEnabled}
+            onChange={() => update("voiceInboxEnabled", !form.voiceInboxEnabled)}
+          />
         </div>
 
         <Disclosure label="How it works">
@@ -754,10 +1020,9 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
       {/* Channel Filters */}
       {discoveredChannels.length > 0 && (
         <div style={sectionStyle}>
-          <h2 style={sectionTitle}>Slack Channel Filters</h2>
+          <h2 style={sectionTitle}>Slack: Filter by Channel</h2>
           <p style={{ fontSize: 12, color: OS.muted, marginBottom: 16, lineHeight: 1.5 }}>
-            Toggle channels on/off. Disabled channels won't be scanned for commitments.
-            New channels default to enabled.
+            Turn off channels you don't want Clyde to scan. New channels default to on.
           </p>
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             {discoveredChannels.map((ch) => {
@@ -803,16 +1068,21 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
 
   const renderDetectionTab = () => (
     <>
-      {/* Scan Frequencies */}
-      {/* Detection */}
+      {/* Inbox Sensitivity */}
       <div style={sectionStyle}>
-        <h2 style={sectionTitle}>Detection</h2>
+        <h2 style={sectionTitle}>Inbox Sensitivity</h2>
+        <p style={{ fontSize: 12, color: OS.muted, marginBottom: 16, lineHeight: 1.5 }}>
+          Controls how confident Claude needs to be before showing something in your inbox. Lower = more items, higher = fewer but more accurate.
+        </p>
 
-        <div style={{ ...fieldRow, marginBottom: 0 }}>
+        <div style={fieldRow}>
           <div>
             <div style={labelStyle}>Confidence Threshold</div>
             <div style={subLabel}>
-              Minimum confidence to show: {form.confidenceThreshold}%
+              Currently showing items at {form.confidenceThreshold}% confidence or above
+              {form.confidenceAutoTune && (
+                <span style={{ color: OS.blue, marginLeft: 8, fontSize: 11, fontWeight: 600 }}>AUTO</span>
+              )}
             </div>
           </div>
           <input
@@ -824,7 +1094,26 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
             onChange={(e) =>
               update("confidenceThreshold", Number(e.target.value))
             }
-            style={{ width: 160, cursor: "pointer" }}
+            disabled={form.confidenceAutoTune}
+            style={{ width: 160, cursor: form.confidenceAutoTune ? "not-allowed" : "pointer", opacity: form.confidenceAutoTune ? 0.5 : 1 }}
+          />
+        </div>
+
+        <div style={{ ...fieldRow, marginBottom: 0 }}>
+          <div>
+            <div style={labelStyle}>Auto-adjust Threshold</div>
+            <div style={subLabel}>
+              Clyde learns from what you dismiss and tunes the threshold daily
+              {tuneInfo && (
+                <span style={{ display: "block", marginTop: 2, color: OS.secondary, fontSize: 11 }}>
+                  Last check: {tuneInfo.dismissRate}% dismissed ({tuneInfo.totalSamples} actions)
+                </span>
+              )}
+            </div>
+          </div>
+          <Toggle
+            value={form.confidenceAutoTune}
+            onChange={() => update("confidenceAutoTune", !form.confidenceAutoTune)}
           />
         </div>
       </div>
@@ -833,36 +1122,202 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
       <div style={sectionStyle}>
         <h2 style={sectionTitle}>Morning Brief</h2>
 
-        <div style={fieldRow}>
+        <div style={{ ...fieldRow, marginBottom: 0 }}>
           <div>
             <div style={labelStyle}>Enable Morning Brief</div>
-            <div style={subLabel}>Auto-generates when you open the Brief tab</div>
+            <div style={subLabel}>Clyde generates a daily priority summary when you open the Brief tab</div>
           </div>
           <Toggle value={form.morningBriefEnabled} onChange={() => update("morningBriefEnabled", !form.morningBriefEnabled)} />
         </div>
+      </div>
 
-        <div style={{ ...fieldRow, marginBottom: 0, alignItems: "flex-start" }}>
-          <div style={{ flex: 1, marginRight: 16 }}>
-            <div style={labelStyle}>Google Calendar ICS URL</div>
-            <div style={subLabel}>
-              Used by the brief to schedule priorities around your meetings
-            </div>
-          </div>
+      {/* Smart Tags */}
+      <div style={sectionStyle}>
+        <h2 style={sectionTitle}>Smart Tags</h2>
+        <p style={{ fontSize: 12, color: OS.muted, marginBottom: 16, lineHeight: 1.5 }}>
+          Claude auto-assigns tags to every commitment. Add or rename tags here, then use "Re-tag all" to apply changes across your inbox.
+          The "General" tag is the default catch-all and cannot be deleted.
+        </p>
+
+        {/* Tag list */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 14 }}>
+          {allTagDefs.map((tag) => {
+            const isGeneral = tag.name === "General";
+            const isEditing = editingTagId === tag.id;
+            return (
+              <div key={tag.id} style={{
+                display: "flex", alignItems: "center", gap: 8,
+                padding: "8px 10px",
+                background: OS.bg, border: `1px solid ${OS.border}`, borderRadius: 8,
+              }}>
+                {/* Color swatch */}
+                <span style={{
+                  width: 10, height: 10, borderRadius: "50%",
+                  background: tag.color, flexShrink: 0,
+                }} />
+
+                {/* Label */}
+                {isEditing ? (
+                  <input
+                    autoFocus
+                    value={editingTagLabel}
+                    onChange={(e) => setEditingTagLabel(e.target.value)}
+                    onBlur={() => handleTagRename(tag.id!, editingTagLabel)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") handleTagRename(tag.id!, editingTagLabel);
+                      if (e.key === "Escape") setEditingTagId(null);
+                    }}
+                    style={{
+                      flex: 1, fontSize: 13, padding: "2px 6px",
+                      border: `1px solid ${OS.blue}`, borderRadius: 4,
+                      fontFamily: OS.font, outline: "none",
+                    }}
+                  />
+                ) : (
+                  <span
+                    style={{ flex: 1, fontSize: 13, fontWeight: 500, color: OS.text }}
+                    onDoubleClick={() => { if (!isGeneral) { setEditingTagId(tag.id!); setEditingTagLabel(tag.name); } }}
+                    title={isGeneral ? undefined : "Double-click to rename"}
+                  >
+                    {tag.name}
+                    {isGeneral && <span style={{ fontSize: 10, color: OS.faint, marginLeft: 6 }}>(built-in)</span>}
+                  </span>
+                )}
+
+                {/* Rename button */}
+                {!isGeneral && !isEditing && (
+                  <button
+                    onClick={() => { setEditingTagId(tag.id!); setEditingTagLabel(tag.name); }}
+                    style={{
+                      padding: "2px 8px", fontSize: 11, fontFamily: OS.font,
+                      border: `1px solid ${OS.border}`, borderRadius: 4,
+                      background: OS.white, color: OS.secondary, cursor: "pointer",
+                    }}
+                  >
+                    Rename
+                  </button>
+                )}
+
+                {/* Delete — non-General only */}
+                {!isGeneral && !isEditing && (
+                  <button
+                    onClick={() => handleTagDelete(tag.id!)}
+                    style={{
+                      padding: "2px 8px", fontSize: 11, fontFamily: OS.font,
+                      border: "1px solid #fca5a5", borderRadius: 4,
+                      background: OS.white, color: OS.red, cursor: "pointer",
+                    }}
+                  >
+                    Delete
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Add tag */}
+        <div style={{ display: "flex", gap: 6, marginBottom: 20 }}>
           <input
-            type="password"
-            style={{ ...inputStyle, width: 260 }}
-            value={form.calendarIcsUrl}
-            placeholder="https://calendar.google.com/calendar/ical/..."
-            onChange={(e) => update("calendarIcsUrl", e.target.value)}
+            value={newTagLabel}
+            onChange={(e) => setNewTagLabel(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") handleTagAdd(newTagLabel);
+              if (e.key === "Escape") setNewTagLabel("");
+            }}
+            placeholder="New tag name..."
+            style={{
+              flex: 1, padding: "7px 10px",
+              border: `1px solid ${OS.border}`, borderRadius: 6,
+              fontSize: 13, fontFamily: OS.font, outline: "none",
+            }}
           />
+          <button
+            onClick={() => handleTagAdd(newTagLabel)}
+            disabled={!newTagLabel.trim()}
+            style={{
+              padding: "7px 16px", background: newTagLabel.trim() ? OS.blue : OS.faint,
+              color: OS.white, border: "none", borderRadius: 6,
+              fontSize: 13, fontFamily: OS.font, cursor: newTagLabel.trim() ? "pointer" : "default",
+            }}
+          >
+            Add
+          </button>
+        </div>
+
+        {/* Re-tag all */}
+        <div style={{
+          padding: "14px 16px",
+          background: OS.bg,
+          border: `1px solid ${OS.border}`,
+          borderRadius: 8,
+          marginBottom: 10,
+        }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: OS.text, marginBottom: 4 }}>Re-tag all commitments</div>
+          <div style={{ fontSize: 12, color: OS.secondary, marginBottom: 12, lineHeight: 1.5 }}>
+            Uses Claude to re-assign tags across all your commitments based on the current tag list.
+            Useful after adding or renaming tags.
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <button
+              onClick={handleRetagAll}
+              disabled={retagging}
+              style={{
+                padding: "8px 18px", fontSize: 13, fontWeight: 600,
+                background: retagging ? OS.faint : OS.blue,
+                color: OS.white, border: "none", borderRadius: 6,
+                fontFamily: OS.font, cursor: retagging ? "default" : "pointer",
+              }}
+            >
+              {retagging ? "✦ Re-tagging…" : "✦ Re-tag all commitments"}
+            </button>
+            {retagResult && (
+              <span style={{ fontSize: 12, color: retagResult.startsWith("Error") ? OS.red : OS.green }}>
+                {retagResult}
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Re-check sensitivity */}
+        <div style={{
+          padding: "14px 16px",
+          background: OS.bg,
+          border: `1px solid ${OS.border}`,
+          borderRadius: 8,
+        }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: OS.text, marginBottom: 4 }}>Re-check sensitivity</div>
+          <div style={{ fontSize: 12, color: OS.secondary, marginBottom: 12, lineHeight: 1.5 }}>
+            Re-evaluates all existing commitments against the current privacy rules, including your role and title.
+            Run this after updating your profile or if you want stricter privacy detection applied retroactively.
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <button
+              onClick={handleRecheckSensitivity}
+              disabled={recheckingSensitivity}
+              style={{
+                padding: "8px 18px", fontSize: 13, fontWeight: 600,
+                background: recheckingSensitivity ? OS.faint : "#7c3aed",
+                color: OS.white, border: "none", borderRadius: 6,
+                fontFamily: OS.font, cursor: recheckingSensitivity ? "default" : "pointer",
+              }}
+            >
+              {recheckingSensitivity ? "✦ Checking…" : "✦ Re-check sensitivity"}
+            </button>
+            {recheckSensitivityResult && (
+              <span style={{ fontSize: 12, color: recheckSensitivityResult.startsWith("Error") ? OS.red : OS.green }}>
+                {recheckSensitivityResult}
+              </span>
+            )}
+          </div>
         </div>
       </div>
 
-      {/* Board Columns */}
+      {/* Kanban Board */}
       <div style={sectionStyle}>
-        <h2 style={sectionTitle}>Board Columns</h2>
+        <h2 style={sectionTitle}>Kanban Board Columns</h2>
         <p style={{ fontSize: 12, color: OS.muted, marginBottom: 16, lineHeight: 1.5 }}>
-          Drag &#x2807; to reorder. Double-click a name to rename. "Todo" and "Done" are fixed.
+          Customize the columns in your board view. Drag &#x2807; to reorder, double-click to rename. "In Progress" is built-in and can be renamed but not deleted.
         </p>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 14 }}>
@@ -958,7 +1413,7 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
                 {/* Delete — custom only */}
                 {!isIP && !isEditing && (
                   <button
-                    onClick={() => handleColDelete(col.id)}
+                    onClick={() => handleColDeleteRequest(col.id)}
                     style={{
                       padding: "2px 8px", fontSize: 11, fontFamily: OS.font,
                       border: "1px solid #fca5a5", borderRadius: 4,
@@ -972,6 +1427,73 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
             );
           })}
         </div>
+
+        {/* Delete confirmation dialog */}
+        {deleteColConfirm && (
+          <div style={{
+            marginBottom: 14,
+            padding: "14px 16px",
+            background: "#fff8f8",
+            border: `1px solid #fca5a5`,
+            borderRadius: 8,
+          }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: OS.red, marginBottom: 6 }}>
+              Delete "{deleteColConfirm.label}"?
+            </div>
+            <div style={{ fontSize: 12, color: OS.secondary, marginBottom: 12, lineHeight: 1.5 }}>
+              {deleteColConfirm.itemCount > 0
+                ? `${deleteColConfirm.itemCount} card${deleteColConfirm.itemCount === 1 ? "" : "s"} will be moved. Choose where:`
+                : "This column is empty. It will be permanently removed."}
+            </div>
+
+            {deleteColConfirm.itemCount > 0 && (
+              <div style={{ marginBottom: 12 }}>
+                <select
+                  value={deleteMoveTarget}
+                  onChange={(e) => setDeleteMoveTarget(e.target.value)}
+                  style={{
+                    width: "100%", padding: "6px 10px", fontSize: 13,
+                    border: `1px solid ${OS.border}`, borderRadius: 6,
+                    fontFamily: OS.font, background: OS.white, color: OS.text,
+                    cursor: "pointer",
+                  }}
+                >
+                  <option value="todo">Todo (default)</option>
+                  {allColDefs
+                    .filter((c) => c.id !== deleteColConfirm.id)
+                    .map((c) => (
+                      <option key={c.id} value={c.id}>{c.label}</option>
+                    ))}
+                </select>
+              </div>
+            )}
+
+            <div style={{ display: "flex", gap: 8 }}>
+              <button
+                onClick={handleColDeleteConfirm}
+                style={{
+                  padding: "6px 14px", fontSize: 12, fontWeight: 600,
+                  background: OS.red, color: OS.white,
+                  border: "none", borderRadius: 6,
+                  fontFamily: OS.font, cursor: "pointer",
+                }}
+              >
+                Delete column
+              </button>
+              <button
+                onClick={() => setDeleteColConfirm(null)}
+                style={{
+                  padding: "6px 14px", fontSize: 12,
+                  background: OS.white, color: OS.secondary,
+                  border: `1px solid ${OS.border}`, borderRadius: 6,
+                  fontFamily: OS.font, cursor: "pointer",
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Add column */}
         {addingCol ? (
@@ -1035,14 +1557,13 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
     <>
       {/* Developer Mode */}
       <div style={sectionStyle}>
-        <h2 style={sectionTitle}>Developer</h2>
+        <h2 style={sectionTitle}>Developer Tools</h2>
 
         <div style={{ ...fieldRow, marginBottom: 0 }}>
           <div>
             <div style={labelStyle}>Developer Mode</div>
             <div style={subLabel}>
-              Logs what the AI decides is NOT a commitment so you can tune detection.
-              Visible in the "Dev Log" tab in the popup.
+              Shows a "Dev Log" tab in the popup that logs everything Claude rejects — useful for tuning what gets detected.
             </div>
           </div>
           <Toggle value={form.developerMode} onChange={() => update("developerMode", !form.developerMode)} />
@@ -1055,10 +1576,10 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
 
         <div style={{ ...fieldRow, marginBottom: 0 }}>
           <div>
-            <div style={labelStyle}>Demo Mode</div>
+            <div style={labelStyle}>Show Sample Data</div>
             <div style={subLabel}>
-              Replace all data with sample data for presentations.
-              Your real data is preserved and will return when demo mode is off.
+              Replaces your inbox with realistic-looking sample commitments for demos and presentations.
+              Your real data is untouched and comes back when you turn this off.
             </div>
           </div>
           <Toggle value={form.demoMode} onChange={() => update("demoMode", !form.demoMode)} color="#b08d33" />
@@ -1067,12 +1588,12 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
 
       {/* Usage & Data */}
       <div style={sectionStyle}>
-        <h2 style={sectionTitle}>Usage &amp; Data</h2>
+        <h2 style={sectionTitle}>Data &amp; Backup</h2>
 
         <div style={fieldRow}>
           <div>
-            <div style={labelStyle}>Daily API Cost (estimate)</div>
-            <div style={subLabel}>Based on today's extraction calls</div>
+            <div style={labelStyle}>Estimated API Cost Today</div>
+            <div style={subLabel}>Based on extraction calls made today — roughly $0.003 per call</div>
           </div>
           <div
             style={{
@@ -1091,9 +1612,9 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
 
         <div style={fieldRow}>
           <div>
-            <div style={labelStyle}>Export Data</div>
+            <div style={labelStyle}>Export All Data</div>
             <div style={subLabel}>
-              Download all commitments as JSON
+              Download a JSON file of all your commitments, dismissals, and action log
             </div>
           </div>
           <button
@@ -1116,23 +1637,63 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
 
         <div style={{ ...fieldRow, marginBottom: 0 }}>
           <div>
-            <div style={labelStyle}>Restore from Backup</div>
+            <div style={labelStyle}>Restore from Local Backup</div>
             <div style={subLabel}>
-              Recover data from a local backup file (requires native host)
+              Recover your data from the automatic backup saved on your Mac (requires Granola native host)
             </div>
           </div>
           <button
             onClick={async () => {
               setRestoring(true);
               try {
-                const res = await chrome.runtime.sendMessage({ type: "RESTORE_BACKUP" });
-                if (res?.ok) {
-                  showToast("Backup restored successfully", "success");
-                } else {
-                  showToast(res?.error || "No backup found", "error");
+                // Step 1: Load backup via native host (through service worker)
+                const pingRes = await chrome.runtime.sendMessage({ type: "GRANOLA_STATUS" });
+                if (!pingRes?.connected) {
+                  showToast("Native host not connected — install it first", "error");
+                  setRestoring(false);
+                  return;
                 }
+
+                // Step 2: Load backup directly via native messaging
+                const loadRes = await new Promise<Record<string, unknown>>((resolve, reject) => {
+                  chrome.runtime.sendNativeMessage(
+                    "com.commitment_tracker.granola_reader",
+                    { command: "load_state", extension_id: chrome.runtime.id },
+                    (response) => {
+                      if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+                      else resolve(response as Record<string, unknown>);
+                    }
+                  );
+                });
+
+                const state = loadRes.state as Record<string, unknown> | null;
+                if (!state) {
+                  // Try latest
+                  const latestRes = await new Promise<Record<string, unknown>>((resolve, reject) => {
+                    chrome.runtime.sendNativeMessage(
+                      "com.commitment_tracker.granola_reader",
+                      { command: "load_latest_state" },
+                      (response) => {
+                        if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+                        else resolve(response as Record<string, unknown>);
+                      }
+                    );
+                  });
+                  const latestState = latestRes.state as Record<string, unknown> | null;
+                  if (!latestState) {
+                    showToast("No backup found on disk", "error");
+                    setRestoring(false);
+                    return;
+                  }
+                  await doRestore(latestState);
+                } else {
+                  await doRestore(state);
+                }
+
+                showToast("Backup restored successfully!", "success");
               } catch (err) {
-                showToast("Failed — is the native host installed?", "error");
+                console.error("[Clyde:Settings] Restore error:", err);
+                showToast(`Restore failed: ${err instanceof Error ? err.message : String(err)}`, "error");
               } finally {
                 setRestoring(false);
               }

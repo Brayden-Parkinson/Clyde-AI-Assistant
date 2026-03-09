@@ -12,6 +12,9 @@ const BATCH_ALARM = "batcher-flush";
 export async function addMessages(
   messages: SlackMessagePayload["messages"],
 ): Promise<{ matched: number; total: number }> {
+  const slackSettings = await chrome.storage.local.get("slackEnabled");
+  if (slackSettings.slackEnabled === false) return { matched: 0, total: messages.length };
+
   // Filter out messages older than channel watermarks
   const wmResult = await chrome.storage.local.get(["slackChannelWatermarks", "slackChannelFilter"]);
   const watermarks = (wmResult.slackChannelWatermarks as SlackWatermarks) ?? {};

@@ -1,6 +1,6 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { OS } from "@shared/tokens";
-import type { Commitment, ConversationMessage } from "@shared/types";
+import type { Commitment, ConversationMessage, Tag, Urgency, CommitmentDirection } from "@shared/types";
 import { IconMic, IconDocument, IconChat, IconX, IconChevronRight, IconCalendar, IconBell, IconCheck } from "./Icons";
 
 interface TranscriptPanelProps {
@@ -12,6 +12,8 @@ interface TranscriptPanelProps {
   onCloseCommitment?: () => void;
   onReminder?: () => void;
   privacyMode?: boolean;
+  allTags?: Tag[];
+  onMetaUpdate?: (id: number, changes: Partial<Pick<Commitment, "tag_id" | "urgency" | "deadline" | "text" | "direction" | "sensitive">>) => void;
 }
 
 function SectionLabel({ children, color }: { children: React.ReactNode; color: string }) {
@@ -50,8 +52,12 @@ export function TranscriptPanel({
   onCloseCommitment,
   onReminder,
   privacyMode,
+  allTags,
+  onMetaUpdate,
 }: TranscriptPanelProps) {
   const [transcriptOpen, setTranscriptOpen] = useState(false);
+  const [editText, setEditText] = useState(commitment.text);
+  useEffect(() => { setEditText(commitment.text); }, [commitment.id]);
   const hasTranscript = commitment.conversation_messages.length > 0;
   const blurred = !!(privacyMode && commitment.sensitive);
 
@@ -300,6 +306,162 @@ export function TranscriptPanel({
             No conversation transcript available
           </div>
         )}
+
+        {/* Details — editable fields */}
+        {onMetaUpdate && commitment.id != null && (
+          <div>
+            <SectionLabel color={OS.secondary}>Details</SectionLabel>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {/* Description */}
+              <div>
+                <div style={{ fontSize: 11, color: OS.muted, fontWeight: 500, marginBottom: 3 }}>Description</div>
+                <textarea
+                  value={editText}
+                  onChange={(e) => setEditText(e.target.value)}
+                  onBlur={() => {
+                    if (editText.trim() && editText !== commitment.text) {
+                      onMetaUpdate(commitment.id!, { text: editText.trim() });
+                    }
+                  }}
+                  rows={2}
+                  style={{
+                    fontSize: 13, fontFamily: OS.font, color: OS.text,
+                    border: `1px solid ${OS.border}`, borderRadius: 5,
+                    padding: "6px 8px", resize: "vertical",
+                    width: "100%", boxSizing: "border-box" as const,
+                    outline: "none", background: OS.white, lineHeight: 1.4,
+                  }}
+                />
+              </div>
+
+              {/* Tag */}
+              {allTags && allTags.length > 0 && (
+                <div>
+                  <div style={{ fontSize: 11, color: OS.muted, fontWeight: 500, marginBottom: 3 }}>Tag</div>
+                  <select
+                    value={commitment.tag_id ?? ""}
+                    onChange={(e) => {
+                      const val = e.target.value ? Number(e.target.value) : null;
+                      onMetaUpdate(commitment.id!, { tag_id: val });
+                    }}
+                    style={{
+                      fontSize: 12, fontFamily: OS.font, color: OS.text,
+                      border: `1px solid ${OS.border}`, borderRadius: 5,
+                      padding: "5px 7px", background: OS.white, outline: "none",
+                      width: "100%", boxSizing: "border-box" as const,
+                    }}
+                  >
+                    <option value="">— none —</option>
+                    {allTags.map((t) => (
+                      <option key={t.id} value={t.id}>{t.name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {/* Urgency */}
+              <div>
+                <div style={{ fontSize: 11, color: OS.muted, fontWeight: 500, marginBottom: 3 }}>Urgency</div>
+                <div style={{ display: "flex", gap: 6 }}>
+                  {(["high", "medium", "low"] as Urgency[]).map((u) => {
+                    const active = commitment.urgency === u;
+                    const accent = u === "high" ? OS.red : u === "medium" ? "#b08d33" : OS.faint;
+                    return (
+                      <button
+                        key={u}
+                        onClick={() => onMetaUpdate(commitment.id!, { urgency: u })}
+                        style={{
+                          flex: 1, padding: "5px 0", fontSize: 11, fontFamily: OS.font,
+                          fontWeight: active ? 700 : 400,
+                          color: active ? accent : OS.muted,
+                          background: active ? `${accent}18` : "transparent",
+                          border: `1px solid ${active ? accent : OS.border}`,
+                          borderRadius: 5, cursor: "pointer",
+                        }}
+                      >
+                        {u}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Deadline */}
+              <div>
+                <div style={{ fontSize: 11, color: OS.muted, fontWeight: 500, marginBottom: 3 }}>Deadline</div>
+                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                  <input
+                    type="datetime-local"
+                    value={commitment.deadline ? commitment.deadline.slice(0, 16) : ""}
+                    onChange={(e) => {
+                      const iso = e.target.value ? new Date(e.target.value).toISOString() : null;
+                      onMetaUpdate(commitment.id!, { deadline: iso });
+                    }}
+                    style={{
+                      fontSize: 12, fontFamily: OS.font, color: OS.text,
+                      border: `1px solid ${OS.border}`, borderRadius: 5,
+                      padding: "5px 7px", background: OS.white, outline: "none",
+                      flex: 1, minWidth: 0, boxSizing: "border-box" as const,
+                    }}
+                  />
+                  {commitment.deadline && (
+                    <button
+                      onClick={() => onMetaUpdate(commitment.id!, { deadline: null })}
+                      style={{
+                        padding: "5px 8px", fontSize: 11, fontFamily: OS.font,
+                        color: OS.muted, border: `1px solid ${OS.border}`,
+                        borderRadius: 5, background: OS.white, cursor: "pointer",
+                        whiteSpace: "nowrap" as const, flexShrink: 0,
+                      }}
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Direction + Sensitive */}
+              <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 11, color: OS.muted, fontWeight: 500, marginBottom: 3 }}>Direction</div>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    {(["by_me", "assigned_to_me"] as CommitmentDirection[]).map((d) => {
+                      const active = commitment.direction === d;
+                      return (
+                        <button
+                          key={d}
+                          onClick={() => onMetaUpdate(commitment.id!, { direction: d })}
+                          style={{
+                            flex: 1, padding: "5px 0", fontSize: 11, fontFamily: OS.font,
+                            fontWeight: active ? 700 : 400,
+                            color: active ? OS.blue : OS.muted,
+                            background: active ? `${OS.blue}14` : "transparent",
+                            border: `1px solid ${active ? OS.blue : OS.border}`,
+                            borderRadius: 5, cursor: "pointer",
+                          }}
+                        >
+                          {d === "by_me" ? "Mine" : "Assigned"}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 11, color: OS.muted, fontWeight: 500, marginBottom: 3 }}>Sensitive</div>
+                  <label style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer", marginTop: 4 }}>
+                    <input
+                      type="checkbox"
+                      checked={commitment.sensitive}
+                      onChange={(e) => onMetaUpdate(commitment.id!, { sensitive: e.target.checked })}
+                      style={{ cursor: "pointer", width: 14, height: 14 }}
+                    />
+                    <span style={{ fontSize: 11, color: OS.muted, whiteSpace: "nowrap" as const }}>Hide</span>
+                  </label>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Bottom actions — pinned */}
@@ -312,24 +474,24 @@ export function TranscriptPanel({
           gap: 8,
         }}
       >
-        <button
-          onClick={onCalendar}
-          style={{
-            width: "100%",
-            background: OS.blue,
-            color: "white",
-            borderRadius: 7,
-            padding: "10px 0",
-            fontSize: 13,
-            fontWeight: 600,
-            border: "none",
-            cursor: "pointer",
-            fontFamily: OS.font,
-          }}
-        >
-          <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><IconCalendar size={14} /> Add to calendar</span>
-        </button>
         <div style={{ display: "flex", gap: 8 }}>
+          <button
+            onClick={onCalendar}
+            style={{
+              flex: 1,
+              border: `1px solid ${OS.border}`,
+              background: OS.white,
+              borderRadius: 6,
+              padding: "7px 14px",
+              fontSize: 12,
+              fontWeight: 600,
+              color: OS.secondary,
+              cursor: "pointer",
+              fontFamily: OS.font,
+            }}
+          >
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><IconCalendar size={13} /> Calendar</span>
+          </button>
           <button
             onClick={onReminder}
             style={{
@@ -379,7 +541,7 @@ export function TranscriptPanel({
               fontFamily: OS.font,
             }}
           >
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><IconX size={13} /> Close</span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><IconX size={13} /> Dismiss</span>
           </button>
           <button
             onClick={onDismiss}
@@ -396,7 +558,7 @@ export function TranscriptPanel({
               fontFamily: OS.font,
             }}
           >
-            <IconX size={13} />
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><IconX size={13} /> Never extract</span>
           </button>
         </div>
         {commitment.slack_link && (

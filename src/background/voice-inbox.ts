@@ -14,6 +14,9 @@ type BufferedMessage = SlackMessagePayload["messages"][number];
  * can parse deadlines, urgency, and direction.
  */
 export async function pollVoiceInbox(): Promise<void> {
+  const settings = await chrome.storage.local.get("voiceInboxEnabled");
+  if (settings.voiceInboxEnabled === false) return;
+
   try {
     const res = await sendNative({ command: "read_inbox" });
     if (!res.ok || !res.lines || (res.lines as string[]).length === 0) {
@@ -39,6 +42,8 @@ export async function pollVoiceInbox(): Promise<void> {
       channel_id: null,
       message_ts: null,
       slack_link: null,
+      thread_ts: null,
+      is_thread_reply: false,
     }));
 
     // All voice inbox lines are candidates (user explicitly dictated them as tasks)
