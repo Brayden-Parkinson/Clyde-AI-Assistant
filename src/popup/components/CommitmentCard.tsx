@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { OS } from "@shared/tokens";
 import type { Commitment, SourceType, Tag, Urgency, CommitmentDirection } from "@shared/types";
 import { ActionButton } from "./ActionButton";
-import { IconChat, IconDocument, IconMic, IconCalendar, IconBell, IconCheck, IconX } from "./Icons";
+import { IconChat, IconDocument, IconMic, IconCalendar, IconBell, IconCheck, IconX, IconChevronUp, IconChevronDown } from "./Icons";
 
 // ─── Time formatting ───
 
@@ -532,7 +532,7 @@ export function CommitmentCard({
                   display: "flex", alignItems: "center", gap: 4,
                 }}
               >
-                <span>{showEdit ? "▲" : "▼"}</span>
+                <span style={{ display: "inline-flex" }}>{showEdit ? <IconChevronUp size={10} /> : <IconChevronDown size={10} />}</span>
                 <span>Override AI decisions</span>
               </button>
 
@@ -627,7 +627,7 @@ export function CommitmentCard({
                           background: OS.white, color: OS.muted, cursor: "pointer",
                         }}
                         title="Clear deadline"
-                      >×</button>
+                      ><IconX size={10} /></button>
                     )}
                   </div>
 

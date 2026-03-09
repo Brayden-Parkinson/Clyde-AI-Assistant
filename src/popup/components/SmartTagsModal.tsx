@@ -4,6 +4,7 @@ import { useLiveQuery } from "dexie-react-hooks";
 import { OS } from "@shared/tokens";
 import { db, ensureGeneralTag, getNextTagColor } from "@shared/db";
 import { retagAll } from "../../background/tag-backfill";
+import { IconX } from "./Icons";
 
 interface SmartTagsModalProps {
   onClose: () => void;
@@ -79,11 +80,11 @@ export function SmartTagsModal({ onClose }: SmartTagsModalProps) {
             onClick={onClose}
             style={{
               background: "none", border: "none", cursor: "pointer",
-              color: OS.muted, fontSize: 18, lineHeight: 1, padding: "0 2px",
-              fontFamily: OS.font,
+              color: OS.muted, padding: "2px",
+              display: "inline-flex", alignItems: "center",
             }}
           >
-            ×
+            <IconX size={14} />
           </button>
         </div>
 
@@ -150,12 +151,13 @@ export function SmartTagsModal({ onClose }: SmartTagsModalProps) {
                   <button
                     onClick={() => handleDelete(tag.id!)}
                     style={{
-                      padding: "2px 7px", fontSize: 11, fontFamily: OS.font,
+                      padding: "3px 6px", fontFamily: OS.font,
                       border: "1px solid #fca5a5", borderRadius: 4,
                       background: OS.white, color: OS.red, cursor: "pointer",
+                      display: "inline-flex", alignItems: "center",
                     }}
                   >
-                    ×
+                    <IconX size={11} />
                   </button>
                 )}
               </div>
