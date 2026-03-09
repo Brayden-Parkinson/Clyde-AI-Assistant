@@ -16,3 +16,11 @@ React 18 app rendered in Chrome popup (400px wide) and side panel (wider).
 - `useLiveQuery` from `dexie-react-hooks` for reactive IndexedDB reads
 - Side panel (`src/sidepanel/`) imports and renders this same App component
 - Changes here **hot-reload automatically** — no manual reload needed
+
+## Demo Mode Rules
+- `demoMode` boolean is read from `chrome.storage.local` and stored in App.tsx state
+- All data sources switch: `demoMode ? DEMO_X : realX` — new features MUST follow this
+- New `useLiveQuery` calls that feed UI must be gated: `demoMode ? DEMO_X : liveData`
+- Any action that writes to DB or storage must check `if (demoMode) return` (show a toast instead)
+- Add demo fixtures to `src/shared/demo-data.ts` if a new data type is added
+- `SetupWizard.tsx` is shown in demo mode — it skips all storage via `if (demoMode) return`

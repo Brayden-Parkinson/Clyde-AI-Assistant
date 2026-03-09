@@ -890,6 +890,17 @@ function CompletionSuggestionCard({
 
 // ─── Morning Brief Card ───
 
+function formatEventTime(iso: string): string {
+  if (!iso || iso === "All day") return iso;
+  try {
+    return new Date(iso).toLocaleTimeString("en-US", {
+      hour: "numeric", minute: "2-digit", hour12: true,
+    });
+  } catch {
+    return iso;
+  }
+}
+
 function MorningBriefCard({
   brief,
   commitments,
@@ -943,7 +954,7 @@ function MorningBriefCard({
     <div style={{ fontFamily: OS.font }}>
       {/* ── a) Header ── */}
       <div style={{
-        padding: "20px 20px 16px",
+        padding: "20px 24px 16px",
         borderBottom: `1px solid ${OS.border}`,
         background: OS.white,
       }}>
@@ -993,7 +1004,7 @@ function MorningBriefCard({
 
       {/* ── b) Today's priorities ── */}
       {brief.priorities.length > 0 && (
-        <div style={{ padding: "14px 20px", borderBottom: `1px solid ${OS.border}` }}>
+        <div style={{ padding: "14px 24px", borderBottom: `1px solid ${OS.border}` }}>
           <div style={{
             fontSize: 10, fontWeight: 700, color: OS.muted,
             textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10,
@@ -1091,7 +1102,7 @@ function MorningBriefCard({
       )}
 
       {/* ── c) Your day timeline ── */}
-      <div style={{ padding: "14px 20px", borderBottom: `1px solid ${OS.border}` }}>
+      <div style={{ padding: "14px 24px", borderBottom: `1px solid ${OS.border}` }}>
         <div style={{
           fontSize: 10, fontWeight: 700, color: OS.muted,
           textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10,
@@ -1108,7 +1119,7 @@ function MorningBriefCard({
                   <span style={{
                     fontSize: 11, color: OS.muted, width: 72, flexShrink: 0, textAlign: "right",
                   }}>
-                    {ev.start}
+                    {formatEventTime(ev.start)}
                   </span>
                   <div style={{
                     flex: 1, height: 28, borderRadius: 4,
@@ -1118,7 +1129,7 @@ function MorningBriefCard({
                     <span style={{ fontSize: 12, color: OS.text, fontWeight: 500 }}>{ev.title}</span>
                     {ev.end !== ev.start && ev.end !== "All day" && (
                       <span style={{ fontSize: 10, color: OS.muted, marginLeft: 6 }}>
-                        <InlineIcon><IconArrowRight size={11} /></InlineIcon> {ev.end}
+                        <InlineIcon><IconArrowRight size={11} /></InlineIcon> {formatEventTime(ev.end)}
                       </span>
                     )}
                   </div>
@@ -1142,7 +1153,7 @@ function MorningBriefCard({
 
       {/* ── d) Suggested moves ── */}
       {activeMoves.length > 0 && (
-        <div style={{ padding: "14px 20px", borderBottom: `1px solid ${OS.border}` }}>
+        <div style={{ padding: "14px 24px", borderBottom: `1px solid ${OS.border}` }}>
           <div style={{
             fontSize: 10, fontWeight: 700, color: OS.muted,
             textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10,
@@ -1208,7 +1219,7 @@ function MorningBriefCard({
 
       {/* ── f) Footer ── */}
       <div style={{
-        padding: "10px 20px", display: "flex", alignItems: "center", justifyContent: "space-between",
+        padding: "10px 24px", display: "flex", alignItems: "center", justifyContent: "space-between",
         fontSize: 11, color: OS.muted,
       }}>
         <span>
@@ -1281,7 +1292,7 @@ function BriefView({
   }, [todayBrief, demoMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <div style={{ maxWidth: 640, margin: "0 auto", fontFamily: OS.font, paddingTop: 12 }}>
+    <div style={{ fontFamily: OS.font, paddingTop: 0 }}>
       {/* Auto-generating indicator when no brief exists */}
       {!todayBrief && generating && (
         <div style={{
@@ -2059,6 +2070,9 @@ export default function App() {
     if (!demoMode) setHasApiKey(true);
   };
 
+  // Wait for storage read before rendering to avoid wizard flash
+  if (isFirstRun === null) return null;
+
   return (
     <>
     {isFirstRun && (
@@ -2226,11 +2240,17 @@ export default function App() {
 
         {/* Scrollable content area */}
         <div style={{ flex: isWide ? 1 : undefined, overflowY: isWide ? "auto" : undefined }}>
-          <div style={{
-            maxWidth: (viewMode === "board" || viewMode === "devlog") ? "none" : 640,
-            margin: (viewMode === "board" || viewMode === "devlog") ? undefined : "0 auto",
-            padding: (viewMode === "board" || viewMode === "devlog") ? "12px 16px" : 0,
-          }}>
+          <div style={(() => {
+            const isFullWidth = viewMode === "board" || viewMode === "devlog"
+              || viewMode === "brief"
+              || (viewMode === "list" && isWide);
+            const needsBoardPadding = viewMode === "board" || viewMode === "devlog";
+            return {
+              maxWidth: isFullWidth ? "none" : 640,
+              margin: isFullWidth ? undefined : "0 auto",
+              padding: needsBoardPadding ? "12px 16px" : 0,
+            };
+          })()}>
             {hasApiKey === false && (
               <div style={{ padding: "20px 16px" }}>
                 <ApiKeySetup onSaved={() => setHasApiKey(true)} />
@@ -2386,7 +2406,7 @@ export default function App() {
       {showSmartTags && <SmartTagsModal onClose={() => setShowSmartTags(false)} />}
 
       {toast && <Toast message={toast.message} variant={toast.variant} onClose={() => setToast(null)} />}
-      <ClydeChat showToast={showToast} sidePanelOpen={showPanel} proactiveMessage={proactiveMsg} onProactiveHandled={() => setProactiveMsg(null)} />
+      <ClydeChat showToast={showToast} sidePanelOpen={showPanel} proactiveMessage={proactiveMsg} onProactiveHandled={() => setProactiveMsg(null)} demoMode={demoMode} hasApiKey={hasApiKey === true} />
     </div>
     </>
   );
