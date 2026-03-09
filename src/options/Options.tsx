@@ -1169,7 +1169,7 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
                 fontFamily: OS.font, cursor: retagging ? "default" : "pointer",
               }}
             >
-              {retagging ? "Re-tagging…" : "Re-tag all commitments"}
+              {retagging ? "✦ Re-tagging…" : "✦ Re-tag all commitments"}
             </button>
             {retagResult && (
               <span style={{ fontSize: 12, color: retagResult.startsWith("Error") ? OS.red : OS.green }}>
@@ -1202,7 +1202,7 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
                 fontFamily: OS.font, cursor: recheckingSensitivity ? "default" : "pointer",
               }}
             >
-              {recheckingSensitivity ? "Checking…" : "Re-check sensitivity"}
+              {recheckingSensitivity ? "✦ Checking…" : "✦ Re-check sensitivity"}
             </button>
             {recheckSensitivityResult && (
               <span style={{ fontSize: 12, color: recheckSensitivityResult.startsWith("Error") ? OS.red : OS.green }}>

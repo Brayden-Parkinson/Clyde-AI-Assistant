@@ -974,7 +974,7 @@ function MorningBriefCard({
                   border: `1px solid ${OS.border}`, borderRadius: 6, cursor: "pointer",
                 }}
               >
-                <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><IconRefresh size={11} /> Refresh</span>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><IconRefresh size={11} /> ✦ Refresh brief</span>
               </button>
             )}
             <button
@@ -1289,7 +1289,7 @@ function BriefView({
           padding: "16px", background: OS.white, borderBottom: `1px solid ${OS.border}`,
           fontSize: 13, color: OS.muted, gap: 8,
         }}>
-          Generating your morning brief...
+          ✦ Generating your morning brief...
         </div>
       )}
 
@@ -1339,7 +1339,7 @@ function BriefView({
           <div style={{ textAlign: "center", padding: "52px 16px" }}>
             <div style={{ marginBottom: 10, color: OS.muted, display: "inline-flex" }}><IconSun size={28} /></div>
             <div style={{ fontSize: 14, fontWeight: 600, color: OS.text, marginBottom: 6 }}>
-              Building your brief...
+              ✦ Building your brief...
             </div>
           </div>
         )}

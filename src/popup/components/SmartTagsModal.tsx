@@ -215,7 +215,7 @@ export function SmartTagsModal({ onClose }: SmartTagsModalProps) {
                 fontFamily: OS.font, cursor: retagging ? "default" : "pointer",
               }}
             >
-              {retagging ? "Re-tagging…" : "Re-tag all"}
+              {retagging ? "✦ Re-tagging…" : "✦ Re-tag all"}
             </button>
             {retagResult && (
               <span style={{ fontSize: 11, color: retagResult.startsWith("Error") ? OS.red : OS.green }}>
