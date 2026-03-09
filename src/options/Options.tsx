@@ -187,10 +187,32 @@ async function doRestore(state: Record<string, unknown>): Promise<void> {
     }
     const unique = [...byHash.values()];
 
-    // Wipe and re-add — keep original IDs so kanban assignments still match
-    await db.delete();
-    await db.open();
-    await db.commitments.bulkPut(unique as unknown as Parameters<typeof db.commitments.bulkPut>[0]);
+    // Snapshot existing data so we can roll back if the write fails
+    const existingCommitments = await db.commitments.toArray();
+    try {
+      // Wipe and re-add — keep original IDs so kanban assignments still match
+      await db.delete();
+      await db.open();
+      await db.commitments.bulkPut(unique as unknown as Parameters<typeof db.commitments.bulkPut>[0]);
+    } catch (err) {
+      // Write failed — attempt to restore original data before re-throwing
+      try {
+        await db.delete();
+        await db.open();
+        if (existingCommitments.length > 0) {
+          await db.commitments.bulkPut(existingCommitments as unknown as Parameters<typeof db.commitments.bulkPut>[0]);
+        }
+      } catch {
+        // Best-effort rollback; original error is more important
+      }
+      throw err;
+    }
+  }
+
+  // Tags — must be restored before commitments reference them via tag_id
+  const tags = (state.tags ?? []) as Array<Record<string, unknown>>;
+  if (tags.length > 0) {
+    await db.tags.bulkPut(tags as unknown as Parameters<typeof db.tags.bulkPut>[0]);
   }
 
   // Kanban columns
@@ -212,10 +234,11 @@ async function doRestore(state: Record<string, unknown>): Promise<void> {
     await db.dismissals.bulkAdd(cleaned as unknown as Parameters<typeof db.dismissals.bulkAdd>[0]);
   }
 
-  // Chrome storage settings
+  // Chrome storage settings — strip API key to prevent malicious backup from overwriting it
   const chromeStorage = state.chrome_storage as Record<string, unknown> | undefined;
   if (chromeStorage) {
-    await chrome.storage.local.set(chromeStorage);
+    const { anthropicApiKey: _drop, ...safeStorage } = chromeStorage;
+    await chrome.storage.local.set(safeStorage);
   }
 }
 
@@ -424,8 +447,9 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
     const raw_messages = await db.raw_messages.toArray();
     const dismissals = await db.dismissals.toArray();
     const action_log = await db.action_log.toArray();
+    const tags = await db.tags.toArray();
 
-    const data = { commitments, raw_messages, dismissals, action_log };
+    const data = { commitments, raw_messages, dismissals, action_log, tags };
     const blob = new Blob([JSON.stringify(data, null, 2)], {
       type: "application/json",
     });
