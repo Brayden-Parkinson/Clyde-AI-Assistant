@@ -6,7 +6,7 @@ import { DEFAULTS } from "@shared/constants";
 import { IconChevronRight, IconChevronLeft, IconLogo } from "../popup/components/Icons";
 import { USER_PROFILE_DEFAULTS } from "@shared/user-profile";
 import { ToastContainer, useToast } from "../popup/components/Toast";
-import { retagAll } from "../background/tag-backfill";
+import { retagAll, reanalyzeSensitivity } from "../background/tag-backfill";
 
 interface FormState {
   anthropicApiKey: string;
@@ -227,6 +227,8 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
   const [deleteMoveTarget, setDeleteMoveTarget] = useState<string>("todo");
   const [retagging, setRetagging] = useState(false);
   const [retagResult, setRetagResult] = useState<string | null>(null);
+  const [recheckingSensitivity, setRecheckingSensitivity] = useState(false);
+  const [recheckSensitivityResult, setRecheckSensitivityResult] = useState<string | null>(null);
   const [newTagLabel, setNewTagLabel] = useState("");
   const [editingTagId, setEditingTagId] = useState<number | null>(null);
   const [editingTagLabel, setEditingTagLabel] = useState("");
@@ -462,6 +464,19 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
     // Move all commitments using this tag to General
     await db.commitments.where("tag_id").equals(id).modify({ tag_id: generalTagId });
     await db.tags.delete(id);
+  }, []);
+
+  const handleRecheckSensitivity = useCallback(async () => {
+    setRecheckingSensitivity(true);
+    setRecheckSensitivityResult(null);
+    try {
+      const { updated, total } = await reanalyzeSensitivity();
+      setRecheckSensitivityResult(`Done — ${updated} of ${total} commitments evaluated`);
+    } catch (e) {
+      setRecheckSensitivityResult("Error: " + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setRecheckingSensitivity(false);
+    }
   }, []);
 
   const handleRetagAll = useCallback(async () => {
@@ -1136,6 +1151,7 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
           background: OS.bg,
           border: `1px solid ${OS.border}`,
           borderRadius: 8,
+          marginBottom: 10,
         }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: OS.text, marginBottom: 4 }}>Re-tag all commitments</div>
           <div style={{ fontSize: 12, color: OS.secondary, marginBottom: 12, lineHeight: 1.5 }}>
@@ -1158,6 +1174,39 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
             {retagResult && (
               <span style={{ fontSize: 12, color: retagResult.startsWith("Error") ? OS.red : OS.green }}>
                 {retagResult}
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Re-check sensitivity */}
+        <div style={{
+          padding: "14px 16px",
+          background: OS.bg,
+          border: `1px solid ${OS.border}`,
+          borderRadius: 8,
+        }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: OS.text, marginBottom: 4 }}>Re-check sensitivity</div>
+          <div style={{ fontSize: 12, color: OS.secondary, marginBottom: 12, lineHeight: 1.5 }}>
+            Re-evaluates all existing commitments against the current privacy rules, including your role and title.
+            Run this after updating your profile or if you want stricter privacy detection applied retroactively.
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <button
+              onClick={handleRecheckSensitivity}
+              disabled={recheckingSensitivity}
+              style={{
+                padding: "8px 18px", fontSize: 13, fontWeight: 600,
+                background: recheckingSensitivity ? OS.faint : "#7c3aed",
+                color: OS.white, border: "none", borderRadius: 6,
+                fontFamily: OS.font, cursor: recheckingSensitivity ? "default" : "pointer",
+              }}
+            >
+              {recheckingSensitivity ? "Checking…" : "Re-check sensitivity"}
+            </button>
+            {recheckSensitivityResult && (
+              <span style={{ fontSize: 12, color: recheckSensitivityResult.startsWith("Error") ? OS.red : OS.green }}>
+                {recheckSensitivityResult}
               </span>
             )}
           </div>
