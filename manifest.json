@@ -9,7 +9,8 @@
     "notifications",
     "sidePanel",
     "tabs",
-    "nativeMessaging"
+    "nativeMessaging",
+    "scripting"
   ],
   "host_permissions": [
     "https://app.slack.com/*",

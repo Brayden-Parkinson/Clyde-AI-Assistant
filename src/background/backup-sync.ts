@@ -26,6 +26,11 @@ const BACKED_UP_STORAGE_KEYS = [
   "confidenceThreshold",
   "calendarIcsUrl",
   "slackChannelFilter",
+  "voiceInboxEnabled",
+  "googleDocsEnabled",
+  "slackEnabled",
+  "granolaEnabled",
+  "calendarEnabled",
 ] as const;
 
 // ─── Public API ───
@@ -149,6 +154,7 @@ async function gatherState(): Promise<BackupState> {
   const settings = await db.settings.toArray();
   const kanbanColumns = await db.kanban_columns.toArray();
   const kanbanAssignments = await db.kanban_assignments.toArray();
+  const tags = await db.tags.toArray();
 
   // Keep last 7 briefs
   const allBriefs = await db.briefs.orderBy("createdAt").reverse().limit(7).toArray();
@@ -179,6 +185,7 @@ async function gatherState(): Promise<BackupState> {
     settings_db: settings,
     kanban_columns: kanbanColumns,
     kanban_assignments: kanbanAssignments,
+    tags,
     briefs,
     chrome_storage: chromeStorage,
     watermarks: {
@@ -248,6 +255,19 @@ async function mergeState(state: BackupState): Promise<void> {
     if (toAdd.length > 0) {
       await db.kanban_assignments.bulkAdd(toAdd);
       await logStatus("info", "backup", `Restored ${toAdd.length} kanban assignments`);
+    }
+  }
+
+  // Tags: merge by name — skip if name already exists locally
+  if (state.tags?.length) {
+    const existingNames = new Set(
+      (await db.tags.toArray()).map((t) => t.name),
+    );
+    const toAdd = state.tags.filter((t) => !existingNames.has(t.name));
+    if (toAdd.length > 0) {
+      const cleaned = toAdd.map(({ id: _id, ...rest }) => rest);
+      await db.tags.bulkAdd(cleaned as typeof toAdd);
+      await logStatus("info", "backup", `Restored ${cleaned.length} tags`);
     }
   }
 

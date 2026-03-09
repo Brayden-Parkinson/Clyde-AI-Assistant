@@ -71,7 +71,8 @@ function parseIcsEvents(icsText: string): CalendarEvent[] {
 // ─── Calendar Fetch ───
 
 async function fetchCalendarEvents(): Promise<CalendarEvent[]> {
-  const result = await chrome.storage.local.get("calendarIcsUrl");
+  const result = await chrome.storage.local.get(["calendarIcsUrl", "calendarEnabled"]);
+  if (result.calendarEnabled === false) return [];
   const icsUrl = result.calendarIcsUrl as string | undefined;
   if (!icsUrl) return [];
 

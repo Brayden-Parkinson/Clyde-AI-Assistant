@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { OS } from "@shared/tokens";
-import { IconLogo, IconCheck } from "./Icons";
+import { IconLogo, IconCheck, IconX } from "./Icons";
 import { USER_PROFILE_DEFAULTS } from "@shared/user-profile";
 
 interface SetupWizardProps {
@@ -24,14 +24,40 @@ export function SetupWizard({ onComplete, onDismiss, demoMode }: SetupWizardProp
   const [backupFound, setBackupFound] = useState(false);
   const [restoringBackup, setRestoringBackup] = useState(false);
   const [backupRestored, setBackupRestored] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+
+  // Restore wizard state from storage on mount
+  useEffect(() => {
+    if (demoMode) { setLoaded(true); return; }
+    chrome.storage.local.get([
+      "setupWizardStep",
+      "userName", "userTitle", "userCompany", "timezone",
+      "anthropicApiKey", "slackDisplayNames",
+    ]).then((result) => {
+      if (result.setupWizardStep && STEPS.includes(result.setupWizardStep)) {
+        setStep(result.setupWizardStep as Step);
+      }
+      if (result.userName) setUserName(result.userName);
+      if (result.userTitle) setUserTitle(result.userTitle);
+      if (result.userCompany) setUserCompany(result.userCompany);
+      if (result.timezone) setTimezone(result.timezone);
+      if (result.anthropicApiKey) setApiKey(result.anthropicApiKey);
+      if (result.slackDisplayNames) setSlackNames(result.slackDisplayNames);
+      setLoaded(true);
+    }).catch(() => { setLoaded(true); });
+  }, [demoMode]);
+
+  // Persist current step whenever it changes
+  useEffect(() => {
+    if (!loaded || demoMode) return;
+    chrome.storage.local.set({ setupWizardStep: step });
+  }, [step, loaded, demoMode]);
 
   // Auto-check for existing backups on mount
   useEffect(() => {
     if (demoMode) return;
     chrome.runtime.sendMessage({ type: "RESTORE_BACKUP" }).then((res) => {
       if (res?.ok) {
-        // Check if data was actually restored by looking at commitments count
-        // The restore merges data, so if it found a backup it would have added items
         setBackupFound(true);
         setBackupRestored(true);
       }
@@ -107,6 +133,9 @@ export function SetupWizard({ onComplete, onDismiss, demoMode }: SetupWizardProp
     lineHeight: 1.5,
   };
 
+  // Don't render until we've loaded persisted state
+  if (!loaded) return null;
+
   return (
     <div style={{
       position: "fixed",
@@ -146,13 +175,13 @@ export function SetupWizard({ onComplete, onDismiss, demoMode }: SetupWizardProp
               border: "none",
               cursor: "pointer",
               color: OS.muted,
-              fontSize: 18,
-              lineHeight: 1,
               padding: 4,
+              display: "inline-flex",
+              alignItems: "center",
             }}
             title="Dismiss"
           >
-            &times;
+            <IconX size={16} />
           </button>
         )}
 
@@ -366,10 +395,11 @@ export function SetupWizard({ onComplete, onDismiss, demoMode }: SetupWizardProp
         {/* ─── Step: Slack ─── */}
         {step === "slack" && (
           <>
-            <h2 style={headingStyle}>Slack Identity</h2>
+            <h2 style={headingStyle}>Your Name in Slack</h2>
             <p style={subLabelStyle}>
-              Enter the display name(s) you use in Slack so Clyde can tell which messages are yours.
+              Clyde uses this to tell which messages are yours when scanning Slack.
               If you go by different names in different workspaces, separate them with commas.
+              You can skip this and set it later in Settings.
             </p>
 
             <label style={labelStyle}>Slack Display Name(s)</label>
@@ -385,7 +415,7 @@ export function SetupWizard({ onComplete, onDismiss, demoMode }: SetupWizardProp
             <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
               <button onClick={back} style={secondaryBtnStyle}>Back</button>
               <button onClick={saveSlack} style={{ ...primaryBtnStyle, flex: 1 }}>
-                {slackNames.trim() ? "Continue" : "Skip"}
+                {slackNames.trim() ? "Continue" : "Skip for now"}
               </button>
             </div>
           </>
@@ -416,7 +446,7 @@ export function SetupWizard({ onComplete, onDismiss, demoMode }: SetupWizardProp
                 lineHeight: 1.6,
                 marginBottom: 8,
               }}>
-                Clyde is ready to track your commitments.
+                Clyde is ready. Here's how to get the most out of it:
               </p>
               <div style={{
                 background: OS.bg,
@@ -428,13 +458,33 @@ export function SetupWizard({ onComplete, onDismiss, demoMode }: SetupWizardProp
                 textAlign: "left",
                 marginBottom: 8,
               }}>
-                <div style={{ fontWeight: 600, color: OS.text, marginBottom: 6 }}>Next steps:</div>
-                <div style={{ marginBottom: 4 }}>1. Open Slack in any tab — Clyde will start scanning automatically</div>
-                <div style={{ marginBottom: 4 }}>2. Say "Clyde" in any message to explicitly flag a commitment</div>
-                <div>3. Come back here to triage what Clyde finds</div>
+                <div style={{ fontWeight: 600, color: OS.text, marginBottom: 8 }}>Getting started:</div>
+                <div style={{ marginBottom: 6 }}>
+                  <strong style={{ color: OS.text }}>Slack</strong> — open{" "}
+                  <span style={{ fontFamily: OS.mono, fontSize: 12, background: OS.white, padding: "1px 5px", borderRadius: 4, border: `1px solid ${OS.border}` }}>slack.com</span>
+                  {" "}in Chrome. Clyde watches the conversations you open automatically.
+                </div>
+                <div style={{ marginBottom: 6 }}>
+                  <strong style={{ color: OS.text }}>Say "Clyde"</strong> in any Slack message to explicitly flag something as a commitment.
+                </div>
+                <div style={{ marginBottom: 6 }}>
+                  <strong style={{ color: OS.text }}>Granola</strong> — extracts commitments from your meeting transcripts. One-time setup in Settings → Integrations.
+                </div>
+                <div style={{
+                  marginTop: 10, paddingTop: 10,
+                  borderTop: `1px solid ${OS.border}`,
+                  fontSize: 12, color: OS.muted,
+                }}>
+                  <strong>Optional integrations</strong> (enable in Settings → Integrations):{" "}
+                  Google Docs <span style={{ fontSize: 10, color: "#7c3aed", fontWeight: 700 }}>BETA</span>,{" "}
+                  Voice Inbox <span style={{ fontSize: 10, color: "#7c3aed", fontWeight: 700 }}>BETA</span>
+                </div>
               </div>
             </div>
-            <button onClick={onComplete} style={primaryBtnStyle}>
+            <button onClick={() => {
+              chrome.storage.local.remove("setupWizardStep");
+              onComplete();
+            }} style={primaryBtnStyle}>
               Open Clyde
             </button>
 
@@ -443,6 +493,7 @@ export function SetupWizard({ onComplete, onDismiss, demoMode }: SetupWizardProp
               <button
                 onClick={() => {
                   chrome.storage.local.set({ demoMode: true });
+                  chrome.storage.local.remove("setupWizardStep");
                   onComplete();
                 }}
                 style={{

@@ -11,6 +11,7 @@ import type {
   MorningBrief,
   DecisionLogEntry,
   ConversationMessage,
+  Tag,
 } from "./types";
 
 // ─── Date helpers ───
@@ -41,6 +42,17 @@ function msgs(...items: [string, string, boolean][]): ConversationMessage[] {
     isMine,
   }));
 }
+
+// ─── Demo Tags ───
+
+export const DEMO_TAGS: Tag[] = [
+  { id: -1, name: "General", color: "#6B7280", createdAt: daysAgo(7) },
+  { id: -2, name: "Engineering", color: "#2563EB", createdAt: daysAgo(7) },
+  { id: -3, name: "Sales & Partnerships", color: "#EA580C", createdAt: daysAgo(7) },
+  { id: -4, name: "1:1 Follow-ups", color: "#7C3AED", createdAt: daysAgo(7) },
+  { id: -5, name: "Platform & Infra", color: "#0891B2", createdAt: daysAgo(7) },
+  { id: -6, name: "People & Ops", color: "#DB2777", createdAt: daysAgo(7) },
+];
 
 // ─── Demo Commitments ───
 
@@ -73,6 +85,7 @@ export const DEMO_COMMITMENTS: Commitment[] = [
     slack_link: null,
     triggered: false,
     sensitive: false,
+    tag_id: -3,
     createdAt: hoursAgo(3),
   },
   {
@@ -99,6 +112,7 @@ export const DEMO_COMMITMENTS: Commitment[] = [
     slack_link: null,
     triggered: false,
     sensitive: false,
+    tag_id: -1,
     createdAt: hoursAgo(5),
   },
   {
@@ -126,6 +140,7 @@ export const DEMO_COMMITMENTS: Commitment[] = [
     slack_link: null,
     triggered: true,
     sensitive: false,
+    tag_id: -2,
     createdAt: hoursAgo(2),
   },
 
@@ -155,6 +170,7 @@ export const DEMO_COMMITMENTS: Commitment[] = [
     slack_link: null,
     triggered: false,
     sensitive: false,
+    tag_id: -3,
     createdAt: daysAgo(1),
   },
   {
@@ -181,6 +197,7 @@ export const DEMO_COMMITMENTS: Commitment[] = [
     slack_link: null,
     triggered: false,
     sensitive: false,
+    tag_id: -5,
     createdAt: daysAgo(2),
   },
 
@@ -209,6 +226,7 @@ export const DEMO_COMMITMENTS: Commitment[] = [
     slack_link: null,
     triggered: false,
     sensitive: false,
+    tag_id: -6,
     createdAt: daysAgo(2),
   },
 
@@ -238,6 +256,7 @@ export const DEMO_COMMITMENTS: Commitment[] = [
     slack_link: null,
     triggered: false,
     sensitive: false,
+    tag_id: -2,
     createdAt: daysAgo(3),
   },
   {
@@ -264,6 +283,7 @@ export const DEMO_COMMITMENTS: Commitment[] = [
     slack_link: null,
     triggered: false,
     sensitive: false,
+    tag_id: -4,
     createdAt: daysAgo(2),
   },
   {
@@ -290,6 +310,7 @@ export const DEMO_COMMITMENTS: Commitment[] = [
     slack_link: null,
     triggered: false,
     sensitive: false,
+    tag_id: -2,
     createdAt: daysAgo(1),
   },
 
@@ -319,6 +340,7 @@ export const DEMO_COMMITMENTS: Commitment[] = [
     slack_link: null,
     triggered: false,
     sensitive: false,
+    tag_id: -2,
     createdAt: daysAgo(1),
   },
   {
@@ -345,6 +367,7 @@ export const DEMO_COMMITMENTS: Commitment[] = [
     slack_link: null,
     triggered: false,
     sensitive: false,
+    tag_id: -1,
     createdAt: daysAgo(2),
   },
   {
@@ -371,6 +394,7 @@ export const DEMO_COMMITMENTS: Commitment[] = [
     slack_link: null,
     triggered: false,
     sensitive: false,
+    tag_id: -5,
     createdAt: daysAgo(3),
   },
 ];
@@ -402,6 +426,7 @@ const LOW_CONFIDENCE_ITEMS: Commitment[] = [
     slack_link: null,
     triggered: false,
     sensitive: false,
+    tag_id: -2,
     createdAt: daysAgo(1),
   },
   {
@@ -428,6 +453,7 @@ const LOW_CONFIDENCE_ITEMS: Commitment[] = [
     slack_link: null,
     triggered: false,
     sensitive: false,
+    tag_id: -6,
     createdAt: daysAgo(3),
   },
 ];

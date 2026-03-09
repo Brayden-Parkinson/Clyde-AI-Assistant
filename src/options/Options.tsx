@@ -25,6 +25,11 @@ interface FormState {
   demoMode: boolean;
   morningBriefEnabled: boolean;
   calendarIcsUrl: string;
+  voiceInboxEnabled: boolean;
+  googleDocsEnabled: boolean;
+  slackEnabled: boolean;
+  granolaEnabled: boolean;
+  calendarEnabled: boolean;
 }
 
 const DEFAULT_FORM: FormState = {
@@ -44,6 +49,11 @@ const DEFAULT_FORM: FormState = {
   demoMode: false,
   morningBriefEnabled: true,
   calendarIcsUrl: "",
+  voiceInboxEnabled: false,
+  googleDocsEnabled: false,
+  slackEnabled: true,
+  granolaEnabled: true,
+  calendarEnabled: true,
 };
 
 type SettingsTab = "profile" | "integrations" | "detection" | "advanced";
@@ -51,7 +61,7 @@ type SettingsTab = "profile" | "integrations" | "detection" | "advanced";
 const TABS: { key: SettingsTab; label: string }[] = [
   { key: "profile", label: "Profile" },
   { key: "integrations", label: "Integrations" },
-  { key: "detection", label: "Detection" },
+  { key: "detection", label: "Preferences" },
   { key: "advanced", label: "Advanced" },
 ];
 
@@ -255,6 +265,11 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
         "demoMode",
         "morningBriefEnabled",
         "calendarIcsUrl",
+        "voiceInboxEnabled",
+        "googleDocsEnabled",
+        "slackEnabled",
+        "granolaEnabled",
+        "calendarEnabled",
       ],
       (result) => {
         setForm((prev) => ({
@@ -284,6 +299,11 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
           demoMode: result.demoMode === true,
           morningBriefEnabled: result.morningBriefEnabled !== false,
           calendarIcsUrl: result.calendarIcsUrl ?? "",
+          voiceInboxEnabled: result.voiceInboxEnabled === true,
+          googleDocsEnabled: result.googleDocsEnabled === true,
+          slackEnabled: result.slackEnabled !== false,
+          granolaEnabled: result.granolaEnabled !== false,
+          calendarEnabled: result.calendarEnabled !== false,
         }));
         if (result.confidenceTuneInfo) {
           setTuneInfo(result.confidenceTuneInfo as { lastChecked: string; dismissRate: number; totalSamples: number });
@@ -358,6 +378,11 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
         demoMode: formData.demoMode,
         morningBriefEnabled: formData.morningBriefEnabled,
         calendarIcsUrl: formData.calendarIcsUrl,
+        voiceInboxEnabled: formData.voiceInboxEnabled,
+        googleDocsEnabled: formData.googleDocsEnabled,
+        slackEnabled: formData.slackEnabled,
+        granolaEnabled: formData.granolaEnabled,
+        calendarEnabled: formData.calendarEnabled,
       },
       () => {
         showToast("Settings saved", "success");
@@ -559,14 +584,17 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
 
   const renderProfileTab = () => (
     <>
-      {/* Identity */}
+      {/* About You */}
       <div style={sectionStyle}>
-        <h2 style={sectionTitle}>Identity</h2>
+        <h2 style={sectionTitle}>About You</h2>
+        <p style={{ fontSize: 12, color: OS.muted, marginBottom: 16, lineHeight: 1.5 }}>
+          Clyde uses this to personalize AI prompts and identify which commitments are yours.
+        </p>
 
         <div style={fieldRow}>
           <div>
             <div style={labelStyle}>Full Name</div>
-            <div style={subLabel}>Used in AI prompts to identify your commitments</div>
+            <div style={subLabel}>How Clyde identifies you in conversations</div>
           </div>
           <input
             type="text"
@@ -580,7 +608,7 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
         <div style={fieldRow}>
           <div>
             <div style={labelStyle}>Title / Role</div>
-            <div style={subLabel}>Optional — adds context for the AI</div>
+            <div style={subLabel}>Helps Clyde flag sensitive topics appropriately (e.g. HR, leadership)</div>
           </div>
           <input
             type="text"
@@ -594,7 +622,7 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
         <div style={fieldRow}>
           <div>
             <div style={labelStyle}>Company</div>
-            <div style={subLabel}>Optional</div>
+            <div style={subLabel}>Optional — used for context in the morning brief</div>
           </div>
           <input
             type="text"
@@ -605,10 +633,10 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
           />
         </div>
 
-        <div style={fieldRow}>
+        <div style={{ ...fieldRow, marginBottom: 0 }}>
           <div>
             <div style={labelStyle}>Timezone</div>
-            <div style={subLabel}>Auto-detected from your browser. Used for morning brief scheduling.</div>
+            <div style={subLabel}>Used to schedule your morning brief at the right time</div>
           </div>
           <input
             type="text"
@@ -618,34 +646,17 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
             onChange={(e) => update("timezone", e.target.value)}
           />
         </div>
-
-        <div style={{ ...fieldRow, marginBottom: 0 }}>
-          <div>
-            <div style={labelStyle}>Slack Display Name(s)</div>
-            <div style={subLabel}>
-              Comma-separated. Used to identify your messages.
-              Falls back to your profile name if empty.
-            </div>
-          </div>
-          <input
-            type="text"
-            style={inputStyle}
-            value={form.slackDisplayNames}
-            placeholder="Your Name, First Name"
-            onChange={(e) => update("slackDisplayNames", e.target.value)}
-          />
-        </div>
       </div>
 
-      {/* Display */}
+      {/* Appearance */}
       <div style={sectionStyle}>
-        <h2 style={sectionTitle}>Display</h2>
+        <h2 style={sectionTitle}>Appearance</h2>
 
         <div style={{ ...fieldRow, marginBottom: 0 }}>
           <div>
-            <div style={labelStyle}>UI Mode</div>
+            <div style={labelStyle}>Open As</div>
             <div style={subLabel}>
-              How the extension opens when you click the icon
+              How the extension opens when you click the toolbar icon
             </div>
           </div>
           <div style={{ display: "flex", gap: 0 }}>
@@ -683,14 +694,17 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
 
   const renderIntegrationsTab = () => (
     <>
-      {/* API Keys */}
-      <div style={sectionStyle}>
-        <h2 style={sectionTitle}>Anthropic API</h2>
+      {/* AI Setup — required, goes first */}
+      <div style={{ ...sectionStyle, border: `1.5px solid ${OS.blue}` }}>
+        <h2 style={sectionTitle}>AI Setup <span style={{ fontSize: 11, fontWeight: 600, color: OS.red, marginLeft: 6 }}>Required</span></h2>
+        <p style={{ fontSize: 12, color: OS.muted, marginBottom: 14, lineHeight: 1.5 }}>
+          Clyde uses Claude (Anthropic) to read your messages and find commitments. You need an API key to use Clyde.
+        </p>
 
         <div style={{ ...fieldRow, marginBottom: 0 }}>
           <div>
-            <div style={labelStyle}>API Key</div>
-            <div style={subLabel}>Required for commitment extraction</div>
+            <div style={labelStyle}>Anthropic API Key</div>
+            <div style={subLabel}>Get one at console.anthropic.com — costs ~$0.003 per extraction</div>
           </div>
           <input
             type="password"
@@ -702,14 +716,74 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
         </div>
       </div>
 
+      {/* Slack */}
+      <div style={sectionStyle}>
+        <h2 style={sectionTitle}>Slack</h2>
+
+        <div style={{ ...fieldRow, alignItems: "flex-start" }}>
+          <div style={{ flex: 1 }}>
+            <div style={labelStyle}>Monitor Slack</div>
+            <div style={subLabel}>Watches messages you view in Slack for commitments and action items</div>
+          </div>
+          <Toggle value={form.slackEnabled} onChange={() => update("slackEnabled", !form.slackEnabled)} />
+        </div>
+
+        {form.slackEnabled && (
+          <div style={{ ...fieldRow, alignItems: "flex-start" }}>
+            <div style={{ flex: 1 }}>
+              <div style={labelStyle}>Your Slack Display Name(s)</div>
+              <div style={subLabel}>
+                Comma-separated. Clyde uses this to find messages <em>you</em> sent.
+                Defaults to your profile name if empty.
+              </div>
+            </div>
+            <input
+              type="text"
+              style={inputStyle}
+              value={form.slackDisplayNames}
+              placeholder="Your Name, First Name"
+              onChange={(e) => update("slackDisplayNames", e.target.value)}
+            />
+          </div>
+        )}
+
+        <Disclosure label="How Slack monitoring works">
+          <div style={{ fontWeight: 600, color: OS.text, marginBottom: 6 }}>Browser-based — no Slack API or admin access needed</div>
+          <div>Clyde reads Slack as you browse it in Chrome. It only sees the conversations you actually open — it never reads your entire Slack workspace in the background.</div>
+          <div style={{ marginTop: 8 }}>
+            <span style={{ fontWeight: 600, color: OS.text }}>To use it:</span>
+          </div>
+          <div style={{ paddingLeft: 12, marginTop: 4, lineHeight: 1.8 }}>
+            &bull; Open <strong>Slack in Chrome</strong> (slack.com) — the desktop app is not supported{"\n"}
+            &bull; Clyde captures messages from <strong>channels and DMs you open</strong>{"\n"}
+            &bull; Messages batch every ~5 minutes, then Claude scans for commitments{"\n"}
+            &bull; Only commitment-like messages are extracted (not every message)
+          </div>
+          <div style={{ marginTop: 8, fontSize: 11, color: OS.muted }}>
+            Tip: Keep Slack pinned as a tab in Chrome so Clyde captures messages throughout the day.
+          </div>
+        </Disclosure>
+      </div>
+
       {/* Granola */}
       <div style={sectionStyle}>
         <h2 style={sectionTitle}>Granola Meetings</h2>
+        <p style={{ fontSize: 12, color: OS.muted, marginBottom: 14, lineHeight: 1.5 }}>
+          Reads your meeting notes from Granola and extracts commitments from transcripts.
+        </p>
+
+        <div style={{ ...fieldRow, alignItems: "flex-start" }}>
+          <div style={{ flex: 1 }}>
+            <div style={labelStyle}>Enable Granola</div>
+            <div style={subLabel}>Scans new meetings automatically in the background</div>
+          </div>
+          <Toggle value={form.granolaEnabled} onChange={() => update("granolaEnabled", !form.granolaEnabled)} />
+        </div>
 
         <div style={{ ...fieldRow, marginBottom: 0, alignItems: "flex-start" }}>
           <div style={{ flex: 1 }}>
-            <div style={labelStyle}>Meeting Notes</div>
-            <div style={subLabel}>Reads from local Granola cache via native messaging</div>
+            <div style={labelStyle}>Native Host</div>
+            <div style={subLabel}>Reads from local Granola cache — requires a one-time install</div>
           </div>
           <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
             <span style={{
@@ -719,7 +793,7 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
               padding: "5px 12px", borderRadius: 8,
               border: `1px solid ${OS.border}`,
             }}>
-              {granolaConnected ? "Connected (Local)" : "Not Connected"}
+              {granolaConnected ? "Connected" : "Not Connected"}
             </span>
             <button
               onClick={async () => {
@@ -749,8 +823,8 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
             </button>
           </div>
         </div>
-        <Disclosure label="Setup instructions">
-          <div style={{ fontWeight: 600, color: OS.text, marginBottom: 6 }}>Copy this into Terminal and hit Enter:</div>
+        <Disclosure label="First-time setup">
+          <div style={{ fontWeight: 600, color: OS.text, marginBottom: 6 }}>Run this once in Terminal:</div>
           <div style={{
             margin: "8px 0", padding: "8px 10px", borderRadius: 6,
             background: OS.white, border: `1px solid ${OS.border}`,
@@ -787,22 +861,24 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
 
       {/* Google Docs */}
       <div style={sectionStyle}>
-        <h2 style={sectionTitle}>Google Docs</h2>
+        <h2 style={{ ...sectionTitle, display: "flex", alignItems: "center", gap: 8 }}>
+          Google Docs
+          <span style={{
+            fontSize: 10, fontWeight: 700, color: "#7c3aed",
+            background: "#ede9fe", padding: "2px 7px", borderRadius: 4,
+            letterSpacing: "0.03em",
+          }}>BETA</span>
+        </h2>
 
         <div style={{ ...fieldRow, marginBottom: 0, alignItems: "flex-start" }}>
           <div style={{ flex: 1 }}>
             <div style={labelStyle}>Document Scanning</div>
             <div style={subLabel}>Extracts commitments from document text and comments</div>
           </div>
-          <span style={{
-            fontSize: 12, fontWeight: 700,
-            color: OS.green,
-            background: OS.bg,
-            padding: "5px 12px", borderRadius: 8,
-            border: `1px solid ${OS.border}`,
-          }}>
-            Active
-          </span>
+          <Toggle
+            value={form.googleDocsEnabled}
+            onChange={() => update("googleDocsEnabled", !form.googleDocsEnabled)}
+          />
         </div>
 
         <Disclosure label="How it works">
@@ -819,6 +895,9 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
           <div style={{ marginTop: 8, fontSize: 11, color: OS.muted }}>
             No setup required. Just open a Google Doc and Clyde will pick it up. Commitments from docs show the document title as the source context.
           </div>
+          <div style={{ marginTop: 6, fontSize: 11, color: "#b08d33" }}>
+            Note: toggling this on/off takes effect on the next page load — reload any open Google Docs tabs after changing this setting.
+          </div>
         </Disclosure>
       </div>
 
@@ -826,41 +905,53 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
       <div style={sectionStyle}>
         <h2 style={sectionTitle}>Google Calendar</h2>
 
-        <div style={{ ...fieldRow, marginBottom: 0, alignItems: "flex-start" }}>
-          <div style={{ flex: 1, marginRight: 16 }}>
-            <div style={labelStyle}>ICS Feed URL</div>
-            <div style={subLabel}>
-              Calendar &rarr; Settings &rarr; [your calendar] &rarr; Integrate calendar &rarr; "Secret address in iCal format"
-            </div>
+        <div style={{ ...fieldRow, alignItems: "flex-start" }}>
+          <div style={{ flex: 1 }}>
+            <div style={labelStyle}>Enable Calendar</div>
+            <div style={subLabel}>Uses your calendar to schedule priorities in the morning brief</div>
           </div>
-          <input
-            type="password"
-            style={{ ...inputStyle, width: 260 }}
-            value={form.calendarIcsUrl}
-            placeholder="https://calendar.google.com/calendar/ical/..."
-            onChange={(e) => update("calendarIcsUrl", e.target.value)}
-          />
+          <Toggle value={form.calendarEnabled} onChange={() => update("calendarEnabled", !form.calendarEnabled)} />
         </div>
+
+        {form.calendarEnabled && (
+          <div style={{ ...fieldRow, marginBottom: 0, alignItems: "flex-start" }}>
+            <div style={{ flex: 1, marginRight: 16 }}>
+              <div style={labelStyle}>ICS Feed URL</div>
+              <div style={subLabel}>
+                Calendar &rarr; Settings &rarr; [your calendar] &rarr; Integrate calendar &rarr; "Secret address in iCal format"
+              </div>
+            </div>
+            <input
+              type="password"
+              style={{ ...inputStyle, width: 260 }}
+              value={form.calendarIcsUrl}
+              placeholder="https://calendar.google.com/calendar/ical/..."
+              onChange={(e) => update("calendarIcsUrl", e.target.value)}
+            />
+          </div>
+        )}
       </div>
 
       {/* Voice Inbox */}
       <div style={sectionStyle}>
-        <h2 style={sectionTitle}>Voice Inbox</h2>
+        <h2 style={{ ...sectionTitle, display: "flex", alignItems: "center", gap: 8 }}>
+          Voice Inbox
+          <span style={{
+            fontSize: 10, fontWeight: 700, color: "#7c3aed",
+            background: "#ede9fe", padding: "2px 7px", borderRadius: 4,
+            letterSpacing: "0.03em",
+          }}>BETA</span>
+        </h2>
 
         <div style={{ ...fieldRow, marginBottom: 0, alignItems: "flex-start" }}>
           <div style={{ flex: 1 }}>
             <div style={labelStyle}>Dictate Tasks by Voice</div>
             <div style={subLabel}>Say a task via Siri and Clyde picks it up automatically</div>
           </div>
-          <span style={{
-            fontSize: 12, fontWeight: 700,
-            color: OS.green,
-            background: OS.bg,
-            padding: "5px 12px", borderRadius: 8,
-            border: `1px solid ${OS.border}`,
-          }}>
-            Ready
-          </span>
+          <Toggle
+            value={form.voiceInboxEnabled}
+            onChange={() => update("voiceInboxEnabled", !form.voiceInboxEnabled)}
+          />
         </div>
 
         <Disclosure label="How it works">
@@ -905,10 +996,9 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
       {/* Channel Filters */}
       {discoveredChannels.length > 0 && (
         <div style={sectionStyle}>
-          <h2 style={sectionTitle}>Slack Channel Filters</h2>
+          <h2 style={sectionTitle}>Slack: Filter by Channel</h2>
           <p style={{ fontSize: 12, color: OS.muted, marginBottom: 16, lineHeight: 1.5 }}>
-            Toggle channels on/off. Disabled channels won't be scanned for commitments.
-            New channels default to enabled.
+            Turn off channels you don't want Clyde to scan. New channels default to on.
           </p>
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             {discoveredChannels.map((ch) => {
@@ -954,16 +1044,18 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
 
   const renderDetectionTab = () => (
     <>
-      {/* Scan Frequencies */}
-      {/* Detection */}
+      {/* Inbox Sensitivity */}
       <div style={sectionStyle}>
-        <h2 style={sectionTitle}>Detection</h2>
+        <h2 style={sectionTitle}>Inbox Sensitivity</h2>
+        <p style={{ fontSize: 12, color: OS.muted, marginBottom: 16, lineHeight: 1.5 }}>
+          Controls how confident Claude needs to be before showing something in your inbox. Lower = more items, higher = fewer but more accurate.
+        </p>
 
         <div style={fieldRow}>
           <div>
             <div style={labelStyle}>Confidence Threshold</div>
             <div style={subLabel}>
-              Minimum confidence to show: {form.confidenceThreshold}%
+              Currently showing items at {form.confidenceThreshold}% confidence or above
               {form.confidenceAutoTune && (
                 <span style={{ color: OS.blue, marginLeft: 8, fontSize: 11, fontWeight: 600 }}>AUTO</span>
               )}
@@ -985,9 +1077,9 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
 
         <div style={{ ...fieldRow, marginBottom: 0 }}>
           <div>
-            <div style={labelStyle}>Auto-tune Threshold</div>
+            <div style={labelStyle}>Auto-adjust Threshold</div>
             <div style={subLabel}>
-              Adjusts threshold daily based on your dismiss rate
+              Clyde learns from what you dismiss and tunes the threshold daily
               {tuneInfo && (
                 <span style={{ display: "block", marginTop: 2, color: OS.secondary, fontSize: 11 }}>
                   Last check: {tuneInfo.dismissRate}% dismissed ({tuneInfo.totalSamples} actions)
@@ -1006,37 +1098,21 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
       <div style={sectionStyle}>
         <h2 style={sectionTitle}>Morning Brief</h2>
 
-        <div style={fieldRow}>
+        <div style={{ ...fieldRow, marginBottom: 0 }}>
           <div>
             <div style={labelStyle}>Enable Morning Brief</div>
-            <div style={subLabel}>Auto-generates when you open the Brief tab</div>
+            <div style={subLabel}>Clyde generates a daily priority summary when you open the Brief tab</div>
           </div>
           <Toggle value={form.morningBriefEnabled} onChange={() => update("morningBriefEnabled", !form.morningBriefEnabled)} />
         </div>
-
-        <div style={{ ...fieldRow, marginBottom: 0, alignItems: "flex-start" }}>
-          <div style={{ flex: 1, marginRight: 16 }}>
-            <div style={labelStyle}>Google Calendar ICS URL</div>
-            <div style={subLabel}>
-              Used by the brief to schedule priorities around your meetings
-            </div>
-          </div>
-          <input
-            type="password"
-            style={{ ...inputStyle, width: 260 }}
-            value={form.calendarIcsUrl}
-            placeholder="https://calendar.google.com/calendar/ical/..."
-            onChange={(e) => update("calendarIcsUrl", e.target.value)}
-          />
-        </div>
       </div>
 
-      {/* Tags */}
+      {/* Smart Tags */}
       <div style={sectionStyle}>
-        <h2 style={sectionTitle}>Tags</h2>
+        <h2 style={sectionTitle}>Smart Tags</h2>
         <p style={{ fontSize: 12, color: OS.muted, marginBottom: 16, lineHeight: 1.5 }}>
-          Tags are auto-assigned by Claude. Add or rename tags here, then re-tag all commitments to apply your changes.
-          "General" is the catch-all and cannot be deleted.
+          Claude auto-assigns tags to every commitment. Add or rename tags here, then use "Re-tag all" to apply changes across your inbox.
+          The "General" tag is the default catch-all and cannot be deleted.
         </p>
 
         {/* Tag list */}
@@ -1213,11 +1289,11 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
         </div>
       </div>
 
-      {/* Board Columns */}
+      {/* Kanban Board */}
       <div style={sectionStyle}>
-        <h2 style={sectionTitle}>Board Columns</h2>
+        <h2 style={sectionTitle}>Kanban Board Columns</h2>
         <p style={{ fontSize: 12, color: OS.muted, marginBottom: 16, lineHeight: 1.5 }}>
-          Drag &#x2807; to reorder. Double-click a name to rename. "Todo" and "Done" are fixed.
+          Customize the columns in your board view. Drag &#x2807; to reorder, double-click to rename. "In Progress" is built-in and can be renamed but not deleted.
         </p>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 14 }}>
@@ -1457,14 +1533,13 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
     <>
       {/* Developer Mode */}
       <div style={sectionStyle}>
-        <h2 style={sectionTitle}>Developer</h2>
+        <h2 style={sectionTitle}>Developer Tools</h2>
 
         <div style={{ ...fieldRow, marginBottom: 0 }}>
           <div>
             <div style={labelStyle}>Developer Mode</div>
             <div style={subLabel}>
-              Logs what the AI decides is NOT a commitment so you can tune detection.
-              Visible in the "Dev Log" tab in the popup.
+              Shows a "Dev Log" tab in the popup that logs everything Claude rejects — useful for tuning what gets detected.
             </div>
           </div>
           <Toggle value={form.developerMode} onChange={() => update("developerMode", !form.developerMode)} />
@@ -1477,10 +1552,10 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
 
         <div style={{ ...fieldRow, marginBottom: 0 }}>
           <div>
-            <div style={labelStyle}>Demo Mode</div>
+            <div style={labelStyle}>Show Sample Data</div>
             <div style={subLabel}>
-              Replace all data with sample data for presentations.
-              Your real data is preserved and will return when demo mode is off.
+              Replaces your inbox with realistic-looking sample commitments for demos and presentations.
+              Your real data is untouched and comes back when you turn this off.
             </div>
           </div>
           <Toggle value={form.demoMode} onChange={() => update("demoMode", !form.demoMode)} color="#b08d33" />
@@ -1489,12 +1564,12 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
 
       {/* Usage & Data */}
       <div style={sectionStyle}>
-        <h2 style={sectionTitle}>Usage &amp; Data</h2>
+        <h2 style={sectionTitle}>Data &amp; Backup</h2>
 
         <div style={fieldRow}>
           <div>
-            <div style={labelStyle}>Daily API Cost (estimate)</div>
-            <div style={subLabel}>Based on today's extraction calls</div>
+            <div style={labelStyle}>Estimated API Cost Today</div>
+            <div style={subLabel}>Based on extraction calls made today — roughly $0.003 per call</div>
           </div>
           <div
             style={{
@@ -1513,9 +1588,9 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
 
         <div style={fieldRow}>
           <div>
-            <div style={labelStyle}>Export Data</div>
+            <div style={labelStyle}>Export All Data</div>
             <div style={subLabel}>
-              Download all commitments as JSON
+              Download a JSON file of all your commitments, dismissals, and action log
             </div>
           </div>
           <button
@@ -1538,9 +1613,9 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
 
         <div style={{ ...fieldRow, marginBottom: 0 }}>
           <div>
-            <div style={labelStyle}>Restore from Backup</div>
+            <div style={labelStyle}>Restore from Local Backup</div>
             <div style={subLabel}>
-              Recover data from a local backup file (requires native host)
+              Recover your data from the automatic backup saved on your Mac (requires Granola native host)
             </div>
           </div>
           <button

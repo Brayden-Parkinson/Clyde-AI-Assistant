@@ -10,6 +10,11 @@ export const DEFAULTS = {
   morningDigestHour: 8,
   morningDigestMinute: 0,
   uiMode: "popup" as "popup" | "sidepanel",
+  voiceInboxEnabled: false,
+  googleDocsEnabled: false,
+  slackEnabled: true,
+  granolaEnabled: true,
+  calendarEnabled: true,
 } as const;
 
 /** Chrome alarm names */

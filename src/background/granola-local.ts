@@ -14,10 +14,13 @@ interface NativeResponse {
   ok: boolean;
   error?: string;
   truncated?: boolean;
+  source?: "api" | "cache";
   // ping
   cache_file?: string;
   cache_size_mb?: number;
   last_modified?: string;
+  api_reachable?: boolean;
+  has_token?: boolean;
   // list_meetings
   meetings?: Array<Record<string, unknown>>;
   // get_transcript (plain)

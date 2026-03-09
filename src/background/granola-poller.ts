@@ -62,6 +62,9 @@ function formatTranscriptForExtraction(
  *   all recent meetings. Used for manual "Scan" button presses.
  */
 export async function pollGranola(forceFullScan = false): Promise<void> {
+  const settings = await chrome.storage.local.get("granolaEnabled");
+  if (settings.granolaEnabled === false) return;
+
   try {
     const connected = await isGranolaConnected();
     await updateStatus({ granolaConnected: connected });
