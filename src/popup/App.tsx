@@ -2001,6 +2001,7 @@ export default function App() {
       if (listFilter === "meetings") return c.source_type === "meeting";
       if (listFilter === "slack") return c.source_type === "slack";
       if (listFilter === "gdoc") return c.source_type === "gdoc";
+      if (listFilter === "gmail") return c.source_type === "gmail";
       return true;
     })
     .filter((c) => matchesSearch(c, listSearch))

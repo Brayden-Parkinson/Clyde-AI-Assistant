@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { OS } from "@shared/tokens";
 import type { Commitment, ConversationMessage, Tag, Urgency, CommitmentDirection } from "@shared/types";
-import { IconMic, IconDocument, IconChat, IconX, IconChevronRight, IconCalendar, IconBell, IconCheck } from "./Icons";
+import { IconMic, IconDocument, IconChat, IconMail, IconX, IconChevronRight, IconCalendar, IconBell, IconCheck } from "./Icons";
 
 interface TranscriptPanelProps {
   commitment: Commitment;
@@ -64,10 +64,12 @@ export function TranscriptPanel({
   const sourceIcon = commitment.source_type === "meeting" ? <IconMic size={13} />
     : commitment.source_type === "gdoc" ? <IconDocument size={13} />
     : commitment.source_type === "voice" ? <IconMic size={13} />
+    : commitment.source_type === "gmail" ? <IconMail size={13} />
     : <IconChat size={13} />;
   const sourceLabel = commitment.source_type === "meeting" ? "Meeting"
     : commitment.source_type === "gdoc" ? "Google Doc"
     : commitment.source_type === "voice" ? "Voice"
+    : commitment.source_type === "gmail" ? "Gmail"
     : "Slack";
   const deadlineLabel = formatDeadline(commitment.deadline);
 

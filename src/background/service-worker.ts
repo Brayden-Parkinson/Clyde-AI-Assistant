@@ -9,10 +9,10 @@ import {
   COMPLETION_SUGGESTION_TTL_MS,
   DISMISSED_COMPLETION_TTL_MS,
 } from "@shared/constants";
-import type { SlackMessagePayload } from "@shared/types";
+import type { SlackMessagePayload, GmailMessagePayload } from "@shared/types";
 import { logStatus, updateStatus } from "@shared/status";
 import { getUserProfile } from "@shared/user-profile";
-import { addMessages, flush } from "./batcher";
+import { addMessages, flush, addGmailMessages, flushGmail } from "./batcher";
 import { pollGranola } from "./granola-poller";
 import { pollVoiceInbox } from "./voice-inbox";
 import { isGranolaConnected, sendNative } from "./granola-local";
@@ -347,6 +347,19 @@ chrome.runtime.onMessage.addListener(
         sendResponse({ ok: true, ...(result as object) });
       });
       return true;
+    } else if (message.type === "GMAIL_MESSAGES") {
+      const gmailMsg = message as unknown as GmailMessagePayload;
+      logStatus("info", "worker", `Received ${gmailMsg.messages.length} Gmail messages from content script`);
+      addGmailMessages(gmailMsg.messages).then(() => {
+        sendResponse({ ok: true });
+      }).catch((err: unknown) => {
+        sendResponse({ ok: false, error: String(err) });
+      });
+      return true;
+    } else if (message.type === "GMAIL_CONTENT_SCRIPT_READY") {
+      logStatus("success", "content", `Gmail content script loaded on ${sender.tab?.url?.slice(0, 60) ?? "unknown tab"}`);
+      sendResponse({ ok: true });
+      return false;
     } else if (message.type === "MANUAL_FLUSH") {
       logStatus("info", "worker", "Manual scan triggered");
       Promise.all([flush(), pollGranola(true), pollVoiceInbox()]).then(() => {
@@ -501,6 +514,10 @@ chrome.alarms.onAlarm.addListener((alarm) => {
     case "batcher-flush":
       logStatus("info", "batcher", "Batch flush alarm fired");
       flush();
+      break;
+    case "gmail-batcher-flush":
+      logStatus("info", "batcher", "Gmail batch flush alarm fired");
+      flushGmail();
       break;
     case BACKUP_SAVE_ALARM:
       executeBackupSave();

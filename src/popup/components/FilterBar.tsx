@@ -1,7 +1,7 @@
 import React from "react";
 import { OS } from "@shared/tokens";
 
-export type FilterKey = "all" | "overdue" | "has_deadline" | "high" | "meetings" | "slack" | "gdoc";
+export type FilterKey = "all" | "overdue" | "has_deadline" | "high" | "meetings" | "slack" | "gdoc" | "gmail";
 
 interface FilterBarProps {
   filter: FilterKey;
@@ -16,6 +16,7 @@ const filters: Array<{ key: FilterKey; label: string }> = [
   { key: "meetings", label: "Granola" },
   { key: "slack", label: "Slack" },
   { key: "gdoc", label: "Google Docs" },
+  { key: "gmail", label: "Gmail (Beta)" },
 ];
 
 export function FilterBar({ filter, setFilter }: FilterBarProps) {

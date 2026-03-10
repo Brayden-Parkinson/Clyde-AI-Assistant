@@ -5,7 +5,7 @@ export type Urgency = "high" | "medium" | "low";
 export type CommitmentStatus = "new" | "snoozed" | "actioned" | "done" | "dismissed";
 
 /** Where the commitment was captured from */
-export type SourceType = "meeting" | "slack" | "gdoc" | "voice";
+export type SourceType = "meeting" | "slack" | "gdoc" | "voice" | "gmail";
 
 /** A smart tag for grouping commitments by theme */
 export interface Tag {
@@ -133,6 +133,23 @@ export interface SlackMessagePayload {
     thread_ts: string | null;
     /** True if this message is a reply in a thread */
     is_thread_reply: boolean;
+  }>;
+}
+
+/** Message payload sent from Gmail content script to background */
+export interface GmailMessagePayload {
+  type: "GMAIL_MESSAGES";
+  messages: Array<{
+    text: string;
+    sender: string;
+    subject: string;
+    timestamp: string;
+    isMine: boolean;
+    mentionsMe: boolean;
+    reactions: string[];
+    threadId: string;
+    messageId: string;
+    gmail_link: string | null;
   }>;
 }
 

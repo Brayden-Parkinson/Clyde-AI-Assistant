@@ -4,7 +4,7 @@ import { OS } from "@shared/tokens";
 import type { Commitment, CompletionSuggestion, Tag } from "@shared/types";
 import type { Actions } from "../hooks/useActions";
 import { db } from "@shared/db";
-import { IconChat, IconDocument, IconMic, IconCheck, IconPlay, IconSort, IconChevronDown } from "./Icons";
+import { IconChat, IconDocument, IconMic, IconMail, IconCheck, IconPlay, IconSort, IconChevronDown } from "./Icons";
 
 // ─── Column types ───
 
@@ -207,7 +207,7 @@ function KanbanCard({
       <div style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 6, fontSize: 11.5, color: OS.muted, flexWrap: "wrap", rowGap: 2 }}>
         {(displaySettings?.showSourceBadges !== false) && (
           <span style={{ display: "inline-flex", alignItems: "center", flexShrink: 0 }}>
-            {item.source_type === "slack" ? <IconChat size={12} /> : item.source_type === "gdoc" ? <IconDocument size={12} /> : <IconMic size={12} />}
+            {item.source_type === "slack" ? <IconChat size={12} /> : item.source_type === "gdoc" ? <IconDocument size={12} /> : item.source_type === "gmail" ? <IconMail size={12} /> : <IconMic size={12} />}
           </span>
         )}
         <span style={{

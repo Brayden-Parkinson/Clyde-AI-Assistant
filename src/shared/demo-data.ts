@@ -458,17 +458,104 @@ const LOW_CONFIDENCE_ITEMS: Commitment[] = [
   },
 ];
 
+// ─── Gmail Demo Commitments ───
+
+const GMAIL_COMMITMENTS: Commitment[] = [
+  {
+    id: -50,
+    hash: "demo-050",
+    text: "Send revised contract terms to legal team by Thursday",
+    original_quote: "I'll get the revised contract terms over to the legal team by Thursday EOD",
+    deadline: new Date(Date.now() + 2 * 86400_000).toISOString(),
+    urgency: "high",
+    context: "Re: Partnership Agreement — Q2 Terms",
+    source_type: "gmail",
+    confidence: 0.92,
+    status: "new",
+    direction: "by_me",
+    likely_completed: false,
+    completion_signal: null,
+    message_timestamp: hoursAgo(5),
+    snooze_until: null,
+    context_summary: "Email thread with partner company's legal team about updated Q2 contract terms. Requested revised terms before their board meeting.",
+    conversation_messages: msgs(
+      ["legal@partnerco.com", "Can you send over the revised terms before our board meeting Thursday?", false],
+      ["You", "I'll get the revised contract terms over to the legal team by Thursday EOD", true],
+    ),
+    slack_link: "https://mail.google.com/mail/u/0/#inbox/thread-50",
+    triggered: false,
+    sensitive: true,
+    tag_id: -3,
+    createdAt: hoursAgo(5),
+  },
+  {
+    id: -51,
+    hash: "demo-051",
+    text: "Schedule 1:1 with Alex about performance review feedback",
+    original_quote: "I can set up a time to discuss the feedback from your review — let me find a slot this week",
+    deadline: new Date(Date.now() + 5 * 86400_000).toISOString(),
+    urgency: "medium",
+    context: "Re: Q1 Performance Review — Follow-up",
+    source_type: "gmail",
+    confidence: 0.81,
+    status: "new",
+    direction: "by_me",
+    likely_completed: false,
+    completion_signal: null,
+    message_timestamp: hoursAgo(18),
+    snooze_until: null,
+    context_summary: "Follow-up email from a direct report after their Q1 performance review. They had questions about feedback and growth areas.",
+    conversation_messages: msgs(
+      ["alex.rodriguez@company.com", "Thanks for the review — I had some questions about the feedback. Can we chat?", false],
+      ["You", "I can set up a time to discuss the feedback from your review — let me find a slot this week", true],
+    ),
+    slack_link: "https://mail.google.com/mail/u/0/#inbox/thread-51",
+    triggered: false,
+    sensitive: true,
+    tag_id: -4,
+    createdAt: hoursAgo(18),
+  },
+  {
+    id: -52,
+    hash: "demo-052",
+    text: "Send conference talk proposal to events team",
+    original_quote: "I'll follow up with our talk proposal by next Monday",
+    deadline: new Date(Date.now() + 6 * 86400_000).toISOString(),
+    urgency: "medium",
+    context: "Re: SREcon 2026 — CFP Submission Deadline",
+    source_type: "gmail",
+    confidence: 0.78,
+    status: "new",
+    direction: "by_me",
+    likely_completed: false,
+    completion_signal: null,
+    message_timestamp: daysAgo(1),
+    snooze_until: null,
+    context_summary: "Email from conference organizers about the call for proposals deadline. Committed to submitting a talk proposal on reliability engineering.",
+    conversation_messages: msgs(
+      ["events@srecon.io", "CFP closes next Friday — have you had a chance to submit your talk proposal?", false],
+      ["You", "I'll follow up with our talk proposal by next Monday", true],
+    ),
+    slack_link: "https://mail.google.com/mail/u/0/#inbox/thread-52",
+    triggered: false,
+    sensitive: false,
+    tag_id: -2,
+    createdAt: daysAgo(1),
+  },
+];
+
 // ─── Derived exports ───
 
 /** Active commitments (new + snoozed with expired snooze) — replaces useCommitments().commitments */
 export const DEMO_ACTIVE: Commitment[] = [
   ...DEMO_COMMITMENTS.filter(c => c.status === "new" || c.status === "snoozed"),
   ...LOW_CONFIDENCE_ITEMS,
+  ...GMAIL_COMMITMENTS,
 ];
 
 /** Kanban buckets — replaces useKanban() */
 export const DEMO_KANBAN = {
-  todo: [...DEMO_COMMITMENTS.filter(c => c.status === "new" || c.status === "snoozed"), ...LOW_CONFIDENCE_ITEMS],
+  todo: [...DEMO_COMMITMENTS.filter(c => c.status === "new" || c.status === "snoozed"), ...LOW_CONFIDENCE_ITEMS, ...GMAIL_COMMITMENTS],
   inProgress: DEMO_COMMITMENTS.filter(c => c.status === "actioned"),
   done: DEMO_COMMITMENTS.filter(c => c.status === "done"),
   counts: {

@@ -22,8 +22,11 @@ export const OS = {
   // Semantic — only for meaning
   red: "#d14343",
   green: "#3b8c5f",
+  warning: "#c07a00",      // amber — medium urgency labels
   yellowBg: "#fef9e8",
+  yellowText: "#7a5c00",   // dark amber — text on yellow backgrounds
   yellowBorder: "#e8d174",
+  blueBg: "#eef2ff",       // light indigo — AI badge backgrounds
 
   // Typography — one neutral sans-serif
   font: '-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif',

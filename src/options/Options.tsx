@@ -27,6 +27,7 @@ interface FormState {
   calendarIcsUrl: string;
   voiceInboxEnabled: boolean;
   googleDocsEnabled: boolean;
+  gmailEnabled: boolean;
   slackEnabled: boolean;
   granolaEnabled: boolean;
   calendarEnabled: boolean;
@@ -51,6 +52,7 @@ const DEFAULT_FORM: FormState = {
   calendarIcsUrl: "",
   voiceInboxEnabled: false,
   googleDocsEnabled: false,
+  gmailEnabled: false,
   slackEnabled: true,
   granolaEnabled: true,
   calendarEnabled: true,
@@ -290,6 +292,7 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
         "calendarIcsUrl",
         "voiceInboxEnabled",
         "googleDocsEnabled",
+        "gmailEnabled",
         "slackEnabled",
         "granolaEnabled",
         "calendarEnabled",
@@ -324,6 +327,7 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
           calendarIcsUrl: result.calendarIcsUrl ?? "",
           voiceInboxEnabled: result.voiceInboxEnabled === true,
           googleDocsEnabled: result.googleDocsEnabled === true,
+          gmailEnabled: result.gmailEnabled === true,
           slackEnabled: result.slackEnabled !== false,
           granolaEnabled: result.granolaEnabled !== false,
           calendarEnabled: result.calendarEnabled !== false,
@@ -403,6 +407,7 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
         calendarIcsUrl: formData.calendarIcsUrl,
         voiceInboxEnabled: formData.voiceInboxEnabled,
         googleDocsEnabled: formData.googleDocsEnabled,
+        gmailEnabled: formData.gmailEnabled,
         slackEnabled: formData.slackEnabled,
         granolaEnabled: formData.granolaEnabled,
         calendarEnabled: formData.calendarEnabled,
@@ -921,6 +926,54 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
           </div>
           <div style={{ marginTop: 6, fontSize: 11, color: "#b08d33" }}>
             Note: toggling this on/off takes effect on the next page load — reload any open Google Docs tabs after changing this setting.
+          </div>
+        </Disclosure>
+      </div>
+
+      {/* Gmail */}
+      <div style={sectionStyle}>
+        <h2 style={{ ...sectionTitle, display: "flex", alignItems: "center", gap: 8 }}>
+          Gmail
+          <span style={{
+            fontSize: 10, fontWeight: 700, color: OS.blue,
+            background: OS.blueBg, padding: "2px 7px", borderRadius: 4,
+            letterSpacing: "0.03em",
+          }}>BETA</span>
+        </h2>
+
+        <div style={{ ...fieldRow, marginBottom: 0, alignItems: "flex-start" }}>
+          <div style={{ flex: 1 }}>
+            <div style={labelStyle}>Scan Gmail for Commitments</div>
+            <div style={subLabel}>Reads emails you open and extracts commitments</div>
+          </div>
+          <Toggle
+            value={form.gmailEnabled}
+            onChange={() => update("gmailEnabled", !form.gmailEnabled)}
+          />
+        </div>
+
+        <Disclosure label="How it works">
+          <div style={{ fontWeight: 600, color: OS.text, marginBottom: 4 }}>How it works</div>
+          <div>When you open an email thread in Gmail, Clyde reads the message body and looks for commitments. Quoted replies and forwarded history are stripped before analysis.</div>
+          <div style={{ marginTop: 8 }}>
+            <span style={{ fontWeight: 600, color: OS.text }}>What's scanned:</span>
+          </div>
+          <div style={{ paddingLeft: 12 }}>
+            <div>&bull; Emails you open in the main inbox view</div>
+            <div>&bull; New messages in threads (not previously seen)</div>
+            <div>&bull; Flushed to the extractor every 3 minutes</div>
+          </div>
+          <div style={{ marginTop: 8 }}>
+            <span style={{ fontWeight: 600, color: OS.text }}>What's skipped:</span>
+          </div>
+          <div style={{ paddingLeft: 12 }}>
+            <div>&bull; Promotions, Social, Spam, and Trash tabs</div>
+            <div>&bull; Quoted/forwarded history in replies</div>
+            <div>&bull; Compose windows (your drafts)</div>
+            <div>&bull; Emails without commitment-like language</div>
+          </div>
+          <div style={{ marginTop: 8, fontSize: 11, color: OS.yellowText }}>
+            First-time setup: Gmail requires a new host permission. Remove and re-add the extension as unpacked once — after that, toggling this setting takes effect immediately.
           </div>
         </Disclosure>
       </div>

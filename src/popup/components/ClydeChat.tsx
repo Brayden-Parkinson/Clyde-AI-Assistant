@@ -18,6 +18,7 @@ import {
 } from "@shared/constants";
 import { computeHash } from "../../background/dedup";
 import { IconMic, IconStop, IconChat, IconX, IconSend, IconRefresh, IconCheck, IconChevronUp, IconChevronDown } from "./Icons";
+import { QuickAddModal } from "./QuickAddModal";
 
 // ─── Types ───
 
@@ -234,11 +235,11 @@ async function executeSearchCommitments(input: {
   if (input.direction) results = results.filter((c) => c.direction === input.direction);
   if (input.context) {
     const ctx = input.context.toLowerCase().replace(/^#/, "");
-    results = results.filter((c) => c.context.toLowerCase().replace(/^#/, "").includes(ctx));
+    results = results.filter((c) => (c.context ?? "").toLowerCase().replace(/^#/, "").includes(ctx));
   }
   if (input.query) {
     const q = input.query.toLowerCase();
-    results = results.filter((c) => c.text.toLowerCase().includes(q) || c.original_quote.toLowerCase().includes(q));
+    results = results.filter((c) => c.text.toLowerCase().includes(q) || (c.original_quote ?? "").toLowerCase().includes(q));
   }
   if (input.deadline_before) {
     results = results.filter((c) => c.deadline && c.deadline <= input.deadline_before!);
@@ -270,7 +271,9 @@ async function executeUpdateCommitment(input: {
   text?: string;
   direction?: CommitmentDirection;
 }): Promise<string> {
-  const existing = await db.commitments.get(input.id);
+  const id = typeof input.id === "string" ? parseInt(input.id as string, 10) : input.id;
+  if (!id || isNaN(id)) return JSON.stringify({ error: "Invalid commitment ID" });
+  const existing = await db.commitments.get(id);
   if (!existing) return JSON.stringify({ error: "Commitment not found" });
 
   const updates: Partial<Commitment> = {};
@@ -280,7 +283,7 @@ async function executeUpdateCommitment(input: {
   if (input.text) updates.text = input.text;
   if (input.direction) updates.direction = input.direction;
 
-  await db.commitments.update(input.id, updates);
+  await db.commitments.update(id, updates);
 
   // Log action for status changes
   if (input.status) {
@@ -323,7 +326,7 @@ async function executeBulkUpdate(input: {
   if (input.filter_source) items = items.filter((c) => c.source_type === input.filter_source);
   if (input.filter_context) {
     const ctx = input.filter_context.toLowerCase().replace(/^#/, "");
-    items = items.filter((c) => c.context.toLowerCase().replace(/^#/, "").includes(ctx));
+    items = items.filter((c) => (c.context ?? "").toLowerCase().replace(/^#/, "").includes(ctx));
   }
   if (input.filter_query) {
     const q = input.filter_query.toLowerCase();
@@ -356,7 +359,9 @@ async function executeBulkUpdate(input: {
 }
 
 async function executeMoveToColumn(input: { id: number; column: string }): Promise<string> {
-  const existing = await db.commitments.get(input.id);
+  const id = typeof input.id === "string" ? parseInt(input.id as string, 10) : input.id;
+  if (!id || isNaN(id)) return JSON.stringify({ error: "Invalid commitment ID" });
+  const existing = await db.commitments.get(id);
   if (!existing) return JSON.stringify({ error: "Commitment not found" });
 
   const columnMap: Record<string, CommitmentStatus> = {
@@ -383,16 +388,16 @@ async function executeMoveToColumn(input: { id: number; column: string }): Promi
     // Custom column — look it up
     const columns = await db.kanban_columns.toArray();
     const match = columns.find(
-      (col) => col.label.toLowerCase().replace(/\s+/g, "_") === normalizedCol || col.id === input.column,
+      (col) => (col.label ?? "").toLowerCase().replace(/\s+/g, "_") === normalizedCol || col.id === input.column,
     );
     if (match) {
-      await db.kanban_assignments.put({ commitment_id: input.id, column_id: match.id });
+      await db.kanban_assignments.put({ commitment_id: id, column_id: match.id });
     } else {
       return JSON.stringify({ error: `Unknown column: ${input.column}` });
     }
   }
 
-  return JSON.stringify({ success: true, id: input.id, column: input.column });
+  return JSON.stringify({ success: true, id, column: input.column });
 }
 
 async function executeGetSummary(): Promise<string> {
@@ -440,7 +445,7 @@ async function executeCreateColumns(input: { columns: string[] }): Promise<strin
     const label = input.columns[i].trim();
     if (!label) continue;
     // Skip if a column with this label already exists
-    const exists = existing.some((c) => c.label.toLowerCase() === label.toLowerCase());
+    const exists = existing.some((c) => (c.label ?? "").toLowerCase() === label.toLowerCase());
     if (exists) continue;
     const id = label.toLowerCase().replace(/\s+/g, "_") + "_" + Date.now() + "_" + i;
     await db.kanban_columns.add({ id, label, position: maxPos + 1 + i });
@@ -840,6 +845,7 @@ export function ClydeChat({ showToast, sidePanelOpen, proactiveMessage, onProact
 }) {
   const [open, setOpen] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  const [quickAddOpen, setQuickAddOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -856,16 +862,50 @@ export function ClydeChat({ showToast, sidePanelOpen, proactiveMessage, onProact
     return () => clearInterval(id);
   }, [loading]);
 
-  // Handle proactive messages (e.g. column suggestions)
+  // Handle proactive messages (e.g. column suggestions).
+  // These show only Clyde's response — no user bubble — so it looks like Clyde initiated the conversation.
   useEffect(() => {
-    if (proactiveMessage && !loading) {
-      setOpen(true);
-      onProactiveHandled?.();
-      // Small delay to let sendMessage ref be populated
-      setTimeout(() => {
-        sendMessageRef.current(proactiveMessage);
-      }, 150);
-    }
+    if (!proactiveMessage || loading) return;
+    onProactiveHandled?.();
+    const prompt = proactiveMessage;
+
+    setOpen(true);
+    setMessages([]);
+    setLoading(true);
+
+    (async () => {
+      try {
+        const contextSnapshot = await buildContextMessage();
+        const apiMessages: Array<{ role: string; content: string | object[] }> = [
+          { role: "user", content: `[Context]\n${contextSnapshot}\n\n[Proactive suggestion prompt — respond as if you're proactively checking in, not replying to a user message]\n${prompt}` },
+        ];
+        const { text: response, foundIds } = await runConversation(apiMessages);
+
+        let snapshots: CommitmentSnapshot[] | undefined;
+        const uniqueIds = [...new Set(foundIds)];
+        if (uniqueIds.length > 0) {
+          const found = await Promise.all(uniqueIds.map((id) => db.commitments.get(id)));
+          const valid = found.filter((c): c is NonNullable<typeof c> => c != null && c.id != null);
+          if (valid.length > 0) {
+            snapshots = valid.map((c) => ({
+              id: c.id!,
+              text: c.text,
+              urgency: c.urgency,
+              deadline: c.deadline,
+              context: c.context,
+              status: c.status,
+            }));
+          }
+        }
+
+        setMessages([{ role: "assistant", content: response, snapshots }]);
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : "Something went wrong";
+        setMessages([{ role: "assistant", content: `Error: ${errMsg}` }]);
+      } finally {
+        setLoading(false);
+      }
+    })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [proactiveMessage]);
 
@@ -1318,6 +1358,19 @@ export function ClydeChat({ showToast, sidePanelOpen, proactiveMessage, onProact
       {/* FAB buttons */}
       <div style={fabStyle}>
         <button
+          onClick={() => setQuickAddOpen(true)}
+          style={{
+            ...btnBase,
+            background: OS.white,
+            color: OS.blue,
+            fontSize: 22,
+            fontWeight: 300,
+          }}
+          title="Quick add commitment (AI)"
+        >
+          +
+        </button>
+        <button
           onClick={() => (quickMicVoice.listening ? quickMicVoice.stop() : quickMicVoice.start())}
           style={{
             ...btnBase,
@@ -1340,6 +1393,16 @@ export function ClydeChat({ showToast, sidePanelOpen, proactiveMessage, onProact
           {open ? <IconX /> : <IconChat />}
         </button>
       </div>
+
+      {/* Quick Add Modal */}
+      {quickAddOpen && (
+        <QuickAddModal
+          onClose={() => setQuickAddOpen(false)}
+          showToast={showToast}
+          demoMode={!!demoMode}
+          hasApiKey={!!hasApiKey}
+        />
+      )}
     </>
   );
 }

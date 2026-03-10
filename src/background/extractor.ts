@@ -83,6 +83,30 @@ In addition to the "commitments" array, also return a "rejections" array listing
 
 Only include messages that matched commitment-like patterns but were ruled out. Don't include completely irrelevant context messages.` : "";
 
+  const gmailBlock = sourceType === "gmail" ? `
+
+GMAIL SOURCE — SPECIAL RULES:
+This content comes from email threads in Gmail. Apply these extra rules:
+
+SKIP THESE (high noise, low signal):
+- Email signatures, legal disclaimers, confidentiality notices, "sent from my iPhone"
+- Forwarded message headers ("---------- Forwarded message ---------")
+- Quoted/replied-to content from previous messages (already stripped, but be cautious)
+- Acknowledgment-only replies ("Thanks!", "Sounds good", "Got it", "Will do", "On it")
+- Auto-replies, calendar invites, notification emails
+
+HIGH CONFIDENCE SIGNALS (boost to 0.85+):
+- Direct requests to ${userName} by name with a clear action verb and timeline
+- Email threads where ${userName} explicitly commits: "I'll handle X by Friday"
+- Action items in meeting recap emails explicitly assigned to ${userName}
+
+CONTEXT FIELD:
+- Use the email subject line as the "context" field (not the sender's email address)
+
+CONFIDENCE FLOOR:
+- Only return items with confidence >= 0.65 (stricter than Slack — email has more noise)
+` : "";
+
   const gdocBlock = sourceType === "gdoc" ? `
 
 GOOGLE DOCS SOURCE — SPECIAL RULES:
@@ -111,9 +135,11 @@ LOW CONFIDENCE / SKIP:
 - Historical notes about what was discussed or decided (not action items)
 ` : "";
 
-  const sourceLabel = sourceType === "gdoc" ? "Google Docs content" : "Slack messages";
+  const sourceLabel = sourceType === "gdoc" ? "Google Docs content"
+    : sourceType === "gmail" ? "Gmail emails"
+    : "Slack messages";
 
-  return `You are analyzing ${sourceLabel} for ${userName}${userTitle}${userCompany}.${gdocBlock}
+  return `You are analyzing ${sourceLabel} for ${userName}${userTitle}${userCompany}.${gmailBlock}${gdocBlock}
 
 TASK: Extract commitments — things ${userName} agreed to do, or that were assigned to them by someone else.
 
@@ -453,6 +479,7 @@ function buildConversationMessages(
  */
 async function getConfidenceFloor(sourceType: SourceType): Promise<number> {
   if (sourceType === "gdoc") return 0.75;
+  if (sourceType === "gmail") return 0.65;
   const result = await chrome.storage.local.get("confidenceThreshold");
   const stored = result.confidenceThreshold;
   if (typeof stored === "number" && stored >= 0.5 && stored <= 0.95) {

@@ -12,6 +12,7 @@ export const DEFAULTS = {
   uiMode: "popup" as "popup" | "sidepanel",
   voiceInboxEnabled: false,
   googleDocsEnabled: false,
+  gmailEnabled: false,
   slackEnabled: true,
   granolaEnabled: true,
   calendarEnabled: true,
