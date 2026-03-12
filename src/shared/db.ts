@@ -12,6 +12,11 @@ import type {
   DismissedCompletion,
   MorningBrief,
   Tag,
+  CalendarEvent,
+  Person,
+  ChatSession,
+  ChatMessageRecord,
+  DailyReview,
 } from "./types";
 
 class ClydeDB extends Dexie {
@@ -27,6 +32,11 @@ class ClydeDB extends Dexie {
   dismissed_completions!: EntityTable<DismissedCompletion, "commitmentId">;
   briefs!: EntityTable<MorningBrief, "id">;
   tags!: EntityTable<Tag, "id">;
+  calendar_cache!: EntityTable<CalendarEvent, "id">;
+  people!: EntityTable<Person, "id">;
+  chat_sessions!: EntityTable<ChatSession, "id">;
+  chat_messages!: EntityTable<ChatMessageRecord, "id">;
+  daily_reviews!: EntityTable<DailyReview, "id">;
 
   constructor() {
     super("CommitmentTracker");
@@ -138,6 +148,19 @@ class ClydeDB extends Dexie {
         color: "#6B7280",
         createdAt: new Date().toISOString(),
       });
+    });
+
+    // Phase 1: Calendar cache + people graph
+    this.version(10).stores({
+      calendar_cache: "++id, &googleEventId, startTime, endTime, fetchedAt",
+      people: "++id, &name, email, relationship, lastSeenAt, createdAt",
+    });
+
+    // Phase 1: Chat persistence + daily reviews
+    this.version(11).stores({
+      chat_sessions: "++id, createdAt, updatedAt",
+      chat_messages: "++id, sessionId, role, createdAt",
+      daily_reviews: "++id, &date, createdAt",
     });
   }
 }

@@ -330,5 +330,88 @@ export interface MorningBrief {
   suggestedMoves: BriefSuggestedMove[];
   dismissed: boolean;
   snoozedUntil: string | null;
+  /** People context for attendees in today's meetings */
+  peopleContext?: BriefPersonContext[];
+  /** Planning state: user's intention for the day */
+  planningState?: "pending" | "planned" | "reviewed";
+  /** User's stated intention for the day */
+  dayIntention?: string | null;
+  /** Reference to the EOD review for this day */
+  eodReview?: number | null;
   createdAt: string;
+}
+
+// ─── Phase 1: PA Smart Assistant ───
+
+/** Person context included in a morning brief */
+export interface BriefPersonContext {
+  name: string;
+  relationship: string | null;
+  meetingTitle: string | null;
+  openCommitments: number;
+}
+
+/** Cached Google Calendar event */
+export interface CalendarEvent {
+  id?: number;
+  /** Google Calendar event ID for dedup */
+  googleEventId: string;
+  title: string;
+  startTime: string;
+  endTime: string;
+  attendees: string[];
+  isAllDay: boolean;
+  status: "confirmed" | "tentative" | "cancelled";
+  fetchedAt: string;
+}
+
+/** Contact graph node — a person the user interacts with */
+export interface Person {
+  id?: number;
+  name: string;
+  email: string | null;
+  relationship: "manager" | "report" | "peer" | "stakeholder" | "external" | null;
+  notes: string | null;
+  commitmentCount: number;
+  lastSeenAt: string;
+  channels: string[];
+  createdAt: string;
+}
+
+/** Chat conversation metadata */
+export interface ChatSession {
+  id?: number;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Persisted chat message */
+export interface ChatMessageRecord {
+  id?: number;
+  sessionId: number;
+  role: "user" | "assistant";
+  content: string;
+  /** Serialized JSON string of snapshot data (tool results, etc.) */
+  snapshots: string | null;
+  createdAt: string;
+}
+
+/** EOD daily review */
+export interface DailyReview {
+  id?: number;
+  /** YYYY-MM-DD */
+  date: string;
+  completedItems: number[];
+  reflection: string;
+  userNotes: string | null;
+  createdAt: string;
+}
+
+/** Stored Google OAuth tokens */
+export interface GoogleAuthTokens {
+  accessToken: string;
+  refreshToken: string;
+  expiresAt: number;
+  scope: string;
 }

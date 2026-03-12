@@ -31,10 +31,10 @@ import {
   IconSettings, IconWarning, IconX, IconRefresh, IconLoader, IconCheck,
   IconBoard, IconList, IconSun, IconChevronRight, IconChevronLeft,
   IconChevronUp, IconChevronDown, IconArrowRight, IconClock, IconLogo,
-  IconSearch, InlineIcon,
+  IconSearch, InlineIcon, IconChat, IconPeople,
 } from "./components/Icons";
 
-type ViewMode = "list" | "board" | "brief" | "devlog" | "settings";
+type ViewMode = "list" | "board" | "brief" | "devlog" | "settings" | "chat" | "people";
 
 // ─── Display settings (persisted in chrome.storage.local) ───
 
@@ -1574,6 +1574,8 @@ function LeftNav({
           <NavIcon icon={<IconBoard size={14} />} label="Board" active={viewMode === "board"} onClick={() => setViewMode("board")} />
           <NavIcon icon={<IconList size={14} />} label="List" active={viewMode === "list"} onClick={() => setViewMode("list")} />
           <NavIcon icon={<IconSun size={14} />} label="Brief" active={viewMode === "brief"} onClick={() => setViewMode("brief")} />
+          <NavIcon icon={<IconChat size={14} />} label="Chat" active={viewMode === "chat"} onClick={() => setViewMode("chat")} />
+          <NavIcon icon={<IconPeople size={14} />} label="People" active={viewMode === "people"} onClick={() => setViewMode("people")} />
           {developerMode && (
             <NavIcon icon={"</>"} label="Dev Log" active={viewMode === "devlog"} onClick={() => setViewMode("devlog")} />
           )}
@@ -1670,7 +1672,9 @@ function LeftNav({
         <NavSection label="Views" />
         <NavItem label="Board" active={viewMode === "board"} onClick={() => setViewMode("board")} />
         <NavItem label="List" active={viewMode === "list"} onClick={() => setViewMode("list")} />
-        <NavItem label="Brief" active={viewMode === "brief"} onClick={() => setViewMode("brief")} />
+        <NavItem label="Planner" active={viewMode === "brief"} onClick={() => setViewMode("brief")} />
+        <NavItem label="Chat" active={viewMode === "chat"} onClick={() => setViewMode("chat")} />
+        <NavItem label="People" active={viewMode === "people"} onClick={() => setViewMode("people")} />
         {developerMode && (
           <NavItem label="Dev Log" active={viewMode === "devlog"} onClick={() => setViewMode("devlog")} />
         )}
@@ -2243,7 +2247,7 @@ export default function App() {
         <div style={{ flex: isWide ? 1 : undefined, overflowY: isWide ? "auto" : undefined }}>
           <div style={(() => {
             const isFullWidth = viewMode === "board" || viewMode === "devlog"
-              || viewMode === "brief"
+              || viewMode === "brief" || viewMode === "chat" || viewMode === "people"
               || (viewMode === "list" && isWide);
             const needsBoardPadding = viewMode === "board" || viewMode === "devlog";
             return {
@@ -2369,6 +2373,22 @@ export default function App() {
             {/* Dev Log view */}
             {viewMode === "devlog" && <DevLogView demoMode={demoMode} demoEntries={demoMode ? DEMO_DECISION_LOG : undefined} />}
 
+            {/* Chat view (full-width) — placeholder until Step 5 */}
+            {viewMode === "chat" && (
+              <div style={{ padding: "40px 24px", textAlign: "center", color: OS.muted, fontFamily: OS.font }}>
+                <IconChat size={32} />
+                <p style={{ marginTop: 12, fontSize: 15 }}>Chat view coming soon</p>
+              </div>
+            )}
+
+            {/* People view — placeholder until Step 3 */}
+            {viewMode === "people" && (
+              <div style={{ padding: "40px 24px", textAlign: "center", color: OS.muted, fontFamily: OS.font }}>
+                <IconPeople size={32} />
+                <p style={{ marginTop: 12, fontSize: 15 }}>People view coming soon</p>
+              </div>
+            )}
+
             {/* Settings view */}
             {viewMode === "settings" && (
               <SettingsPanel onBack={() => setViewMode("board")} />
@@ -2407,7 +2427,7 @@ export default function App() {
       {showSmartTags && <SmartTagsModal onClose={() => setShowSmartTags(false)} />}
 
       {toast && <Toast message={toast.message} variant={toast.variant} onClose={() => setToast(null)} />}
-      <ClydeChat showToast={showToast} sidePanelOpen={showPanel} proactiveMessage={proactiveMsg} onProactiveHandled={() => setProactiveMsg(null)} demoMode={demoMode} hasApiKey={hasApiKey === true} />
+      {viewMode !== "chat" && <ClydeChat showToast={showToast} sidePanelOpen={showPanel} proactiveMessage={proactiveMsg} onProactiveHandled={() => setProactiveMsg(null)} demoMode={demoMode} hasApiKey={hasApiKey === true} />}
     </div>
     </>
   );
