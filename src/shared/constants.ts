@@ -29,6 +29,11 @@ export const ALARMS = {
   CONFIDENCE_TUNE: "confidence-tune",
   CALENDAR_SYNC: "calendar-sync",
   EOD_REVIEW: "eod-review",
+  MEMORY_EXTRACTION: "memory-extraction",
+  PATTERN_DETECTION: "pattern-detection",
+  WEEKLY_DIGEST: "weekly-digest",
+  SYNC_PUSH: "sync-push",
+  FOLLOW_UP_CHECK: "follow-up-check",
 } as const;
 
 /** How long to keep raw messages (7 days in ms) */
@@ -81,6 +86,30 @@ export const CHAT_HISTORY_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 
 /** How long to keep daily reviews (90 days in ms) */
 export const DAILY_REVIEW_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+
+/** How long to keep memory entries without reinforcement (180 days in ms) */
+export const MEMORY_TTL_MS = 180 * 24 * 60 * 60 * 1000;
+
+/** How long to keep work patterns (90 days in ms) */
+export const WORK_PATTERN_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+
+/** How long to keep weekly digests (90 days in ms) */
+export const WEEKLY_DIGEST_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+
+/** Days without reinforcement before memory importance decays */
+export const MEMORY_DECAY_DAYS = 90;
+
+/** How long to keep completed/dismissed ActionProposals (30 days in ms) */
+export const ACTION_PROPOSAL_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+/** How long to keep sent/discarded drafts (7 days in ms) */
+export const DRAFT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** How long to keep completed follow-up rules (90 days in ms) */
+export const FOLLOW_UP_RULE_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+
+/** How long to keep external task links (90 days in ms) */
+export const EXTERNAL_TASK_LINK_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 
 /** Google OAuth configuration */
 export const GOOGLE_OAUTH = {

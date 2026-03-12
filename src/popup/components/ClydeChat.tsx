@@ -19,6 +19,7 @@ import {
 import { computeHash } from "../../background/dedup";
 import { IconMic, IconStop, IconChat, IconX, IconSend, IconRefresh, IconCheck, IconChevronUp, IconChevronDown } from "./Icons";
 import { QuickAddModal } from "./QuickAddModal";
+import { useChatHistory } from "../hooks/useChatHistory";
 
 // ─── Types ───
 
@@ -163,6 +164,103 @@ const TOOLS: ToolDefinition[] = [
         },
       },
       required: ["columns"],
+    },
+  },
+  {
+    name: "search_people",
+    description: "Search the contact/people graph by name. Returns matching people with relationship and commitment info.",
+    input_schema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Name or partial name to search for" },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    name: "get_calendar",
+    description: "Get calendar events for today or a specific date from the cache.",
+    input_schema: {
+      type: "object",
+      properties: {
+        date: { type: "string", description: "YYYY-MM-DD date to get events for. Defaults to today." },
+      },
+    },
+  },
+  {
+    name: "get_meeting_prep",
+    description: "Prepare for a meeting by finding attendees in the people graph and listing open commitments with each.",
+    input_schema: {
+      type: "object",
+      properties: {
+        meeting_title: { type: "string", description: "Title or partial title of the meeting" },
+      },
+      required: ["meeting_title"],
+    },
+  },
+  {
+    name: "get_daily_plan",
+    description: "Get today's morning brief / daily plan. If none exists, suggests generating one.",
+    input_schema: {
+      type: "object",
+      properties: {},
+    },
+  },
+  {
+    name: "save_memory",
+    description: "Save a long-term memory/fact about the user. Use when the user tells you something you should remember.",
+    input_schema: {
+      type: "object",
+      properties: {
+        content: { type: "string", description: "The fact or preference to remember" },
+        category: { type: "string", enum: ["preference", "fact", "pattern", "project", "relationship", "lesson", "context"] },
+        importance: { type: "number", description: "1-5 importance scale" },
+      },
+      required: ["content", "category", "importance"],
+    },
+  },
+  {
+    name: "search_memories",
+    description: "Search the user's long-term memory for relevant facts and preferences.",
+    input_schema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Text to search for in memories" },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    name: "forget_memory",
+    description: "Delete a specific memory by ID. Use when the user says something is wrong or outdated.",
+    input_schema: {
+      type: "object",
+      properties: {
+        id: { type: "number", description: "Memory ID to delete" },
+      },
+      required: ["id"],
+    },
+  },
+  {
+    name: "set_okr",
+    description: "Create a new OKR (Objective and Key Results) for the user.",
+    input_schema: {
+      type: "object",
+      properties: {
+        objective: { type: "string", description: "The objective statement" },
+        key_results: { type: "array", items: { type: "string" }, description: "1-3 key result statements" },
+        period: { type: "string", description: "Period like '2026-Q1'" },
+        rank: { type: "number", description: "Priority rank (1 = highest)" },
+      },
+      required: ["objective", "key_results"],
+    },
+  },
+  {
+    name: "check_alignment",
+    description: "Check how the user's current commitments align with their OKRs.",
+    input_schema: {
+      type: "object",
+      properties: {},
     },
   },
 ];
@@ -455,6 +553,141 @@ async function executeCreateColumns(input: { columns: string[] }): Promise<strin
   return JSON.stringify({ success: true, created, count: created.length });
 }
 
+async function executeSearchPeople(input: { query: string }): Promise<string> {
+  const all = await db.people.toArray();
+  const matches = all.filter(p => p.name.toLowerCase().includes(input.query.toLowerCase()));
+  if (matches.length === 0) return "No people found matching that name.";
+  return matches.slice(0, 10).map(p =>
+    `${p.name}${p.relationship ? ` (${p.relationship})` : ""}${p.email ? ` — ${p.email}` : ""} — ${p.commitmentCount} commitments, last seen ${p.lastSeenAt}`
+  ).join("\n");
+}
+
+async function executeGetCalendar(input: { date?: string }): Promise<string> {
+  const targetDate = input.date || new Date().toISOString().slice(0, 10);
+  const events = await db.calendar_cache.toArray();
+  const filtered = events.filter(e => e.startTime.startsWith(targetDate));
+  if (filtered.length === 0) return `No calendar events found for ${targetDate}.`;
+  return filtered.map(e => `${e.title}: ${e.startTime} - ${e.endTime}${e.attendees.length ? ` (${e.attendees.join(", ")})` : ""}`).join("\n");
+}
+
+async function executeGetMeetingPrep(input: { meeting_title: string }): Promise<string> {
+  const events = await db.calendar_cache.toArray();
+  const meeting = events.find(e => e.title.toLowerCase().includes(input.meeting_title.toLowerCase()));
+  if (!meeting) return `No meeting found matching "${input.meeting_title}".`;
+
+  const lines = [`Meeting: ${meeting.title} (${meeting.startTime} - ${meeting.endTime})`];
+  if (meeting.attendees.length > 0) {
+    lines.push(`\nAttendees:`);
+    for (const attendee of meeting.attendees) {
+      const person = await db.people.where("name").equalsIgnoreCase(attendee).first()
+        || await db.people.where("email").equals(attendee).first();
+      if (person) {
+        const openCount = person.commitmentCount;
+        lines.push(`- ${person.name}${person.relationship ? ` (${person.relationship})` : ""}: ${openCount} commitments`);
+      } else {
+        lines.push(`- ${attendee} (not in contacts)`);
+      }
+    }
+  }
+  return lines.join("\n");
+}
+
+async function executeGetDailyPlan(): Promise<string> {
+  const today = new Date().toISOString().slice(0, 10);
+  const brief = await db.briefs.where("date").equals(today).first();
+  if (!brief) return "No morning brief found for today. You can generate one from the Planner view or ask me to trigger it.";
+
+  const lines = [brief.greeting, ""];
+  if (brief.priorities.length > 0) {
+    lines.push("Priorities:");
+    for (const p of brief.priorities) {
+      lines.push(`- ${p.text} (${p.reason})${p.suggestedTime ? ` — suggested: ${p.suggestedTime}` : ""}`);
+    }
+  }
+  if (brief.scheduleSuggestion) {
+    lines.push("", "Schedule:", brief.scheduleSuggestion);
+  }
+  return lines.join("\n");
+}
+
+// ─── Phase 3 Tool Executors ───
+
+async function executeSaveMemory(input: { content: string; category: string; importance: number }): Promise<string> {
+  const now = new Date().toISOString();
+  const category = input.category as import("@shared/types").MemoryCategory;
+  await db.memories.add({
+    content: input.content,
+    category,
+    importance: Math.max(1, Math.min(5, input.importance)),
+    source: "user_manual",
+    evidenceIds: [],
+    lastReinforced: now,
+    reinforceCount: 0,
+    confirmed: true,
+    expiresAt: null,
+    createdAt: now,
+  });
+  return JSON.stringify({ ok: true, message: `Saved memory: "${input.content}"` });
+}
+
+async function executeSearchMemories(input: { query: string }): Promise<string> {
+  const all = await db.memories.toArray();
+  const q = input.query.toLowerCase();
+  const matches = all
+    .filter((m) => m.content.toLowerCase().includes(q))
+    .sort((a, b) => b.importance - a.importance)
+    .slice(0, 10);
+  if (matches.length === 0) return "No memories found matching that query.";
+  return JSON.stringify(matches.map((m) => ({
+    id: m.id,
+    content: m.content,
+    category: m.category,
+    importance: m.importance,
+    confirmed: m.confirmed,
+  })));
+}
+
+async function executeForgetMemory(input: { id: number }): Promise<string> {
+  const existing = await db.memories.get(input.id);
+  if (!existing) return JSON.stringify({ error: `Memory #${input.id} not found` });
+  await db.memories.delete(input.id);
+  return JSON.stringify({ ok: true, message: `Deleted memory #${input.id}: "${existing.content}"` });
+}
+
+async function executeSetOKR(input: { objective: string; key_results: string[]; period?: string; rank?: number }): Promise<string> {
+  const now = new Date();
+  const period = input.period ?? `${now.getFullYear()}-Q${Math.ceil((now.getMonth() + 1) / 3)}`;
+  const rank = input.rank ?? 1;
+  const keyResults = (input.key_results ?? []).map((text) => ({ text, progress: 0 }));
+  const id = await db.okrs.add({
+    objective: input.objective,
+    keyResults,
+    period,
+    rank,
+    alignedCount: 0,
+    source: "user",
+    active: true,
+    createdAt: now.toISOString(),
+  });
+  return JSON.stringify({ ok: true, id, message: `Created OKR: "${input.objective}" with ${keyResults.length} key results` });
+}
+
+async function executeCheckAlignment(): Promise<string> {
+  const okrs = await db.okrs.where("active").equals(1).toArray();
+  if (okrs.length === 0) return "No active OKRs found. Create some OKRs first to check alignment.";
+  const links = await db.commitment_okr_links.toArray();
+  const activeCommitments = await db.commitments.where("status").anyOf("new", "actioned", "snoozed").count();
+  const aligned = new Set(links.map((l) => l.commitmentId)).size;
+  const lines = ["OKR Alignment Summary:", ""];
+  for (const okr of okrs) {
+    const okrLinks = links.filter((l) => l.okrId === okr.id);
+    lines.push(`${okr.rank}. ${okr.objective} — ${okrLinks.length} aligned commitments`);
+  }
+  lines.push("", `${aligned} of ${activeCommitments} active commitments are aligned to an OKR.`);
+  lines.push(`${activeCommitments - aligned} commitments are unaligned.`);
+  return lines.join("\n");
+}
+
 async function executeTool(name: string, input: Record<string, unknown>): Promise<string> {
   switch (name) {
     case "create_commitment":
@@ -473,6 +706,24 @@ async function executeTool(name: string, input: Record<string, unknown>): Promis
       return executeUpdateSetting(input as Parameters<typeof executeUpdateSetting>[0]);
     case "create_columns":
       return executeCreateColumns(input as Parameters<typeof executeCreateColumns>[0]);
+    case "search_people":
+      return executeSearchPeople(input as Parameters<typeof executeSearchPeople>[0]);
+    case "get_calendar":
+      return executeGetCalendar(input as Parameters<typeof executeGetCalendar>[0]);
+    case "get_meeting_prep":
+      return executeGetMeetingPrep(input as Parameters<typeof executeGetMeetingPrep>[0]);
+    case "get_daily_plan":
+      return executeGetDailyPlan();
+    case "save_memory":
+      return executeSaveMemory(input as { content: string; category: string; importance: number });
+    case "search_memories":
+      return executeSearchMemories(input as { query: string });
+    case "forget_memory":
+      return executeForgetMemory(input as { id: number });
+    case "set_okr":
+      return executeSetOKR(input as { objective: string; key_results: string[]; period?: string; rank?: number });
+    case "check_alignment":
+      return executeCheckAlignment();
     default:
       return JSON.stringify({ error: `Unknown tool: ${name}` });
   }
@@ -480,7 +731,9 @@ async function executeTool(name: string, input: Record<string, unknown>): Promis
 
 // ─── Claude API ───
 
-const SYSTEM_PROMPT = `You are Clyde, a concise task assistant. You help users create, find, and manage their commitments (tasks).
+const SYSTEM_PROMPT = `You are Clyde, a personal assistant that manages commitments, calendar, and contacts.
+You have access to the user's calendar events, contact graph (people they interact with),
+and daily planning tools. Use these proactively when relevant.
 
 Rules:
 - Always use tools for actions — never just describe what you'd do
@@ -503,7 +756,21 @@ async function buildContextMessage(): Promise<string> {
     ? `\nKanban columns: ${columns.map((c) => c.label).join(", ")}`
     : "";
 
-  if (active.length === 0) return `No active commitments.${colNames}`;
+  // Top people by interaction
+  const topPeople = await db.people.orderBy("commitmentCount").reverse().limit(5).toArray();
+  const peopleLine = topPeople.length > 0
+    ? `\nTop contacts: ${topPeople.map(p => `${p.name}${p.relationship ? ` (${p.relationship})` : ""}`).join(", ")}`
+    : "";
+
+  // Today's calendar events
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const calEvents = await db.calendar_cache.toArray();
+  const todayEvents = calEvents.filter(e => e.startTime.startsWith(todayStr));
+  const calLine = todayEvents.length > 0
+    ? `\nToday's calendar: ${todayEvents.map(e => `${e.title} (${e.startTime.slice(11, 16)}-${e.endTime.slice(11, 16)})`).join(", ")}`
+    : "";
+
+  if (active.length === 0) return `No active commitments.${colNames}${peopleLine}${calLine}`;
 
   const capped = active.slice(0, 30);
   const items = capped
@@ -517,7 +784,7 @@ async function buildContextMessage(): Promise<string> {
     })
     .join("\n");
 
-  return `Active commitments (${active.length} total${active.length > 30 ? ", showing 30" : ""}):\n${items}${colNames}`;
+  return `Active commitments (${active.length} total${active.length > 30 ? ", showing 30" : ""}):\n${items}${colNames}${peopleLine}${calLine}`;
 }
 
 async function callClaude(
@@ -835,7 +1102,8 @@ function useVoice(onResult: (transcript: string) => void, onInterim?: (transcrip
 
 // ─── Component ───
 
-export function ClydeChat({ showToast, sidePanelOpen, proactiveMessage, onProactiveHandled, demoMode, hasApiKey }: {
+export function ClydeChat({ fullView, showToast, sidePanelOpen, proactiveMessage, onProactiveHandled, demoMode, hasApiKey }: {
+  fullView?: boolean;
   showToast: (msg: string, variant?: "success" | "error" | "warning" | "info") => void;
   sidePanelOpen?: boolean;
   proactiveMessage?: string | null;
@@ -855,6 +1123,39 @@ export function ClydeChat({ showToast, sidePanelOpen, proactiveMessage, onProact
   const inputRef = useRef<HTMLInputElement>(null);
   const sendMessageRef = useRef<(text: string) => void>(() => {});
 
+  // Chat history persistence
+  const {
+    sessions,
+    activeSessionId,
+    messages: persistedMessages,
+    createSession,
+    loadSession,
+    persistMessage,
+    deleteSession,
+  } = useChatHistory(!!demoMode);
+
+  // On mount, if fullView and no active session, create one
+  const sessionInitRef = useRef(false);
+  useEffect(() => {
+    if (!fullView || demoMode || sessionInitRef.current) return;
+    if (activeSessionId == null && sessions.length === 0) {
+      sessionInitRef.current = true;
+      createSession();
+    }
+  }, [fullView, demoMode, activeSessionId, sessions.length, createSession]);
+
+  // When switching sessions in fullView, reload persisted messages into local state
+  useEffect(() => {
+    if (!fullView || activeSessionId == null) return;
+    // Convert persisted messages to ChatMessage format
+    const restored: ChatMessage[] = persistedMessages.map(m => ({
+      role: m.role,
+      content: m.content,
+      snapshots: m.snapshots ? (() => { try { return JSON.parse(m.snapshots); } catch { return undefined; } })() : undefined,
+    }));
+    setMessages(restored);
+  }, [fullView, activeSessionId, persistedMessages]);
+
   // Animate thinking dots
   useEffect(() => {
     if (!loading) return;
@@ -865,7 +1166,7 @@ export function ClydeChat({ showToast, sidePanelOpen, proactiveMessage, onProact
   // Handle proactive messages (e.g. column suggestions).
   // These show only Clyde's response — no user bubble — so it looks like Clyde initiated the conversation.
   useEffect(() => {
-    if (!proactiveMessage || loading) return;
+    if (!proactiveMessage || loading || demoMode) return;
     onProactiveHandled?.();
     const prompt = proactiveMessage;
 
@@ -965,6 +1266,12 @@ export function ClydeChat({ showToast, sidePanelOpen, proactiveMessage, onProact
         }
 
         setMessages((prev) => [...prev, { role: "assistant", content: response, snapshots }]);
+
+        // Persist messages if in fullView with an active session
+        if (fullView && activeSessionId != null) {
+          await persistMessage(activeSessionId, "user", text.trim());
+          await persistMessage(activeSessionId, "assistant", response, snapshots ? JSON.stringify(snapshots) : null);
+        }
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : "Something went wrong";
         setMessages((prev) => [...prev, { role: "assistant", content: `Error: ${errMsg}` }]);
@@ -972,7 +1279,7 @@ export function ClydeChat({ showToast, sidePanelOpen, proactiveMessage, onProact
         setLoading(false);
       }
     },
-    [messages, loading],
+    [messages, loading, fullView, activeSessionId, persistMessage],
   );
   sendMessageRef.current = sendMessage;
 
@@ -985,7 +1292,7 @@ export function ClydeChat({ showToast, sidePanelOpen, proactiveMessage, onProact
   // Quick mic: one-shot voice → immediate task creation
   const handleQuickMic = useCallback(
     async (transcript: string) => {
-      if (!transcript.trim()) return;
+      if (!transcript.trim() || demoMode) return;
       showToast("Creating task...", "info");
       try {
         const contextSnapshot = await buildContextMessage();
@@ -1079,6 +1386,334 @@ export function ClydeChat({ showToast, sidePanelOpen, proactiveMessage, onProact
     fontFamily: OS.font,
   };
 
+  // ─── Helper: relative time ───
+  const relativeTime = (iso: string) => {
+    const diff = Date.now() - new Date(iso).getTime();
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1) return "just now";
+    if (mins < 60) return `${mins}m ago`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `${hrs}h ago`;
+    const days = Math.floor(hrs / 24);
+    return `${days}d ago`;
+  };
+
+  // ─── Shared chat content builders ───
+
+  const renderChatMessages = () => (
+    <div
+      ref={scrollRef}
+      style={{
+        flex: 1,
+        overflowY: "auto",
+        padding: 12,
+        display: "flex",
+        flexDirection: "column",
+        gap: 8,
+      }}
+    >
+      {messages.length === 0 && !loading && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 8 }}>
+          {demoMode ? (
+            <div style={{
+              alignSelf: "flex-start", maxWidth: "88%",
+              padding: "10px 14px", borderRadius: 12,
+              background: OS.bg, fontSize: 13, lineHeight: 1.5, color: OS.text,
+            }}>
+              <div style={{ fontWeight: 600, marginBottom: 4 }}>Hey! I'm Clyde.</div>
+              <div style={{ color: OS.secondary }}>
+                Chat is available once you exit demo mode and add your Anthropic API key in Settings.
+              </div>
+            </div>
+          ) : !hasApiKey ? (
+            <div style={{
+              alignSelf: "flex-start", maxWidth: "88%",
+              padding: "10px 14px", borderRadius: 12,
+              background: OS.bg, fontSize: 13, lineHeight: 1.5, color: OS.text,
+            }}>
+              <div style={{ fontWeight: 600, marginBottom: 4 }}>Hey! I'm Clyde.</div>
+              <div style={{ color: OS.secondary }}>
+                To use chat, add your Anthropic API key in Settings first.
+              </div>
+            </div>
+          ) : (
+            <>
+              <div style={{
+                alignSelf: "flex-start", maxWidth: "88%",
+                padding: "10px 14px", borderRadius: 12,
+                background: OS.bg, fontSize: 13, lineHeight: 1.5, color: OS.text,
+              }}>
+                <div style={{ fontWeight: 600, marginBottom: 4 }}>Hey! I'm Clyde.</div>
+                <div style={{ color: OS.secondary }}>
+                  I keep track of your commitments so nothing slips through. Ask me anything — or try one of these:
+                </div>
+              </div>
+              {[
+                "What's overdue?",
+                "Add task: review PR by Friday",
+                "Show my urgent items",
+                "Summarize my board",
+              ].map((prompt) => (
+                <button
+                  key={prompt}
+                  onClick={() => sendMessage(prompt)}
+                  style={{
+                    alignSelf: "flex-end",
+                    padding: "7px 12px",
+                    border: `1px solid ${OS.blue}`,
+                    borderRadius: 16,
+                    background: OS.white,
+                    color: OS.blue,
+                    fontSize: 12,
+                    fontWeight: 500,
+                    fontFamily: OS.font,
+                    cursor: "pointer",
+                    textAlign: "left",
+                  }}
+                >
+                  {prompt}
+                </button>
+              ))}
+            </>
+          )}
+        </div>
+      )}
+      {messages.map((msg, i) => {
+        const hasCards = msg.role === "assistant" && msg.snapshots && msg.snapshots.length > 0;
+        return (
+          <React.Fragment key={i}>
+            {hasCards ? (
+              msg.content.trim() && (
+                <div style={{
+                  alignSelf: "flex-start",
+                  fontSize: 11, color: OS.muted, fontWeight: 500,
+                  paddingLeft: 2, paddingBottom: 2,
+                }}>
+                  {renderMarkdown(msg.content.trim())}
+                </div>
+              )
+            ) : (
+              <div
+                style={{
+                  alignSelf: msg.role === "user" ? "flex-end" : "flex-start",
+                  maxWidth: "85%",
+                  padding: "8px 12px",
+                  borderRadius: 12,
+                  fontSize: 13,
+                  lineHeight: 1.4,
+                  background: msg.role === "user" ? OS.blue : OS.bg,
+                  color: msg.role === "user" ? OS.white : OS.text,
+                  wordBreak: "break-word",
+                  whiteSpace: "pre-wrap",
+                }}
+              >
+                {msg.role === "assistant" ? renderMarkdown(msg.content) : msg.content}
+              </div>
+            )}
+            {hasCards && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 5, alignSelf: "stretch" }}>
+                {msg.snapshots!.map((snap) => (
+                  <CommitmentMiniCard
+                    key={snap.id}
+                    snapshot={snap}
+                    onAction={() => {}}
+                  />
+                ))}
+              </div>
+            )}
+          </React.Fragment>
+        );
+      })}
+      {loading && (
+        <div
+          style={{
+            alignSelf: "flex-start",
+            padding: "8px 12px",
+            borderRadius: 12,
+            fontSize: 13,
+            background: OS.bg,
+            color: OS.muted,
+            minWidth: 52,
+          }}
+        >
+          Thinking{thinkingDots}
+        </div>
+      )}
+    </div>
+  );
+
+  const renderChatInput = () => (
+    <>
+      {interimVoice && (
+        <div style={{ padding: "4px 16px", fontSize: 12, color: OS.muted, fontStyle: "italic" }}>
+          {interimVoice}
+        </div>
+      )}
+      <div
+        style={{
+          padding: "8px 12px",
+          borderTop: `1px solid ${OS.border}`,
+          display: "flex",
+          gap: 8,
+          alignItems: "center",
+        }}
+      >
+        <input
+          ref={inputRef}
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder={demoMode ? "Chat unavailable in demo mode" : !hasApiKey ? "Add API key in Settings to chat" : "Type a message..."}
+          disabled={loading || !!demoMode || !hasApiKey}
+          style={{
+            flex: 1,
+            padding: "8px 12px",
+            border: `1px solid ${OS.border}`,
+            borderRadius: 8,
+            fontSize: 13,
+            fontFamily: OS.font,
+            outline: "none",
+            background: OS.white,
+            color: OS.text,
+          }}
+        />
+        <button
+          onClick={() => sendMessage(input)}
+          disabled={loading || !input.trim() || !!demoMode || !hasApiKey}
+          style={{
+            ...btnBase,
+            width: 32,
+            height: 32,
+            background: input.trim() ? OS.blue : OS.bg,
+            color: input.trim() ? OS.white : OS.faint,
+            boxShadow: "none",
+          }}
+        >
+          <IconSend />
+        </button>
+      </div>
+    </>
+  );
+
+  // ─── Full-view layout ───
+  if (fullView) {
+    return (
+      <div style={{ display: "flex", height: "100%", fontFamily: OS.font }}>
+        {/* Session sidebar */}
+        <div style={{
+          width: 240, borderRight: `1px solid ${OS.border}`, background: OS.bg,
+          display: "flex", flexDirection: "column", flexShrink: 0,
+        }}>
+          <div style={{ padding: "10px 12px" }}>
+            <button
+              onClick={async () => {
+                const id = await createSession();
+                if (id > 0) {
+                  setMessages([]);
+                  setInput("");
+                }
+              }}
+              style={{
+                width: "100%", padding: "8px 12px", border: `1px solid ${OS.border}`,
+                borderRadius: 8, background: OS.white, color: OS.blue, fontSize: 13,
+                fontWeight: 600, fontFamily: OS.font, cursor: "pointer",
+              }}
+            >
+              + New Chat
+            </button>
+          </div>
+          <div style={{ flex: 1, overflowY: "auto" }}>
+            {sessions.map((s) => (
+              <div
+                key={s.id}
+                onClick={() => {
+                  if (s.id != null) loadSession(s.id);
+                }}
+                style={{
+                  padding: "8px 12px", cursor: "pointer", display: "flex",
+                  alignItems: "center", justifyContent: "space-between",
+                  background: s.id === activeSessionId ? OS.white : "transparent",
+                  borderLeft: s.id === activeSessionId ? `2px solid ${OS.blue}` : "2px solid transparent",
+                }}
+              >
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{
+                    fontSize: 12, fontWeight: 500, color: OS.text,
+                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                  }}>
+                    {s.title}
+                  </div>
+                  <div style={{ fontSize: 10, color: OS.muted }}>{relativeTime(s.updatedAt)}</div>
+                </div>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (s.id != null) deleteSession(s.id);
+                  }}
+                  style={{
+                    width: 20, height: 20, border: "none", background: "transparent",
+                    color: OS.faint, cursor: "pointer", display: "flex",
+                    alignItems: "center", justifyContent: "center", flexShrink: 0,
+                    borderRadius: 4, fontSize: 12,
+                  }}
+                  title="Delete session"
+                >
+                  <IconX size={10} />
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Main chat area */}
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+          {/* Header */}
+          <div
+            style={{
+              padding: "10px 14px",
+              borderBottom: `1px solid ${OS.border}`,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              background: OS.bg,
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <div style={{
+                width: 28, height: 28, borderRadius: "50%",
+                background: OS.blue, display: "flex", alignItems: "center",
+                justifyContent: "center", flexShrink: 0,
+              }}>
+                <span style={{ fontSize: 13, fontWeight: 700, color: OS.white, fontFamily: OS.font }}>C</span>
+              </div>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 13, color: OS.text, lineHeight: 1.2 }}>Clyde</div>
+                <div style={{ fontSize: 10, color: OS.green, fontWeight: 600 }}>online</div>
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              <button
+                onClick={() => (chatMicVoice.listening ? chatMicVoice.stop() : chatMicVoice.start())}
+                style={{
+                  ...btnBase, width: 28, height: 28,
+                  background: chatMicVoice.listening ? OS.red : "transparent",
+                  color: chatMicVoice.listening ? OS.white : OS.muted,
+                  boxShadow: "none",
+                }}
+                title={chatMicVoice.listening ? "Stop recording" : "Voice input"}
+              >
+                {chatMicVoice.listening ? <IconStop /> : <IconMic />}
+              </button>
+            </div>
+          </div>
+          {renderChatMessages()}
+          {renderChatInput()}
+        </div>
+      </div>
+    );
+  }
+
+  // ─── Floating panel layout (default) ───
   return (
     <>
       {/* Chat panel */}
@@ -1156,202 +1791,10 @@ export function ClydeChat({ showToast, sidePanelOpen, proactiveMessage, onProact
           </div>
 
           {/* Messages */}
-          <div
-            ref={scrollRef}
-            style={{
-              flex: 1,
-              overflowY: "auto",
-              padding: 12,
-              display: "flex",
-              flexDirection: "column",
-              gap: 8,
-            }}
-          >
-            {messages.length === 0 && !loading && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 8 }}>
-                {demoMode ? (
-                  /* Demo mode — explain chat requires real account */
-                  <div style={{
-                    alignSelf: "flex-start", maxWidth: "88%",
-                    padding: "10px 14px", borderRadius: 12,
-                    background: OS.bg, fontSize: 13, lineHeight: 1.5, color: OS.text,
-                  }}>
-                    <div style={{ fontWeight: 600, marginBottom: 4 }}>Hey! I'm Clyde.</div>
-                    <div style={{ color: OS.secondary }}>
-                      Chat is available once you exit demo mode and add your Anthropic API key in Settings.
-                    </div>
-                  </div>
-                ) : !hasApiKey ? (
-                  /* No API key — guide to settings */
-                  <div style={{
-                    alignSelf: "flex-start", maxWidth: "88%",
-                    padding: "10px 14px", borderRadius: 12,
-                    background: OS.bg, fontSize: 13, lineHeight: 1.5, color: OS.text,
-                  }}>
-                    <div style={{ fontWeight: 600, marginBottom: 4 }}>Hey! I'm Clyde.</div>
-                    <div style={{ color: OS.secondary }}>
-                      To use chat, add your Anthropic API key in Settings first.
-                    </div>
-                  </div>
-                ) : (
-                  /* Ready to chat */
-                  <>
-                    <div style={{
-                      alignSelf: "flex-start", maxWidth: "88%",
-                      padding: "10px 14px", borderRadius: 12,
-                      background: OS.bg, fontSize: 13, lineHeight: 1.5, color: OS.text,
-                    }}>
-                      <div style={{ fontWeight: 600, marginBottom: 4 }}>Hey! I'm Clyde.</div>
-                      <div style={{ color: OS.secondary }}>
-                        I keep track of your commitments so nothing slips through. Ask me anything — or try one of these:
-                      </div>
-                    </div>
-                    {[
-                      "What's overdue?",
-                      "Add task: review PR by Friday",
-                      "Show my urgent items",
-                      "Summarize my board",
-                    ].map((prompt) => (
-                      <button
-                        key={prompt}
-                        onClick={() => sendMessage(prompt)}
-                        style={{
-                          alignSelf: "flex-end",
-                          padding: "7px 12px",
-                          border: `1px solid ${OS.blue}`,
-                          borderRadius: 16,
-                          background: OS.white,
-                          color: OS.blue,
-                          fontSize: 12,
-                          fontWeight: 500,
-                          fontFamily: OS.font,
-                          cursor: "pointer",
-                          textAlign: "left",
-                        }}
-                      >
-                        {prompt}
-                      </button>
-                    ))}
-                  </>
-                )}
-              </div>
-            )}
-            {messages.map((msg, i) => {
-              const hasCards = msg.role === "assistant" && msg.snapshots && msg.snapshots.length > 0;
-              return (
-                <React.Fragment key={i}>
-                  {/* Text bubble — compact label when cards follow, full bubble otherwise */}
-                  {hasCards ? (
-                    msg.content.trim() && (
-                      <div style={{
-                        alignSelf: "flex-start",
-                        fontSize: 11, color: OS.muted, fontWeight: 500,
-                        paddingLeft: 2, paddingBottom: 2,
-                      }}>
-                        {renderMarkdown(msg.content.trim())}
-                      </div>
-                    )
-                  ) : (
-                    <div
-                      style={{
-                        alignSelf: msg.role === "user" ? "flex-end" : "flex-start",
-                        maxWidth: "85%",
-                        padding: "8px 12px",
-                        borderRadius: 12,
-                        fontSize: 13,
-                        lineHeight: 1.4,
-                        background: msg.role === "user" ? OS.blue : OS.bg,
-                        color: msg.role === "user" ? OS.white : OS.text,
-                        wordBreak: "break-word",
-                        whiteSpace: "pre-wrap",
-                      }}
-                    >
-                      {msg.role === "assistant" ? renderMarkdown(msg.content) : msg.content}
-                    </div>
-                  )}
-                  {/* Commitment cards */}
-                  {hasCards && (
-                    <div style={{ display: "flex", flexDirection: "column", gap: 5, alignSelf: "stretch" }}>
-                      {msg.snapshots!.map((snap) => (
-                        <CommitmentMiniCard
-                          key={snap.id}
-                          snapshot={snap}
-                          onAction={() => {}}
-                        />
-                      ))}
-                    </div>
-                  )}
-                </React.Fragment>
-              );
-            })}
-            {loading && (
-              <div
-                style={{
-                  alignSelf: "flex-start",
-                  padding: "8px 12px",
-                  borderRadius: 12,
-                  fontSize: 13,
-                  background: OS.bg,
-                  color: OS.muted,
-                  minWidth: 52,
-                }}
-              >
-                Thinking{thinkingDots}
-              </div>
-            )}
-          </div>
+          {renderChatMessages()}
 
-          {/* Interim voice preview */}
-          {interimVoice && (
-            <div style={{ padding: "4px 16px", fontSize: 12, color: OS.muted, fontStyle: "italic" }}>
-              {interimVoice}
-            </div>
-          )}
-
-          {/* Input */}
-          <div
-            style={{
-              padding: "8px 12px",
-              borderTop: `1px solid ${OS.border}`,
-              display: "flex",
-              gap: 8,
-              alignItems: "center",
-            }}
-          >
-            <input
-              ref={inputRef}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder={demoMode ? "Chat unavailable in demo mode" : !hasApiKey ? "Add API key in Settings to chat" : "Type a message..."}
-              disabled={loading || !!demoMode || !hasApiKey}
-              style={{
-                flex: 1,
-                padding: "8px 12px",
-                border: `1px solid ${OS.border}`,
-                borderRadius: 8,
-                fontSize: 13,
-                fontFamily: OS.font,
-                outline: "none",
-                background: OS.white,
-                color: OS.text,
-              }}
-            />
-            <button
-              onClick={() => sendMessage(input)}
-              disabled={loading || !input.trim() || !!demoMode || !hasApiKey}
-              style={{
-                ...btnBase,
-                width: 32,
-                height: 32,
-                background: input.trim() ? OS.blue : OS.bg,
-                color: input.trim() ? OS.white : OS.faint,
-                boxShadow: "none",
-              }}
-            >
-              <IconSend />
-            </button>
-          </div>
+          {/* Interim voice preview + Input */}
+          {renderChatInput()}
         </div>
       )}
 

@@ -267,6 +267,9 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
   const [newTagLabel, setNewTagLabel] = useState("");
   const [editingTagId, setEditingTagId] = useState<number | null>(null);
   const [editingTagLabel, setEditingTagLabel] = useState("");
+  const [googleClientId, setGoogleClientId] = useState("");
+  const [googleConnected, setGoogleConnected] = useState(false);
+  const [googleOAuthLoading, setGoogleOAuthLoading] = useState(false);
 
   // ─── Load settings from chrome.storage.local ───
 
@@ -362,6 +365,13 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
     chrome.runtime.sendMessage({ type: "GRANOLA_STATUS" }).then((res) => {
       if (res?.connected) setGranolaConnected(true);
     }).catch(() => {});
+
+    // Load Google OAuth state
+    chrome.storage.local.get(["googleClientId", "googleAuthTokens"]).then((res) => {
+      if (res.googleClientId) setGoogleClientId(res.googleClientId as string);
+      const tokens = res.googleAuthTokens as { accessToken?: string; refreshToken?: string } | undefined;
+      setGoogleConnected(!!(tokens?.accessToken && tokens?.refreshToken));
+    });
   }, []);
 
   // ─── Estimate daily API cost from action_log count ───
@@ -991,21 +1001,121 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
         </div>
 
         {form.calendarEnabled && (
-          <div style={{ ...fieldRow, marginBottom: 0, alignItems: "flex-start" }}>
-            <div style={{ flex: 1, marginRight: 16 }}>
-              <div style={labelStyle}>ICS Feed URL</div>
-              <div style={subLabel}>
-                Calendar &rarr; Settings &rarr; [your calendar] &rarr; Integrate calendar &rarr; "Secret address in iCal format"
+          <>
+            {/* Google Calendar OAuth */}
+            <div style={{ marginBottom: 16 }}>
+              <div style={labelStyle}>Google Calendar OAuth</div>
+              <div style={subLabel}>Connect directly to Google Calendar for automatic event syncing</div>
+
+              <div style={{ ...fieldRow, marginTop: 10, marginBottom: 8 }}>
+                <div style={{ flex: 1, marginRight: 16 }}>
+                  <div style={subLabel}>OAuth Client ID</div>
+                </div>
+                <input
+                  type="text"
+                  style={{ ...inputStyle, width: 260 }}
+                  value={googleClientId}
+                  placeholder="xxxx.apps.googleusercontent.com"
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setGoogleClientId(val);
+                    chrome.storage.local.set({ googleClientId: val });
+                  }}
+                />
+              </div>
+
+              <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 8 }}>
+                {googleConnected ? (
+                  <>
+                    <span style={{
+                      fontSize: 12,
+                      fontWeight: 600,
+                      color: OS.green,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 4,
+                    }}>
+                      Connected
+                    </span>
+                    <button
+                      onClick={() => {
+                        chrome.runtime.sendMessage({ type: "GOOGLE_DISCONNECT" }).then(() => {
+                          setGoogleConnected(false);
+                          showToast("Google Calendar disconnected", "info");
+                        }).catch((err: unknown) => {
+                          showToast(`Disconnect failed: ${err instanceof Error ? err.message : String(err)}`, "error");
+                        });
+                      }}
+                      style={{
+                        padding: "6px 14px",
+                        background: "transparent",
+                        color: OS.red,
+                        border: `1px solid ${OS.red}`,
+                        borderRadius: 6,
+                        fontSize: 12,
+                        fontFamily: OS.font,
+                        cursor: "pointer",
+                      }}
+                    >
+                      Disconnect
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    onClick={() => {
+                      if (!googleClientId.trim()) {
+                        showToast("Enter a Google OAuth Client ID first", "error");
+                        return;
+                      }
+                      setGoogleOAuthLoading(true);
+                      chrome.runtime.sendMessage({ type: "GOOGLE_OAUTH_START" }).then((res: { ok: boolean; error?: string }) => {
+                        setGoogleOAuthLoading(false);
+                        if (res?.ok) {
+                          setGoogleConnected(true);
+                          showToast("Google Calendar connected", "success");
+                        } else {
+                          showToast(res?.error ?? "OAuth failed", "error");
+                        }
+                      }).catch((err: unknown) => {
+                        setGoogleOAuthLoading(false);
+                        showToast(`OAuth failed: ${err instanceof Error ? err.message : String(err)}`, "error");
+                      });
+                    }}
+                    disabled={googleOAuthLoading || !googleClientId.trim()}
+                    style={{
+                      padding: "7px 16px",
+                      background: googleClientId.trim() ? OS.blue : OS.faint,
+                      color: OS.white,
+                      border: "none",
+                      borderRadius: 6,
+                      fontSize: 13,
+                      fontFamily: OS.font,
+                      cursor: googleClientId.trim() ? "pointer" : "default",
+                    }}
+                  >
+                    {googleOAuthLoading ? "Connecting..." : "Connect Google Calendar"}
+                  </button>
+                )}
               </div>
             </div>
-            <input
-              type="password"
-              style={{ ...inputStyle, width: 260 }}
-              value={form.calendarIcsUrl}
-              placeholder="https://calendar.google.com/calendar/ical/..."
-              onChange={(e) => update("calendarIcsUrl", e.target.value)}
-            />
-          </div>
+
+            {/* ICS Feed URL (legacy fallback) */}
+            <div style={{ ...fieldRow, marginBottom: 0, alignItems: "flex-start" }}>
+              <div style={{ flex: 1, marginRight: 16 }}>
+                <div style={labelStyle}>ICS Feed URL <span style={{ fontSize: 11, color: OS.muted, fontWeight: 400 }}>(legacy fallback)</span></div>
+                <div style={subLabel}>
+                  Calendar &rarr; Settings &rarr; [your calendar] &rarr; Integrate calendar &rarr; "Secret address in iCal format"
+                </div>
+              </div>
+              <input
+                type="password"
+                style={{ ...inputStyle, width: 260 }}
+                value={form.calendarIcsUrl}
+                placeholder="https://calendar.google.com/calendar/ical/..."
+                onChange={(e) => update("calendarIcsUrl", e.target.value)}
+              />
+            </div>
+          </>
         )}
       </div>
 
@@ -1767,6 +1877,51 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
           >
             {restoring ? "Restoring..." : "Restore"}
           </button>
+        </div>
+      </div>
+
+      {/* Cloud Sync (Foundation) */}
+      <div style={sectionStyle}>
+        <h2 style={sectionTitle}>Cloud Sync</h2>
+
+        <div style={{ ...fieldRow, alignItems: "flex-start" }}>
+          <div style={{ flex: 1 }}>
+            <div style={labelStyle}>Enable Cloud Sync</div>
+            <div style={subLabel}>
+              Sync commitments, memories, and OKRs across devices
+            </div>
+          </div>
+          <Toggle value={false} onChange={() => {}} />
+        </div>
+
+        <div style={{ ...fieldRow, alignItems: "flex-start" }}>
+          <div style={{ flex: 1 }}>
+            <div style={labelStyle}>Encryption Passphrase</div>
+            <div style={subLabel}>
+              All synced data is encrypted end-to-end with this passphrase
+            </div>
+          </div>
+          <input
+            type="password"
+            style={{ ...inputStyle, opacity: 0.5 }}
+            placeholder="Set a passphrase..."
+            disabled
+          />
+        </div>
+
+        <div
+          style={{
+            padding: "10px 14px",
+            background: "#fffbeb",
+            border: `1px solid #fde68a`,
+            borderRadius: 8,
+            fontSize: 12,
+            color: "#92400e",
+            lineHeight: 1.5,
+          }}
+        >
+          <strong>Foundation</strong> — Sync server not yet deployed. Encryption and change tracking are
+          ready; cloud connectivity coming in a future update.
         </div>
       </div>
 

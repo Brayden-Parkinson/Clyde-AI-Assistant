@@ -1,10 +1,12 @@
 import { db, getDismissalPatterns, getNewCommitmentCount, getActiveCommitments, getAllTags, ensureGeneralTag, getNextTagColor } from "@shared/db";
 import { CLAUDE_MODEL, CLAUDE_MODEL_FAST, MAX_DISMISSAL_PATTERNS, API_TIMEOUT_MS, API_MAX_RETRIES, API_RETRY_DELAY_MS, DEFAULTS } from "@shared/constants";
-import type { SourceType, ExtractionResponse, ExtractedCommitment, RejectedCandidate, SlackMessagePayload, DecisionLogEntry, ConversationMessage, SlackWatermarks } from "@shared/types";
+import type { SourceType, ExtractionResponse, ExtractedCommitment, RejectedCandidate, SlackMessagePayload, DecisionLogEntry, ConversationMessage, SlackWatermarks, Commitment } from "@shared/types";
 import { logStatus, updateStatus, getStatus } from "@shared/status";
 import { getUserProfile } from "@shared/user-profile";
 import { computeHash, isDuplicate, isFuzzyDuplicate } from "./dedup";
 import { requestBackupSave } from "./backup-sync";
+import { extractPeopleFromCommitment } from "./people-extractor";
+import { getMemoriesForPrompt } from "./memory-engine";
 
 type BufferedMessage = SlackMessagePayload["messages"][number];
 
@@ -46,9 +48,23 @@ Rules:
 - Only suggest a new tag if it represents a clear recurring theme.`;
 }
 
+async function buildMemoryBlock(): Promise<string> {
+  try {
+    const memories = await getMemoriesForPrompt();
+    if (memories.length === 0) return "";
+    return `
+
+LONG-TERM MEMORY (things Clyde knows about this person — use for context):
+${memories.join("\n")}`;
+  } catch {
+    return ""; // Non-critical — skip if memory engine fails
+  }
+}
+
 async function buildSystemPrompt(sourceType: SourceType = "slack"): Promise<string> {
   const dismissalBlock = await buildDismissalBlock();
   const tagBlock = await buildTagBlock();
+  const memoryBlock = await buildMemoryBlock();
   const devMode = await isDevModeEnabled();
   const profile = await getUserProfile();
   const userName = profile.userName || "the user";
@@ -245,7 +261,7 @@ Messages:
 [ME] [[User] in #engineering at 11:05 AM]: I'll try to look at it if I get time
 Output: {"commitments":[]}
 
-Return ONLY valid JSON. No markdown fences. No preamble.${tagBlock}${rejectionBlock}${dismissalBlock}`;
+Return ONLY valid JSON. No markdown fences. No preamble.${tagBlock}${rejectionBlock}${dismissalBlock}${memoryBlock}`;
 }
 
 function buildUserMessage(
@@ -647,6 +663,12 @@ export async function extractCommitments(
       }
 
       newCount++;
+
+      // Non-blocking people extraction
+      extractPeopleFromCommitment({
+        conversation_messages: conversationMessages,
+        context: commitment.context,
+      } as Commitment).catch(() => {});
 
       if (commitment.urgency === "high") {
         chrome.notifications.create({

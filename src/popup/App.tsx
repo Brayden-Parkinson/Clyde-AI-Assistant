@@ -16,6 +16,11 @@ import {
   DEMO_BRIEFS,
   DEMO_DECISION_LOG,
   DEMO_TAGS,
+  DEMO_MEMORIES,
+  DEMO_PATTERNS,
+  DEMO_DIGESTS,
+  DEMO_OKRS,
+  DEMO_OKR_LINKS,
 } from "@shared/demo-data";
 import { CommitmentCard } from "./components/CommitmentCard";
 import { KanbanBoard } from "./components/KanbanBoard";
@@ -27,6 +32,11 @@ import { SmartTagsModal } from "./components/SmartTagsModal";
 import { SetupWizard } from "./components/SetupWizard";
 import { SettingsPanel } from "../options/Options";
 import { ClydeChat } from "./components/ClydeChat";
+import { DailyPlanner } from "./components/DailyPlanner";
+import { MemoryPanel } from "./components/MemoryPanel";
+import { InsightsPanel } from "./components/InsightsPanel";
+import { OKRPanel } from "./components/OKRPanel";
+import { PeoplePanel } from "./components/PeoplePanel";
 import {
   IconSettings, IconWarning, IconX, IconRefresh, IconLoader, IconCheck,
   IconBoard, IconList, IconSun, IconChevronRight, IconChevronLeft,
@@ -34,7 +44,7 @@ import {
   IconSearch, InlineIcon, IconChat, IconPeople,
 } from "./components/Icons";
 
-type ViewMode = "list" | "board" | "brief" | "devlog" | "settings" | "chat" | "people";
+type ViewMode = "list" | "board" | "brief" | "devlog" | "settings" | "chat" | "people" | "memory" | "insights" | "okrs";
 
 // ─── Display settings (persisted in chrome.storage.local) ───
 
@@ -1573,9 +1583,12 @@ function LeftNav({
         <div style={{ flex: 1, paddingTop: 10, display: "flex", flexDirection: "column", gap: 2 }}>
           <NavIcon icon={<IconBoard size={14} />} label="Board" active={viewMode === "board"} onClick={() => setViewMode("board")} />
           <NavIcon icon={<IconList size={14} />} label="List" active={viewMode === "list"} onClick={() => setViewMode("list")} />
-          <NavIcon icon={<IconSun size={14} />} label="Brief" active={viewMode === "brief"} onClick={() => setViewMode("brief")} />
+          <NavIcon icon={<IconSun size={14} />} label="Planner" active={viewMode === "brief"} onClick={() => setViewMode("brief")} />
           <NavIcon icon={<IconChat size={14} />} label="Chat" active={viewMode === "chat"} onClick={() => setViewMode("chat")} />
           <NavIcon icon={<IconPeople size={14} />} label="People" active={viewMode === "people"} onClick={() => setViewMode("people")} />
+          <NavIcon icon={"M"} label="Memory" active={viewMode === "memory"} onClick={() => setViewMode("memory")} />
+          <NavIcon icon={"I"} label="Insights" active={viewMode === "insights"} onClick={() => setViewMode("insights")} />
+          <NavIcon icon={"O"} label="OKRs" active={viewMode === "okrs"} onClick={() => setViewMode("okrs")} />
           {developerMode && (
             <NavIcon icon={"</>"} label="Dev Log" active={viewMode === "devlog"} onClick={() => setViewMode("devlog")} />
           )}
@@ -1675,6 +1688,10 @@ function LeftNav({
         <NavItem label="Planner" active={viewMode === "brief"} onClick={() => setViewMode("brief")} />
         <NavItem label="Chat" active={viewMode === "chat"} onClick={() => setViewMode("chat")} />
         <NavItem label="People" active={viewMode === "people"} onClick={() => setViewMode("people")} />
+        <NavSection label="Intelligence" />
+        <NavItem label="Memory" active={viewMode === "memory"} onClick={() => setViewMode("memory")} />
+        <NavItem label="Insights" active={viewMode === "insights"} onClick={() => setViewMode("insights")} />
+        <NavItem label="OKRs" active={viewMode === "okrs"} onClick={() => setViewMode("okrs")} />
         {developerMode && (
           <NavItem label="Dev Log" active={viewMode === "devlog"} onClick={() => setViewMode("devlog")} />
         )}
@@ -2248,6 +2265,7 @@ export default function App() {
           <div style={(() => {
             const isFullWidth = viewMode === "board" || viewMode === "devlog"
               || viewMode === "brief" || viewMode === "chat" || viewMode === "people"
+              || viewMode === "memory" || viewMode === "insights" || viewMode === "okrs"
               || (viewMode === "list" && isWide);
             const needsBoardPadding = viewMode === "board" || viewMode === "devlog";
             return {
@@ -2365,28 +2383,37 @@ export default function App() {
               </div>
             )}
 
-            {/* Brief view */}
+            {/* Daily Planner view */}
             {viewMode === "brief" && (
-              <BriefView commitments={commitments} onCalendar={onCalendar} onDone={onDone} demoMode={demoMode} demoBriefs={demoMode ? DEMO_BRIEFS : undefined} />
+              <DailyPlanner commitments={commitments} demoMode={demoMode} showToast={showToast} />
             )}
 
             {/* Dev Log view */}
             {viewMode === "devlog" && <DevLogView demoMode={demoMode} demoEntries={demoMode ? DEMO_DECISION_LOG : undefined} />}
 
-            {/* Chat view (full-width) — placeholder until Step 5 */}
+            {/* Chat full-view */}
             {viewMode === "chat" && (
-              <div style={{ padding: "40px 24px", textAlign: "center", color: OS.muted, fontFamily: OS.font }}>
-                <IconChat size={32} />
-                <p style={{ marginTop: 12, fontSize: 15 }}>Chat view coming soon</p>
-              </div>
+              <ClydeChat fullView={true} showToast={showToast} sidePanelOpen={false} proactiveMessage={null} onProactiveHandled={() => {}} demoMode={demoMode} hasApiKey={hasApiKey === true} />
             )}
 
-            {/* People view — placeholder until Step 3 */}
+            {/* People view */}
             {viewMode === "people" && (
-              <div style={{ padding: "40px 24px", textAlign: "center", color: OS.muted, fontFamily: OS.font }}>
-                <IconPeople size={32} />
-                <p style={{ marginTop: 12, fontSize: 15 }}>People view coming soon</p>
-              </div>
+              <PeoplePanel demoMode={demoMode} showToast={showToast} />
+            )}
+
+            {/* Memory view */}
+            {viewMode === "memory" && (
+              <MemoryPanel demoMode={demoMode} demoMemories={demoMode ? DEMO_MEMORIES : undefined} />
+            )}
+
+            {/* Insights view */}
+            {viewMode === "insights" && (
+              <InsightsPanel demoMode={demoMode} demoPatterns={demoMode ? DEMO_PATTERNS : undefined} demoDigests={demoMode ? DEMO_DIGESTS : undefined} />
+            )}
+
+            {/* OKRs view */}
+            {viewMode === "okrs" && (
+              <OKRPanel demoMode={demoMode} demoOKRs={demoMode ? DEMO_OKRS : undefined} demoLinks={demoMode ? DEMO_OKR_LINKS : undefined} />
             )}
 
             {/* Settings view */}

@@ -17,6 +17,17 @@ import type {
   ChatSession,
   ChatMessageRecord,
   DailyReview,
+  MemoryEntry,
+  WorkPattern,
+  WeeklyDigest,
+  OKR,
+  CommitmentOKRLink,
+  SyncEnvelope,
+  ActionProposal,
+  DraftMessage,
+  FollowUpRule,
+  ExternalIntegration,
+  ExternalTaskLink,
 } from "./types";
 
 class ClydeDB extends Dexie {
@@ -37,6 +48,17 @@ class ClydeDB extends Dexie {
   chat_sessions!: EntityTable<ChatSession, "id">;
   chat_messages!: EntityTable<ChatMessageRecord, "id">;
   daily_reviews!: EntityTable<DailyReview, "id">;
+  memories!: EntityTable<MemoryEntry, "id">;
+  work_patterns!: EntityTable<WorkPattern, "id">;
+  weekly_digests!: EntityTable<WeeklyDigest, "id">;
+  okrs!: EntityTable<OKR, "id">;
+  commitment_okr_links!: EntityTable<CommitmentOKRLink, "id">;
+  sync_outbox!: EntityTable<SyncEnvelope, "id">;
+  action_proposals!: EntityTable<ActionProposal, "id">;
+  drafts!: EntityTable<DraftMessage, "id">;
+  follow_up_rules!: EntityTable<FollowUpRule, "id">;
+  integrations!: EntityTable<ExternalIntegration, "id">;
+  external_task_links!: EntityTable<ExternalTaskLink, "id">;
 
   constructor() {
     super("CommitmentTracker");
@@ -161,6 +183,33 @@ class ClydeDB extends Dexie {
       chat_sessions: "++id, createdAt, updatedAt",
       chat_messages: "++id, sessionId, role, createdAt",
       daily_reviews: "++id, &date, createdAt",
+    });
+
+    // Phase 2: Action execution framework — proposals, drafts, follow-up rules
+    this.version(12).stores({
+      action_proposals: "++id, commitmentId, type, status, source, createdAt",
+      drafts: "++id, commitmentId, proposalId, platform, status, createdAt",
+      follow_up_rules: "++id, commitmentId, status, checkAt, createdAt",
+    });
+
+    // Phase 2: External integrations — Linear etc.
+    this.version(13).stores({
+      integrations: "++id, &service, status, createdAt",
+      external_task_links: "++id, commitmentId, service, externalId, createdAt",
+    });
+
+    // Phase 3: Long-term memory + work patterns + weekly digests
+    this.version(14).stores({
+      memories: "++id, category, importance, source, lastReinforced, createdAt",
+      work_patterns: "++id, type, sentiment, detectedWeek, createdAt",
+      weekly_digests: "++id, weekStart, createdAt",
+    });
+
+    // Phase 3: OKRs + commitment-OKR links + sync outbox
+    this.version(15).stores({
+      okrs: "++id, period, rank, active, createdAt",
+      commitment_okr_links: "++id, commitmentId, okrId, createdAt",
+      sync_outbox: "++id, table, timestamp",
     });
   }
 }

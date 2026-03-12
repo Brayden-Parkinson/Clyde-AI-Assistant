@@ -1,8 +1,11 @@
 import { db } from "@shared/db";
 import { CLAUDE_MODEL_FAST, API_TIMEOUT_MS, API_MAX_RETRIES, API_RETRY_DELAY_MS } from "@shared/constants";
-import type { MorningBrief, BriefPriority, BriefSuggestedMove } from "@shared/types";
+import type { MorningBrief, BriefPriority, BriefSuggestedMove, CalendarEvent as GoogleCalendarEvent } from "@shared/types";
 import { logStatus } from "@shared/status";
 import { getUserProfile } from "@shared/user-profile";
+import { getCachedEvents } from "./google-calendar";
+import { isGoogleConnected } from "./google-auth";
+import { getMemoriesForPrompt } from "./memory-engine";
 
 // ─── ICS Parsing ───
 
@@ -73,6 +76,36 @@ function parseIcsEvents(icsText: string): CalendarEvent[] {
 async function fetchCalendarEvents(): Promise<CalendarEvent[]> {
   const result = await chrome.storage.local.get(["calendarIcsUrl", "calendarEnabled"]);
   if (result.calendarEnabled === false) return [];
+
+  // Try Google Calendar first
+  try {
+    const connected = await isGoogleConnected();
+    if (connected) {
+      const today = new Date().toISOString().slice(0, 10);
+      const googleEvents = await getCachedEvents(today);
+      if (googleEvents.length > 0) {
+        return googleEvents.map((e: GoogleCalendarEvent) => {
+          if (e.isAllDay) {
+            return { title: e.title, start: "All day", end: "All day" };
+          }
+          const startDate = new Date(e.startTime);
+          const endDate = new Date(e.endTime);
+          const fmt = (d: Date) => {
+            const h = d.getHours();
+            const m = d.getMinutes().toString().padStart(2, "0");
+            const period = h >= 12 ? "PM" : "AM";
+            const h12 = h % 12 || 12;
+            return `${h12}:${m} ${period}`;
+          };
+          return { title: e.title, start: fmt(startDate), end: fmt(endDate) };
+        });
+      }
+    }
+  } catch (err) {
+    await logStatus("warn", "morning-brief", `Google Calendar read failed, falling back to ICS: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  // Fall back to ICS URL
   const icsUrl = result.calendarIcsUrl as string | undefined;
   if (!icsUrl) return [];
 
@@ -228,6 +261,78 @@ export async function generateMorningBrief(force = false): Promise<void> {
       getBoardContext(),
     ]);
 
+    // Load people context for calendar attendees
+    const topPeople = await db.people.orderBy("commitmentCount").reverse().limit(10).toArray();
+    const peopleByName = new Map(topPeople.map(p => [p.name.toLowerCase(), p]));
+
+    // Try to get Google Calendar events for attendee matching
+    let attendeeContext = "";
+    try {
+      const connected = await isGoogleConnected();
+      if (connected) {
+        const today = new Date().toISOString().slice(0, 10);
+        const googleEvents = await getCachedEvents(today);
+        const contactNotes: string[] = [];
+
+        for (const event of googleEvents) {
+          for (const attendee of event.attendees) {
+            const nameLower = attendee.toLowerCase();
+            // Check both full name and first name
+            const person = peopleByName.get(nameLower)
+              ?? [...peopleByName.values()].find(p =>
+                nameLower.includes(p.name.toLowerCase()) || p.name.toLowerCase().includes(nameLower)
+              );
+            if (person) {
+              const openCount = person.commitmentCount;
+              const rel = person.relationship ? ` (${person.relationship})` : "";
+              contactNotes.push(`- ${person.name}${rel} is in "${event.title}" — ${openCount} open commitment${openCount !== 1 ? "s" : ""} with them`);
+            }
+          }
+        }
+
+        if (contactNotes.length > 0) {
+          attendeeContext = `\n\nKey contacts in today's meetings:\n${[...new Set(contactNotes)].join("\n")}`;
+        }
+      }
+    } catch {
+      // Non-critical — skip people context if it fails
+    }
+
+    // Build Phase 3 context sections: memories, patterns, OKRs
+    let memoryContext = "";
+    try {
+      const memories = await getMemoriesForPrompt();
+      if (memories.length > 0) {
+        memoryContext = `\n\nWhat Clyde knows about this person:\n${memories.slice(0, 10).join("\n")}`;
+      }
+    } catch { /* non-critical */ }
+
+    let patternContext = "";
+    try {
+      const recentPatterns = await db.work_patterns
+        .orderBy("createdAt")
+        .reverse()
+        .limit(5)
+        .toArray();
+      if (recentPatterns.length > 0) {
+        const lines = recentPatterns.map(
+          (p) => `- [${p.type}${p.sentiment === "concerning" ? " ⚠" : ""}] ${p.description}${p.suggestion ? ` → ${p.suggestion}` : ""}`,
+        );
+        patternContext = `\n\nRecent work patterns:\n${lines.join("\n")}`;
+      }
+    } catch { /* non-critical */ }
+
+    let okrContext = "";
+    try {
+      const activeOkrs = await db.okrs.toCollection().filter((o) => o.active).toArray();
+      if (activeOkrs.length > 0) {
+        const lines = activeOkrs
+          .sort((a, b) => a.rank - b.rank)
+          .map((o) => `- [Rank ${o.rank}] ${o.objective} (${o.alignedCount} aligned commitments)`);
+        okrContext = `\n\nStated OKRs/Priorities:\n${lines.join("\n")}`;
+      }
+    } catch { /* non-critical */ }
+
     const now = new Date();
     const dateStr = now.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
     const timeStr = now.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
@@ -284,7 +389,7 @@ Here is ${briefUserName}'s calendar for today:
 ${calendarSection}
 
 Here is their Kanban board — the column a commitment is in reflects the user's own prioritization:
-${boardSection}
+${boardSection}${attendeeContext}${memoryContext}${patternContext}${okrContext}
 
 IMPORTANT CONTEXT ABOUT COLUMNS:
 - Items in "In Progress" or columns like "Do Next" are what the user considers active work — prioritize these.
