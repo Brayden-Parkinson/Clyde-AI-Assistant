@@ -14,6 +14,9 @@ import {
   CALENDAR_CACHE_TTL_MS,
   CHAT_HISTORY_TTL_MS,
   DAILY_REVIEW_TTL_MS,
+  ACTION_PROPOSAL_TTL_MS,
+  DRAFT_TTL_MS,
+  FOLLOW_UP_RULE_TTL_MS,
 } from "@shared/constants";
 import type { SlackMessagePayload, GmailMessagePayload } from "@shared/types";
 import { logStatus, updateStatus } from "@shared/status";
@@ -123,6 +126,27 @@ async function runCleanup(): Promise<void> {
   // Daily reviews: 90 days
   const reviewCutoff = new Date(now - DAILY_REVIEW_TTL_MS).toISOString();
   await db.daily_reviews.where("createdAt").below(reviewCutoff).delete();
+
+  // Phase 2: ActionProposals — 30 days for completed/dismissed
+  const proposalCutoff = new Date(now - ACTION_PROPOSAL_TTL_MS).toISOString();
+  await db.action_proposals
+    .where('status').anyOf('completed', 'dismissed')
+    .filter((p) => p.updatedAt < proposalCutoff)
+    .delete();
+
+  // Phase 2: Drafts — 7 days for sent/discarded
+  const draftCutoff = new Date(now - DRAFT_TTL_MS).toISOString();
+  await db.drafts
+    .where('status').anyOf('sent', 'discarded')
+    .filter((d) => d.updatedAt < draftCutoff)
+    .delete();
+
+  // Phase 2: Follow-up rules — 90 days for completed
+  const followUpCutoff = new Date(now - FOLLOW_UP_RULE_TTL_MS).toISOString();
+  await db.follow_up_rules
+    .where('status').equals('completed')
+    .filter((r) => r.createdAt < followUpCutoff)
+    .delete();
 
   await logStatus("info", "worker", "Daily cleanup completed");
 
