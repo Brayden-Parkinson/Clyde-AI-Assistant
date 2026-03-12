@@ -263,6 +263,60 @@ const TOOLS: ToolDefinition[] = [
       properties: {},
     },
   },
+  {
+    name: "draft_message",
+    description: "Draft a Slack message or email on the user's behalf. Creates a draft for review — never sends automatically. Use when the user wants to follow up, send an update, or reply to someone.",
+    input_schema: {
+      type: "object",
+      properties: {
+        commitment_id: { type: "number", description: "ID of the related commitment for context" },
+        platform: { type: "string", enum: ["slack", "gmail"], description: "Where to send" },
+        recipient: { type: "string", description: "Slack channel (e.g. #engineering) or email address" },
+        subject: { type: "string", description: "Email subject line — Gmail only, omit for Slack" },
+        tone: { type: "string", enum: ["professional", "casual", "brief", "apologetic"], description: "Draft tone. Default professional." },
+        instruction: { type: "string", description: "Specific guidance for what to say" },
+      },
+      required: ["commitment_id", "platform", "recipient"],
+    },
+  },
+  {
+    name: "create_follow_up",
+    description: "Set a follow-up reminder for a commitment. Clyde will proactively nudge the user if there's no progress.",
+    input_schema: {
+      type: "object",
+      properties: {
+        commitment_id: { type: "number", description: "ID of the commitment to track" },
+        check_at: { type: "string", description: "ISO datetime for when to check. Defaults to 48 hours from now." },
+      },
+      required: ["commitment_id"],
+    },
+  },
+  {
+    name: "block_time",
+    description: "Block time on Google Calendar for working on a commitment.",
+    input_schema: {
+      type: "object",
+      properties: {
+        commitment_id: { type: "number", description: "Commitment to block time for" },
+        duration_minutes: { type: "number", description: "How many minutes to block. Default 60." },
+        deadline: { type: "string", description: "ISO datetime — if provided, blocks time just before deadline" },
+      },
+      required: ["commitment_id"],
+    },
+  },
+  {
+    name: "create_external_task",
+    description: "Push a commitment to Linear as an issue.",
+    input_schema: {
+      type: "object",
+      properties: {
+        commitment_id: { type: "number", description: "Commitment to push" },
+        priority: { type: "string", enum: ["urgent", "high", "medium", "low", "none"], description: "Issue priority. Default medium." },
+        title_override: { type: "string", description: "Custom title — uses commitment text by default" },
+      },
+      required: ["commitment_id"],
+    },
+  },
 ];
 
 // ─── Tool Executors ───
@@ -688,7 +742,99 @@ async function executeCheckAlignment(): Promise<string> {
   return lines.join("\n");
 }
 
-async function executeTool(name: string, input: Record<string, unknown>): Promise<string> {
+// ─── Phase 2 Tool Executors ───
+
+async function executeDraftMessage(
+  input: { commitment_id: number; platform: string; recipient: string; subject?: string; tone?: string; instruction?: string },
+  onNavigateToDraft?: (draftId: number) => void,
+): Promise<string> {
+  const result = await chrome.runtime.sendMessage({
+    type: "GENERATE_DRAFT",
+    input: {
+      commitmentId: input.commitment_id,
+      proposalId: null,
+      platform: input.platform,
+      recipient: input.recipient,
+      subject: input.subject ?? null,
+      tone: input.tone ?? "professional",
+      instruction: input.instruction ?? null,
+    },
+  }) as { ok: boolean; draftId?: number; error?: string };
+
+  if (!result.ok) return JSON.stringify({ error: result.error ?? "Draft generation failed" });
+  if (result.draftId && onNavigateToDraft) {
+    onNavigateToDraft(result.draftId);
+  }
+  return JSON.stringify({ success: true, draftId: result.draftId, message: "Draft created — opening editor" });
+}
+
+async function executeCreateFollowUp(
+  input: { commitment_id: number; check_at?: string },
+): Promise<string> {
+  const result = await chrome.runtime.sendMessage({
+    type: "SET_FOLLOW_UP",
+    commitmentId: input.commitment_id,
+    checkAt: input.check_at,
+  }) as { ok: boolean; ruleId?: number; error?: string };
+
+  if (!result.ok) return JSON.stringify({ error: result.error ?? "Follow-up creation failed" });
+  return JSON.stringify({ success: true, ruleId: result.ruleId, message: "Follow-up scheduled" });
+}
+
+async function executeBlockTime(
+  input: { commitment_id: number; duration_minutes?: number; deadline?: string },
+): Promise<string> {
+  const commitment = await db.commitments.get(input.commitment_id);
+  if (!commitment) return JSON.stringify({ error: "Commitment not found" });
+
+  const { createProposal } = await import("../../background/action-executor");
+  const proposalId = await createProposal(
+    input.commitment_id,
+    "block_time",
+    `Block ${input.duration_minutes ?? 60} min for "${commitment.text.slice(0, 40)}"`,
+    {
+      commitmentId: input.commitment_id,
+      commitmentText: commitment.text,
+      deadline: input.deadline ?? commitment.deadline ?? null,
+      durationMinutes: input.duration_minutes ?? 60,
+    },
+    "clyde_chat",
+  );
+  return JSON.stringify({ success: true, proposalId, message: "Time block queued — approve in Actions queue" });
+}
+
+async function executeCreateExternalTask(
+  input: { commitment_id: number; priority?: string; title_override?: string },
+): Promise<string> {
+  const commitment = await db.commitments.get(input.commitment_id);
+  if (!commitment) return JSON.stringify({ error: "Commitment not found" });
+
+  const priorityMap: Record<string, 0 | 1 | 2 | 3 | 4> = {
+    urgent: 1, high: 2, medium: 3, low: 4, none: 0,
+  };
+
+  const stored = await chrome.storage.local.get("linearTeamId");
+  const teamId = (stored.linearTeamId as string | undefined) ?? "";
+
+  const { createProposal } = await import("../../background/action-executor");
+  const proposalId = await createProposal(
+    input.commitment_id,
+    "create_linear_task",
+    `Push "${(input.title_override ?? commitment.text).slice(0, 50)}" to Linear`,
+    {
+      title: input.title_override ?? commitment.text,
+      description: commitment.context_summary ?? commitment.original_quote,
+      teamId,
+      priority: priorityMap[input.priority ?? "medium"] ?? 3,
+    },
+    "clyde_chat",
+  );
+  return JSON.stringify({ success: true, proposalId, message: "Linear task queued — approve in Actions queue" });
+}
+
+// ─── Tool Dispatcher ───
+
+async function executeTool(name: string, input: Record<string, unknown>, callbacks?: { onNavigateToDraft?: (draftId: number) => void }): Promise<string> {
   switch (name) {
     case "create_commitment":
       return executeCreateCommitment(input as Parameters<typeof executeCreateCommitment>[0]);
@@ -724,6 +870,18 @@ async function executeTool(name: string, input: Record<string, unknown>): Promis
       return executeSetOKR(input as { objective: string; key_results: string[]; period?: string; rank?: number });
     case "check_alignment":
       return executeCheckAlignment();
+    // Phase 2 tools
+    case "draft_message":
+      return executeDraftMessage(
+        input as { commitment_id: number; platform: string; recipient: string; subject?: string; tone?: string; instruction?: string },
+        callbacks?.onNavigateToDraft,
+      );
+    case "create_follow_up":
+      return executeCreateFollowUp(input as { commitment_id: number; check_at?: string });
+    case "block_time":
+      return executeBlockTime(input as { commitment_id: number; duration_minutes?: number; deadline?: string });
+    case "create_external_task":
+      return executeCreateExternalTask(input as { commitment_id: number; priority?: string; title_override?: string });
     default:
       return JSON.stringify({ error: `Unknown tool: ${name}` });
   }
@@ -851,6 +1009,7 @@ async function callClaude(
 // Run the full tool-use loop: call Claude, execute tools, call Claude again with results
 async function runConversation(
   chatHistory: Array<{ role: string; content: string | object[] }>,
+  callbacks?: { onNavigateToDraft?: (draftId: number) => void },
 ): Promise<{ text: string; foundIds: number[] }> {
   const messages = [...chatHistory];
   let finalText = "";
@@ -876,7 +1035,7 @@ async function runConversation(
     // Execute all tools and collect results + extract commitment IDs
     const toolResults: object[] = [];
     for (const tc of toolCalls) {
-      const result = await executeTool(tc.name, tc.input);
+      const result = await executeTool(tc.name, tc.input, callbacks);
       toolResults.push({ type: "tool_result", tool_use_id: tc.id, content: result });
       // Extract IDs from any tool result that returns commitment arrays
       try {
@@ -1102,7 +1261,7 @@ function useVoice(onResult: (transcript: string) => void, onInterim?: (transcrip
 
 // ─── Component ───
 
-export function ClydeChat({ fullView, showToast, sidePanelOpen, proactiveMessage, onProactiveHandled, demoMode, hasApiKey }: {
+export function ClydeChat({ fullView, showToast, sidePanelOpen, proactiveMessage, onProactiveHandled, demoMode, hasApiKey, onNavigateToDraft }: {
   fullView?: boolean;
   showToast: (msg: string, variant?: "success" | "error" | "warning" | "info") => void;
   sidePanelOpen?: boolean;
@@ -1110,6 +1269,8 @@ export function ClydeChat({ fullView, showToast, sidePanelOpen, proactiveMessage
   onProactiveHandled?: () => void;
   demoMode?: boolean;
   hasApiKey?: boolean;
+  /** Called when Clyde drafts a message — navigates to DraftComposer */
+  onNavigateToDraft?: (draftId: number) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -1180,7 +1341,7 @@ export function ClydeChat({ fullView, showToast, sidePanelOpen, proactiveMessage
         const apiMessages: Array<{ role: string; content: string | object[] }> = [
           { role: "user", content: `[Context]\n${contextSnapshot}\n\n[Proactive suggestion prompt — respond as if you're proactively checking in, not replying to a user message]\n${prompt}` },
         ];
-        const { text: response, foundIds } = await runConversation(apiMessages);
+        const { text: response, foundIds } = await runConversation(apiMessages, { onNavigateToDraft });
 
         let snapshots: CommitmentSnapshot[] | undefined;
         const uniqueIds = [...new Set(foundIds)];
@@ -1245,7 +1406,7 @@ export function ClydeChat({ fullView, showToast, sidePanelOpen, proactiveMessage
           apiMessages.push({ role: recentMessages[i].role, content: recentMessages[i].content });
         }
 
-        const { text: response, foundIds } = await runConversation(apiMessages);
+        const { text: response, foundIds } = await runConversation(apiMessages, { onNavigateToDraft });
 
         // Look up commitments from IDs returned by tool calls
         let snapshots: CommitmentSnapshot[] | undefined;
@@ -1302,7 +1463,7 @@ export function ClydeChat({ fullView, showToast, sidePanelOpen, proactiveMessage
             content: `[Context]\n${contextSnapshot}\n\n[Voice dictation — create a task from this]\n${transcript}`,
           },
         ];
-        const { text: response } = await runConversation(apiMessages);
+        const { text: response } = await runConversation(apiMessages, { onNavigateToDraft });
         // Extract the created task text for the toast
         const shortText = transcript.length > 40 ? transcript.slice(0, 40) + "..." : transcript;
         showToast(`Created: ${shortText}`, "success");

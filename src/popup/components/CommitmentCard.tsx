@@ -67,6 +67,12 @@ interface CommitmentCardProps {
   onSlack: (commitment: Commitment) => void;
   onReminder: (id: number) => void;
   onMetaUpdate?: (id: number, changes: MetaUpdate) => void;
+  /** Phase 2: called when user clicks "Follow Up" — creates a follow-up rule */
+  onFollowUp?: (id: number) => void;
+  /** Phase 2: called when user clicks "Push to Linear" */
+  onPushLinear?: (id: number) => void;
+  /** Phase 2: whether a follow-up rule is already active for this commitment */
+  hasFollowUpRule?: boolean;
 }
 
 export function CommitmentCard({
@@ -89,6 +95,9 @@ export function CommitmentCard({
   onSlack,
   onReminder,
   onMetaUpdate,
+  onFollowUp,
+  onPushLinear,
+  hasFollowUpRule = false,
 }: CommitmentCardProps) {
   const [hovered, setHovered] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
@@ -397,6 +406,30 @@ export function CommitmentCard({
               variant="danger"
               shortcut="N"
             />
+            {/* Phase 2: Follow-Up */}
+            {onFollowUp && (
+              <ActionButton
+                icon={<span style={{ fontSize: 12 }}>⏰</span>}
+                label={hasFollowUpRule ? "Watching" : "Follow Up"}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (item.id != null && !hasFollowUpRule) onFollowUp(item.id);
+                }}
+                variant={hasFollowUpRule ? "muted" : "default"}
+              />
+            )}
+            {/* Phase 2: Push to Linear */}
+            {onPushLinear && (
+              <ActionButton
+                icon={<span style={{ fontSize: 11, fontWeight: 700 }}>L</span>}
+                label="Linear"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (item.id != null) onPushLinear(item.id);
+                }}
+                variant="default"
+              />
+            )}
           </div>
 
           {/* View context link */}

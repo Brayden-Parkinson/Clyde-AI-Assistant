@@ -1,0 +1,15 @@
+import{d as c,c as p,l as u}from"./tag-backfill-B2-KxdR1.js";import{A as f,b as g,c as w,d as h}from"./constants-BMw998OE.js";async function y(e,t){var a,m;const o=(await chrome.storage.local.get("anthropicApiKey")).anthropicApiKey;if(!o)throw new Error("No API key configured");for(let n=0;n<=f;n++)try{const r=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json","x-api-key":o,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},body:JSON.stringify({model:w,max_tokens:1024,system:e,messages:[{role:"user",content:t}]}),signal:AbortSignal.timeout(g)});if(r.status===429&&n<f){await new Promise(s=>setTimeout(s,h*(n+1)));continue}if(!r.ok){const s=await r.text();throw new Error(`Claude API error (${r.status}): ${s.slice(0,200)}`)}const i=(m=(a=(await r.json()).content)==null?void 0:a.find(s=>s.type==="text"))==null?void 0:m.text;if(!i)throw new Error("Empty Claude response");return i.trim()}catch(r){if(r instanceof DOMException&&r.name==="TimeoutError"&&n<f)continue;throw r}throw new Error("Claude API failed after all retries")}async function I(e){const t=await c.commitments.get(e.commitmentId);if(!t)throw new Error(`Commitment ${e.commitmentId} not found`);const o=(await p()).userName||"me",a=t.context_summary?`Context: ${t.context_summary}`:`Original quote: "${t.original_quote}"`,m={professional:"Clear, businesslike, respectful. No slang.",casual:"Friendly and direct. Conversational tone. Short sentences.",brief:"3 sentences maximum. Get to the point immediately.",apologetic:"Acknowledge the delay or issue. Empathetic but still action-oriented."},n=e.platform==="slack"?"Slack message: no formal greeting needed, conversational, use line breaks for readability.":"Email: include brief professional greeting and sign-off. Use proper paragraphs.",r=`You are drafting a message on behalf of ${o}.
+
+COMMITMENT TO ADDRESS:
+${t.text}
+${a}
+
+RECIPIENT: ${e.recipient}
+PLATFORM: ${e.platform} (${n})
+TONE: ${e.tone} — ${m[e.tone]}
+${e.instruction?`
+USER INSTRUCTION: ${e.instruction}`:""}
+
+Write a message that directly addresses this commitment. Be genuine, specific, and appropriately brief.
+
+Return ONLY the message body. No preamble, no quotes, no explanations.`,d=await y(r,"Generate the draft message now.");if(!d)throw new Error("Claude returned empty draft");const i=new Date().toISOString(),s=await c.drafts.add({commitmentId:e.commitmentId,proposalId:e.proposalId,platform:e.platform,recipient:e.recipient,subject:e.subject,body:d,tone:e.tone,status:"pending",createdAt:i,updatedAt:i});return await u("success","worker",`Draft generated for "${t.text.slice(0,40)}..."`),{draftId:s,body:d}}async function A(e,t,l){const o=await c.drafts.get(e);if(!o)throw new Error("Draft not found");const a=await I({commitmentId:o.commitmentId,proposalId:o.proposalId,platform:o.platform,recipient:o.recipient,subject:o.subject,tone:t,instruction:l});return await c.drafts.update(e,{body:a.body,tone:t,updatedAt:new Date().toISOString()}),a.draftId!==e&&await c.drafts.delete(a.draftId),a.body}export{I as generateDraft,A as regenerateDraft};

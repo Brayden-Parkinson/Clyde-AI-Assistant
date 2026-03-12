@@ -21,6 +21,7 @@ import {
   DEMO_DIGESTS,
   DEMO_OKRS,
   DEMO_OKR_LINKS,
+  DEMO_ACTION_PROPOSALS,
 } from "@shared/demo-data";
 import { CommitmentCard } from "./components/CommitmentCard";
 import { KanbanBoard } from "./components/KanbanBoard";
@@ -36,6 +37,8 @@ import { DailyPlanner } from "./components/DailyPlanner";
 import { MemoryPanel } from "./components/MemoryPanel";
 import { InsightsPanel } from "./components/InsightsPanel";
 import { OKRPanel } from "./components/OKRPanel";
+import { ActionQueue, usePendingProposalCount } from "./components/ActionQueue";
+import { DraftComposer } from "./components/DraftComposer";
 import { PeoplePanel } from "./components/PeoplePanel";
 import {
   IconSettings, IconWarning, IconX, IconRefresh, IconLoader, IconCheck,
@@ -44,7 +47,7 @@ import {
   IconSearch, InlineIcon, IconChat, IconPeople,
 } from "./components/Icons";
 
-type ViewMode = "list" | "board" | "brief" | "devlog" | "settings" | "chat" | "people" | "memory" | "insights" | "okrs";
+type ViewMode = "list" | "board" | "brief" | "devlog" | "settings" | "chat" | "people" | "memory" | "insights" | "okrs" | "queue" | "draft";
 
 // ─── Display settings (persisted in chrome.storage.local) ───
 
@@ -1485,6 +1488,7 @@ function LeftNav({
   const [showNavSettings, setShowNavSettings] = useState(false);
   const settingsBtnRef = useRef<HTMLButtonElement>(null) as React.RefObject<HTMLButtonElement>;
   const settingsIconRef = useRef<HTMLButtonElement>(null) as React.RefObject<HTMLButtonElement>;
+  const pendingProposalCount = usePendingProposalCount(demoMode, 0);
 
   // Compute popover position from anchor button rect (fixed positioning to avoid overflow clipping)
   const getPopoverStyle = (anchor: React.RefObject<HTMLElement>, mode: "expanded" | "collapsed"): React.CSSProperties => {
@@ -1585,6 +1589,7 @@ function LeftNav({
           <NavIcon icon={<IconList size={14} />} label="List" active={viewMode === "list"} onClick={() => setViewMode("list")} />
           <NavIcon icon={<IconSun size={14} />} label="Planner" active={viewMode === "brief"} onClick={() => setViewMode("brief")} />
           <NavIcon icon={<IconChat size={14} />} label="Chat" active={viewMode === "chat"} onClick={() => setViewMode("chat")} />
+          <NavIcon icon={pendingProposalCount > 0 ? String(pendingProposalCount) : String.fromCodePoint(0x2197)} label="Actions" active={viewMode === "queue" || viewMode === "draft"} onClick={() => setViewMode("queue")} />
           <NavIcon icon={<IconPeople size={14} />} label="People" active={viewMode === "people"} onClick={() => setViewMode("people")} />
           <NavIcon icon={"M"} label="Memory" active={viewMode === "memory"} onClick={() => setViewMode("memory")} />
           <NavIcon icon={"I"} label="Insights" active={viewMode === "insights"} onClick={() => setViewMode("insights")} />
@@ -1687,6 +1692,7 @@ function LeftNav({
         <NavItem label="List" active={viewMode === "list"} onClick={() => setViewMode("list")} />
         <NavItem label="Planner" active={viewMode === "brief"} onClick={() => setViewMode("brief")} />
         <NavItem label="Chat" active={viewMode === "chat"} onClick={() => setViewMode("chat")} />
+        <NavItem label={pendingProposalCount > 0 ? `Actions (${pendingProposalCount})` : "Actions"} active={viewMode === "queue" || viewMode === "draft"} onClick={() => setViewMode("queue")} />
         <NavItem label="People" active={viewMode === "people"} onClick={() => setViewMode("people")} />
         <NavSection label="Intelligence" />
         <NavItem label="Memory" active={viewMode === "memory"} onClick={() => setViewMode("memory")} />
@@ -1776,6 +1782,7 @@ export default function App() {
   const [isWide, setIsWide] = useState(false);
   const isNarrow = !isWide;
   const [viewMode, setViewMode] = useState<ViewMode>("board");
+  const [activeDraftId, setActiveDraftId] = useState<number | null>(null);
   const [developerMode, setDeveloperMode] = useState(false);
   const [demoMode, setDemoMode] = useState(false);
   const [privacyMode, setPrivacyMode] = useState(false);
@@ -1788,6 +1795,7 @@ export default function App() {
   const nav = useNavCollapsed();
 
   const tags = useLiveQuery(() => db.tags.orderBy("name").toArray(), []) ?? [];
+  const pendingProposalCount = usePendingProposalCount(demoMode, demoMode ? DEMO_ACTION_PROPOSALS.filter(p => p.status === "pending").length : 0);
   const [listSelectedTags, setListSelectedTags] = useState<number[]>([]);
   const [boardSelectedTags, setBoardSelectedTags] = useState<number[]>([]);
   const toggleListTag = useCallback((id: number) => {
@@ -2213,6 +2221,7 @@ export default function App() {
                   <option value="board">Board</option>
                   <option value="brief">Brief</option>
                   {developerMode && <option value="devlog">Dev Log</option>}
+                  <option value="queue">Actions{pendingProposalCount > 0 ? ` (${pendingProposalCount})` : ""}</option>
                   <option value="settings">Settings</option>
                 </select>
                 {viewMode !== "settings" && (
@@ -2393,7 +2402,7 @@ export default function App() {
 
             {/* Chat full-view */}
             {viewMode === "chat" && (
-              <ClydeChat fullView={true} showToast={showToast} sidePanelOpen={false} proactiveMessage={null} onProactiveHandled={() => {}} demoMode={demoMode} hasApiKey={hasApiKey === true} />
+              <ClydeChat fullView={true} showToast={showToast} sidePanelOpen={false} proactiveMessage={null} onProactiveHandled={() => {}} demoMode={demoMode} hasApiKey={hasApiKey === true} onNavigateToDraft={(draftId) => { setActiveDraftId(draftId); setViewMode("draft"); }} />
             )}
 
             {/* People view */}
@@ -2414,6 +2423,26 @@ export default function App() {
             {/* OKRs view */}
             {viewMode === "okrs" && (
               <OKRPanel demoMode={demoMode} demoOKRs={demoMode ? DEMO_OKRS : undefined} demoLinks={demoMode ? DEMO_OKR_LINKS : undefined} />
+            )}
+
+            {/* Action Queue view */}
+            {viewMode === "queue" && (
+              <ActionQueue
+                demoMode={demoMode}
+                demoProposals={demoMode ? DEMO_ACTION_PROPOSALS : undefined}
+                onNavigateToDraft={(draftId) => { setActiveDraftId(draftId); setViewMode("draft"); }}
+              />
+            )}
+
+            {/* Draft Composer view */}
+            {viewMode === "draft" && activeDraftId !== null && (
+              <DraftComposer
+                draftId={activeDraftId}
+                demoMode={demoMode}
+                onBack={() => setViewMode("queue")}
+                onSent={() => { setActiveDraftId(null); setViewMode("list"); }}
+                showToast={showToast}
+              />
             )}
 
             {/* Settings view */}

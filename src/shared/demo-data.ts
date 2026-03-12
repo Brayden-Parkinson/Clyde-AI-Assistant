@@ -19,6 +19,10 @@ import type {
   WeeklyDigest,
   OKR,
   CommitmentOKRLink,
+  ActionProposal,
+  DraftMessage,
+  FollowUpRule,
+  ExternalTaskLink,
 } from "./types";
 
 // ─── Date helpers ───
@@ -1175,4 +1179,92 @@ export const DEMO_OKR_LINKS: CommitmentOKRLink[] = [
   { id: -8, commitmentId: -5, okrId: -3, alignment: "directly_supports", source: "ai", createdAt: daysAgo(2) },
   { id: -9, commitmentId: -12, okrId: -3, alignment: "directly_supports", source: "ai", createdAt: daysAgo(3) },
   { id: -10, commitmentId: -8, okrId: -3, alignment: "indirectly_supports", source: "ai", createdAt: daysAgo(2) },
+];
+
+// ─── Phase 2: Demo Action Proposals ───
+
+export const DEMO_ACTION_PROPOSALS: ActionProposal[] = [
+  {
+    id: -1,
+    commitmentId: -1,
+    type: "send_message",
+    status: "pending",
+    description: "Send follow-up to Jordan in #acme-partnership about proposal status",
+    payload: JSON.stringify({ platform: "slack", recipient: "#acme-partnership", subject: null, draftId: -1 }),
+    resultMessage: null,
+    errorMessage: null,
+    source: "follow_up_engine",
+    createdAt: hoursAgo(3),
+    updatedAt: hoursAgo(3),
+  },
+  {
+    id: -2,
+    commitmentId: -3,
+    type: "block_time",
+    status: "pending",
+    description: "Block 1 hour to work on the authentication bug",
+    payload: JSON.stringify({ commitmentId: -3, commitmentText: "Fix the auth bug", deadline: null, durationMinutes: 60 }),
+    resultMessage: null,
+    errorMessage: null,
+    source: "clyde_chat",
+    createdAt: hoursAgo(1),
+    updatedAt: hoursAgo(1),
+  },
+  {
+    id: -3,
+    commitmentId: -4,
+    type: "create_linear_task",
+    status: "completed",
+    description: `Push "Review the security audit" to Linear`,
+    payload: JSON.stringify({ title: "Review security audit", description: "From Clyde", teamId: "ENG", priority: 2 }),
+    resultMessage: "Linear issue created — ENG-1234",
+    errorMessage: null,
+    source: "manual",
+    createdAt: hoursAgo(48),
+    updatedAt: hoursAgo(24),
+  },
+];
+
+// ─── Phase 2: Demo Drafts ───
+
+export const DEMO_DRAFTS: DraftMessage[] = [
+  {
+    id: -1,
+    commitmentId: -1,
+    proposalId: -1,
+    platform: "slack",
+    recipient: "#acme-partnership",
+    subject: null,
+    body: "Hi Jordan — just following up on the revised Acme proposal I sent over last week. Let me know if you need any changes before today's 5pm deadline.",
+    tone: "professional",
+    status: "pending",
+    createdAt: hoursAgo(3),
+    updatedAt: hoursAgo(3),
+  },
+];
+
+// ─── Phase 2: Demo Follow-Up Rules ───
+
+export const DEMO_FOLLOW_UP_RULES: FollowUpRule[] = [
+  {
+    id: -1,
+    commitmentId: -4,
+    checkAt: new Date(Date.now() + 24 * 3600_000).toISOString(),
+    fireCount: 0,
+    status: "active",
+    createdAt: daysAgo(1),
+  },
+];
+
+// ─── Phase 2: Demo External Task Links ───
+
+export const DEMO_EXTERNAL_TASK_LINKS: ExternalTaskLink[] = [
+  {
+    id: -1,
+    commitmentId: -7,
+    service: "linear",
+    externalId: "ENG-1234",
+    externalUrl: "https://linear.app/team/issue/ENG-1234",
+    createdAt: daysAgo(2),
+  },
 ];

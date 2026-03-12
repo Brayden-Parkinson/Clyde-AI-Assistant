@@ -366,6 +366,11 @@ chrome.runtime.onInstalled.addListener(async () => {
     delayInMinutes: 180,
     periodInMinutes: 7 * 24 * 60, // weekly
   });
+  // Phase 2: Follow-up check every 2 hours
+  chrome.alarms.create(ALARMS.FOLLOW_UP_CHECK, {
+    delayInMinutes: 5,
+    periodInMinutes: 120,
+  });
 
   await scheduleMorningDigestAlarm();
   updateBadge();
@@ -420,6 +425,8 @@ chrome.runtime.onStartup.addListener(async () => {
   chrome.alarms.create(ALARMS.MEMORY_EXTRACTION, { delayInMinutes: 60, periodInMinutes: 7 * 24 * 60 });
   chrome.alarms.create(ALARMS.PATTERN_DETECTION, { delayInMinutes: 120, periodInMinutes: 7 * 24 * 60 });
   chrome.alarms.create(ALARMS.WEEKLY_DIGEST, { delayInMinutes: 180, periodInMinutes: 7 * 24 * 60 });
+  // Phase 2: Follow-up check every 2 hours
+  chrome.alarms.create(ALARMS.FOLLOW_UP_CHECK, { delayInMinutes: 5, periodInMinutes: 120 });
   await scheduleMorningDigestAlarm();
 
   initSyncHooks();
@@ -618,6 +625,46 @@ chrome.runtime.onMessage.addListener(
         .then(() => sendResponse({ ok: true }))
         .catch((err) => sendResponse({ ok: false, error: err instanceof Error ? err.message : String(err) }));
       return true;
+    } else if (message.type === "EXECUTE_ACTION") {
+      const { proposalId } = (message as unknown) as { proposalId: number; type: string };
+      import("./action-executor").then(({ executeAction }) => executeAction(proposalId))
+        .then((result) => sendResponse(result))
+        .catch((err) => sendResponse({ ok: false, message: err instanceof Error ? err.message : String(err) }));
+      return true;
+    } else if (message.type === "GENERATE_DRAFT") {
+      const { input } = (message as unknown) as { input: Record<string, unknown>; type: string };
+      import("./draft-generator").then(({ generateDraft }) => generateDraft(input as unknown as Parameters<typeof generateDraft>[0]))
+        .then((result) => sendResponse({ ok: true, ...result }))
+        .catch((err) => sendResponse({ ok: false, error: err instanceof Error ? err.message : String(err) }));
+      return true;
+    } else if (message.type === "REGENERATE_DRAFT") {
+      const { draftId, tone, instruction } = (message as unknown) as { draftId: number; tone: string; instruction: string | null; type: string };
+      import("./draft-generator").then(({ regenerateDraft }) => regenerateDraft(draftId, tone as import("@shared/types").DraftTone, instruction))
+        .then((body) => sendResponse({ ok: true, body }))
+        .catch((err) => sendResponse({ ok: false, error: err instanceof Error ? err.message : String(err) }));
+      return true;
+    } else if (message.type === "SET_FOLLOW_UP") {
+      const { commitmentId, checkAt } = (message as unknown) as { commitmentId: number; checkAt?: string; type: string };
+      import("./follow-up-engine").then(({ setFollowUpRule }) => setFollowUpRule(commitmentId, checkAt))
+        .then((ruleId) => sendResponse({ ok: true, ruleId }))
+        .catch((err) => sendResponse({ ok: false, error: String(err) }));
+      return true;
+    } else if (message.type === "SEND_DRAFT") {
+      const { draftId } = (message as unknown) as { draftId: number; type: string };
+      (async () => {
+        const draft = await db.drafts.get(draftId);
+        if (!draft) { sendResponse({ ok: false, error: "Draft not found" }); return; }
+        const { createProposal, executeAction } = await import("./action-executor");
+        const proposalId = await createProposal(
+          draft.commitmentId, "send_message",
+          `Send ${draft.platform === "slack" ? "Slack message" : "email"} to ${draft.recipient}`,
+          { platform: draft.platform, recipient: draft.recipient, subject: draft.subject, draftId },
+          "manual",
+        );
+        const result = await executeAction(proposalId);
+        sendResponse(result);
+      })().catch((err) => sendResponse({ ok: false, message: err instanceof Error ? err.message : String(err) }));
+      return true;
     }
     return false;
   },
@@ -670,6 +717,10 @@ chrome.alarms.onAlarm.addListener((alarm) => {
       break;
     case ALARMS.SYNC_PUSH:
       syncPush().catch((err) => console.warn("[CT:worker] Sync push failed:", err));
+      break;
+    case ALARMS.FOLLOW_UP_CHECK:
+      import("./follow-up-engine").then(({ runFollowUpCheck }) => runFollowUpCheck())
+        .catch((err) => console.warn("[CT:worker] Follow-up check failed:", err));
       break;
     default:
       if (alarm.name.startsWith(ALARMS.SNOOZE_PREFIX)) {

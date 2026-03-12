@@ -20,7 +20,10 @@
     "https://mail.google.com/*",
     "https://api.anthropic.com/*",
     "https://www.googleapis.com/*",
-    "https://accounts.google.com/*"
+    "https://accounts.google.com/*",
+    "https://slack.com/api/*",
+    "https://gmail.googleapis.com/*",
+    "https://api.linear.app/*"
   ],
   "background": {
     "service_worker": "src/background/service-worker.ts",

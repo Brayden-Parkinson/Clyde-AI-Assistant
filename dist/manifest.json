@@ -20,7 +20,10 @@
     "https://mail.google.com/*",
     "https://api.anthropic.com/*",
     "https://www.googleapis.com/*",
-    "https://accounts.google.com/*"
+    "https://accounts.google.com/*",
+    "https://slack.com/api/*",
+    "https://gmail.googleapis.com/*",
+    "https://api.linear.app/*"
   ],
   "background": {
     "service_worker": "service-worker-loader.js",
@@ -48,7 +51,7 @@
     },
     {
       "js": [
-        "assets/gmail.ts-loader-BCjck1vr.js"
+        "assets/gmail.ts-loader-CAXzqESO.js"
       ],
       "matches": [
         "https://mail.google.com/*"
@@ -103,8 +106,8 @@
         "https://mail.google.com/*"
       ],
       "resources": [
-        "assets/constants-D9WK_SNq.js",
-        "assets/gmail.ts-tgTs1OpH.js"
+        "assets/constants-BMw998OE.js",
+        "assets/gmail.ts-Yps7YpkA.js"
       ],
       "use_dynamic_url": false
     }
