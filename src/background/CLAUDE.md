@@ -1,19 +1,25 @@
 # src/background/ — Service Worker Layer
 
-Runs as Chrome MV3 service worker. No DOM access. No `window`. Can go idle at any time.
+Chrome MV3 service worker. No DOM, no `window`. Can go idle — all state must live in IndexedDB.
 
-## Files
-- `service-worker.ts` — Orchestrator: alarms, message routing, badge, notifications
-- `batcher.ts` — Buffers Slack messages, pre-filters with regex, debounce-flushes to extractor
-- `extractor.ts` — Builds Claude prompt (with dynamic dismissals), calls API, stores results
-- `granola-local.ts` — Reads Granola cache via Chrome Native Messaging (replaced granola-mcp.ts)
-- `granola-poller.ts` — Polls Granola on alarm schedule, imports from granola-local
-- `dedup.ts` — SHA-256 hashing for commitment deduplication
+## Key Files
+- `service-worker.ts` — Alarms, message routing, badge, cleanup, lifecycle
+- `batcher.ts` — Buffers Slack/Gmail messages, regex pre-filter, debounce-flush to extractor
+- `extractor.ts` — Claude prompt builder, API caller, dedup, commitment storage
+- `action-executor.ts` — Executes approved ActionProposals (send message, block time, Linear)
+- `draft-generator.ts` — Claude-powered message draft generation (standalone fetch, no extractor dep)
+- `slack-sender.ts` — Slack chat.postMessage via Bot Token (only called by approved proposals)
+- `gmail-sender.ts` — Gmail draft creation only — NEVER sends (user reviews in Gmail)
+- `follow-up-engine.ts` — Detects stale commitments, creates follow-up ActionProposals
+- `calendar-writer.ts` — Google Calendar event/time-block creation via OAuth
+- `google-auth.ts` — Google OAuth token management (`getValidAccessToken()`)
+- `people-extractor.ts` — Upserts People table from commitment senders + calendar attendees
+- `integrations/linear.ts` — Linear GraphQL API (createLinearTask, getLinearTeams)
 
 ## Rules
-- **No `window`, no DOM** — this is a service worker, use `self` if needed
-- **All state in IndexedDB** — never keep important state in memory (worker can die anytime)
-- Anthropic API via **direct fetch()** to `https://api.anthropic.com/v1/messages` — SDK doesn't work in service workers
-- API key read from `chrome.storage.local` key `"anthropicApiKey"`
-- Avoid circular imports — extractor updates badge directly via `getNewCommitmentCount()`, not by importing service-worker
+- **No `window`, no DOM** — use `self` or chrome APIs only
+- All external actions (Slack send, Gmail, Calendar, Linear) MUST go through an approved ActionProposal — never auto-execute
+- API tokens read from `chrome.storage.local`, never logged
+- Circular import risk: action-executor.ts must NOT import service-worker.ts
+- Dynamic `import()` inside message handlers avoids unused-import linting issues
 - After changes: user must **reload extension** in chrome://extensions
