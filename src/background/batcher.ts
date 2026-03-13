@@ -69,7 +69,7 @@ export async function addMessages(
   // Still store raw messages for audit trail
   for (const msg of filtered) {
     const isGdoc = !msg.channel_id && msg.slack_link?.includes("docs.google.com");
-    db.raw_messages.add({
+    await db.raw_messages.add({
       source_type: isGdoc ? "gdoc" : "slack",
       sourceId: `${msg.channel}-${msg.timestamp}`,
       text: msg.text,
@@ -77,7 +77,7 @@ export async function addMessages(
       context: msg.channel,
       timestamp: msg.timestamp,
       capturedAt: new Date().toISOString(),
-    });
+    }).catch(() => {}); // Ignore duplicate sourceId constraint violations
   }
 
   // Schedule flush
@@ -188,7 +188,7 @@ export async function addGmailMessages(msgs: GmailMessagePayload["messages"]): P
 
   // Store raw messages for audit trail
   for (const m of mapped) {
-    db.raw_messages.add({
+    await db.raw_messages.add({
       source_type: "gmail",
       sourceId: `${m.channel_id}-${m.message_ts}`,
       text: m.text,

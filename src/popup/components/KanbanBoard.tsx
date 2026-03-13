@@ -921,14 +921,16 @@ export function KanbanBoard({
   }, []);
 
   const handleRenameColumn = useCallback(async (id: string, label: string) => {
+    if (demoMode) return;
     if (label.trim()) await db.kanban_columns.update(id, { label: label.trim() });
-  }, []);
+  }, [demoMode]);
 
   const handleDeleteColumn = useCallback(async (id: string) => {
+    if (demoMode) return;
     if (id === "inProgress") return;
     await db.kanban_assignments.where("column_id").equals(id).delete();
     await db.kanban_columns.delete(id);
-  }, []);
+  }, [demoMode]);
 
   // ─── Shared column props ───
 

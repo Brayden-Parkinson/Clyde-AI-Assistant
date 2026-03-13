@@ -7,6 +7,13 @@ import { computeHash, isDuplicate, isFuzzyDuplicate } from "./dedup";
 import { requestBackupSave } from "./backup-sync";
 import { extractPeopleFromCommitment } from "./people-extractor";
 import { getMemoriesForPrompt } from "./memory-engine";
+import {
+  sanitizeDismissalPattern,
+  sanitizeDismissalReason,
+  sanitizeTagName,
+  sanitizeMemoryContent,
+  sanitizeMessageText,
+} from "@shared/sanitize-prompt";
 
 type BufferedMessage = SlackMessagePayload["messages"][number];
 
@@ -18,7 +25,7 @@ async function buildDismissalBlock(): Promise<string> {
 
   const capped = dismissals.slice(0, MAX_DISMISSAL_PATTERNS);
   const lines = capped.map(
-    (d) => `- Dismissed ${d.count}x: "${d.pattern}" -- user says this is ${d.reason}`,
+    (d) => `- Dismissed ${d.count}x: "${sanitizeDismissalPattern(d.pattern)}" -- user says this is ${sanitizeDismissalReason(d.reason)}`,
   );
   return `
 
@@ -34,7 +41,7 @@ async function isDevModeEnabled(): Promise<boolean> {
 async function buildTagBlock(): Promise<string> {
   const tags = await getAllTags();
   if (tags.length === 0) return "";
-  const tagLines = tags.map((t) => `  - ID ${t.id}: "${t.name}"`).join("\n");
+  const tagLines = tags.map((t) => `  - ID ${t.id}: "${sanitizeTagName(t.name)}"`).join("\n");
   return `
 
 SMART TAGS — assign exactly one tag to each commitment:
@@ -52,10 +59,11 @@ async function buildMemoryBlock(): Promise<string> {
   try {
     const memories = await getMemoriesForPrompt();
     if (memories.length === 0) return "";
+    const sanitizedMemories = memories.map((m) => sanitizeMemoryContent(m));
     return `
 
 LONG-TERM MEMORY (things Clyde knows about this person — use for context):
-${memories.join("\n")}`;
+${sanitizedMemories.join("\n")}`;
   } catch {
     return ""; // Non-critical — skip if memory engine fails
   }
@@ -322,7 +330,7 @@ function buildUserMessage(
       const location = msg.is_thread_reply
         ? `replying in #${msg.channel}`
         : `in #${msg.channel}`;
-      let line = `${prefix} [${msg.sender} ${location} at ${msg.timestamp}]: ${msg.text}`;
+      let line = `${prefix} [${msg.sender} ${location} at ${msg.timestamp}]: ${sanitizeMessageText(msg.text)}`;
       if (msg.reactions && msg.reactions.length > 0) {
         line += ` [reactions: ${msg.reactions.join(", ")}]`;
       }
@@ -897,7 +905,7 @@ export async function detectCompletions(
     .join("\n");
 
   const messagesList = allMessages
-    .map((m) => `[${m.sender} in #${m.channel}]: ${m.text}`)
+    .map((m) => `[${m.sender} in #${m.channel}]: ${sanitizeMessageText(m.text)}`)
     .join("\n");
 
   const profile = await getUserProfile();

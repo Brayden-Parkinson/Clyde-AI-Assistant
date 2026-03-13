@@ -51,7 +51,7 @@
     },
     {
       "js": [
-        "assets/gmail.ts-loader-CAXzqESO.js"
+        "assets/gmail.ts-loader-B7Wod-Kt.js"
       ],
       "matches": [
         "https://mail.google.com/*"
@@ -81,6 +81,9 @@
     "48": "assets/icon-48.png",
     "128": "assets/icon-128.png"
   },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
+  },
   "web_accessible_resources": [
     {
       "matches": [
@@ -106,8 +109,8 @@
         "https://mail.google.com/*"
       ],
       "resources": [
-        "assets/constants-BMw998OE.js",
-        "assets/gmail.ts-Yps7YpkA.js"
+        "assets/constants-rR1LPPGB.js",
+        "assets/gmail.ts-30jKQXYt.js"
       ],
       "use_dynamic_url": false
     }

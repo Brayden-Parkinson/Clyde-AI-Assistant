@@ -10,6 +10,7 @@
  */
 
 import { API_TIMEOUT_MS } from "@shared/constants";
+import { sanitizeMimeHeader } from "@shared/sanitize-prompt";
 import { getValidAccessToken } from "./google-auth";
 
 export interface GmailDraftResult {
@@ -79,10 +80,14 @@ export async function createGmailDraft(
       };
     }
 
-    const data = await response.json() as { id: string; message: { id: string } };
-    const draftUrl = `https://mail.google.com/mail/u/0/#drafts/${data.message.id}`;
+    const data = await response.json();
+    const draftId = data?.id ?? null;
+    const messageId = data?.message?.id;
+    const draftUrl = messageId
+      ? `https://mail.google.com/mail/u/0/#drafts/${messageId}`
+      : null;
 
-    return { ok: true, draftId: data.id, draftUrl, error: null };
+    return { ok: true, draftId, draftUrl, error: null };
   } catch (err) {
     return {
       ok: false,
@@ -96,9 +101,12 @@ export async function createGmailDraft(
 // ─── MIME Builder ───
 
 function buildMimeMessage(to: string, subject: string, body: string): string {
+  // Sanitize header fields to prevent MIME header injection via \r\n
+  const safeTo = sanitizeMimeHeader(to);
+  const safeSubject = sanitizeMimeHeader(subject);
   const lines = [
-    `To: ${to}`,
-    `Subject: ${subject}`,
+    `To: ${safeTo}`,
+    `Subject: ${safeSubject}`,
     "MIME-Version: 1.0",
     "Content-Type: text/plain; charset=utf-8",
     "Content-Transfer-Encoding: 7bit",

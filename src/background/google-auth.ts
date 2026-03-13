@@ -3,8 +3,32 @@ import type { GoogleAuthTokens } from "@shared/types";
 import { db } from "@shared/db";
 import { logStatus } from "@shared/status";
 
+// ─── PKCE Helpers ───
+
+/** Generate a random code_verifier for PKCE (43-128 chars, URL-safe) */
+function generateCodeVerifier(): string {
+  const array = new Uint8Array(32);
+  crypto.getRandomValues(array);
+  return btoa(String.fromCharCode(...array))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+}
+
+/** Compute S256 code_challenge from a code_verifier */
+async function computeCodeChallenge(verifier: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(verifier);
+  const digest = await crypto.subtle.digest("SHA-256", data);
+  return btoa(String.fromCharCode(...new Uint8Array(digest)))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+}
+
 /**
  * Initiate Google OAuth2 flow via chrome.identity.launchWebAuthFlow.
+ * Uses PKCE (S256) to protect the auth code exchange.
  * Exchanges the auth code for tokens and stores them in chrome.storage.local.
  */
 export async function initiateGoogleOAuth(): Promise<void> {
@@ -16,6 +40,10 @@ export async function initiateGoogleOAuth(): Promise<void> {
 
   const redirectUri = `https://${chrome.runtime.id}.chromiumapp.org/`;
 
+  // Generate PKCE code verifier and challenge
+  const codeVerifier = generateCodeVerifier();
+  const codeChallenge = await computeCodeChallenge(codeVerifier);
+
   const authUrl = new URL(GOOGLE_OAUTH.AUTH_URL);
   authUrl.searchParams.set("client_id", clientId);
   authUrl.searchParams.set("redirect_uri", redirectUri);
@@ -23,8 +51,10 @@ export async function initiateGoogleOAuth(): Promise<void> {
   authUrl.searchParams.set("scope", GOOGLE_OAUTH.SCOPES);
   authUrl.searchParams.set("access_type", "offline");
   authUrl.searchParams.set("prompt", "consent");
+  authUrl.searchParams.set("code_challenge", codeChallenge);
+  authUrl.searchParams.set("code_challenge_method", "S256");
 
-  await logStatus("info", "calendar", "Starting Google OAuth flow...");
+  await logStatus("info", "calendar", "Starting Google OAuth flow (PKCE)...");
 
   const responseUrl = await chrome.identity.launchWebAuthFlow({
     url: authUrl.toString(),
@@ -42,7 +72,7 @@ export async function initiateGoogleOAuth(): Promise<void> {
     throw new Error(`OAuth failed: ${error}`);
   }
 
-  // Exchange auth code for tokens
+  // Exchange auth code for tokens — include PKCE code_verifier
   const tokenResponse = await fetch(GOOGLE_OAUTH.TOKEN_URL, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -51,6 +81,7 @@ export async function initiateGoogleOAuth(): Promise<void> {
       client_id: clientId,
       redirect_uri: redirectUri,
       grant_type: "authorization_code",
+      code_verifier: codeVerifier,
     }),
   });
 

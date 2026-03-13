@@ -216,6 +216,12 @@ class ClydeDB extends Dexie {
     this.version(16).stores({
       people: "++id, &name, email, relationship, lastSeenAt, commitmentCount, createdAt",
     });
+
+    // Fix: add missing indexes for fields used in orderBy/where queries
+    this.version(17).stores({
+      raw_messages: "++id, source_type, sourceId, capturedAt, context",
+      work_patterns: "++id, type, sentiment, acknowledged, detectedWeek, createdAt",
+    });
   }
 }
 

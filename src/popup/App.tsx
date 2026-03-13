@@ -360,7 +360,14 @@ function WarningBanner({ onOpenSettings, demoMode }: { onOpenSettings: () => voi
 
 // ─── Scan time helper ───
 
-function useScanAgo() {
+const STALE_THRESHOLD_MS = 30 * 60 * 1000; // 30 minutes
+
+interface ScanStatus {
+  scanAgo: string | null;
+  staleWarning: string | null;
+}
+
+function useScanStatus(): ScanStatus {
   const [status, setStatus] = useState<PipelineStatus | null>(null);
 
   useEffect(() => {
@@ -375,11 +382,39 @@ function useScanAgo() {
     return () => clearInterval(interval);
   }, []);
 
-  if (!status?.lastExtraction) return null;
-  const diff = Date.now() - new Date(status.lastExtraction).getTime();
-  if (diff < 60000) return "just now";
-  if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
-  return `${Math.floor(diff / 3600000)}h ago`;
+  let scanAgo: string | null = null;
+  if (status?.lastExtraction) {
+    const diff = Date.now() - new Date(status.lastExtraction).getTime();
+    if (diff < 60000) scanAgo = "just now";
+    else if (diff < 3600000) scanAgo = `${Math.floor(diff / 60000)}m ago`;
+    else scanAgo = `${Math.floor(diff / 3600000)}h ago`;
+  }
+
+  // Stale detection: warn if a previously-connected source has gone silent
+  let staleWarning: string | null = null;
+  if (status) {
+    const now = Date.now();
+    // Check Slack: was connected but last ping is stale
+    if (status.slackConnected && status.lastContentPing) {
+      const pingAge = now - new Date(status.lastContentPing).getTime();
+      if (pingAge > STALE_THRESHOLD_MS) {
+        staleWarning = "Slack data may be stale — no messages received recently. Make sure Slack is open in a browser tab.";
+      }
+    }
+    // Check extraction: had successful extraction before but it's very old
+    if (!staleWarning && status.lastExtraction) {
+      const extractAge = now - new Date(status.lastExtraction).getTime();
+      if (extractAge > STALE_THRESHOLD_MS && status.totalMessagesReceived > 0) {
+        staleWarning = "No recent scans — Clyde may be missing new commitments.";
+      }
+    }
+    // Check for extraction errors
+    if (!staleWarning && status.lastError) {
+      staleWarning = `Last scan failed: ${status.lastError.slice(0, 80)}`;
+    }
+  }
+
+  return { scanAgo, staleWarning };
 }
 
 // ─── API Key Setup ───
@@ -1470,6 +1505,7 @@ function LeftNav({
   demoMode,
   privacyMode,
   onTogglePrivacy,
+  staleWarning,
 }: {
   viewMode: ViewMode;
   setViewMode: (v: ViewMode) => void;
@@ -1485,6 +1521,7 @@ function LeftNav({
   demoMode: boolean;
   privacyMode: boolean;
   onTogglePrivacy: () => void;
+  staleWarning: string | null;
 }) {
   const [showNavSettings, setShowNavSettings] = useState(false);
   const settingsBtnRef = useRef<HTMLButtonElement>(null) as React.RefObject<HTMLButtonElement>;
@@ -1620,6 +1657,19 @@ function LeftNav({
             </button>
         </div>
 
+        {/* Stale warning dot — collapsed */}
+        {staleWarning && (
+          <div
+            title={staleWarning}
+            style={{
+              width: 8, height: 8, borderRadius: "50%",
+              background: "rgb(245, 158, 11)",
+              margin: "4px auto",
+              boxShadow: "0 0 4px rgba(245, 158, 11, 0.5)",
+            }}
+          />
+        )}
+
         {/* Settings icon */}
         <div style={{ borderTop: "1px solid rgba(255,255,255,0.1)", padding: "10px 0", width: "100%", textAlign: "center" }}>
           <button
@@ -1729,6 +1779,29 @@ function LeftNav({
           </button>
       </div>
 
+      {/* Stale warning banner — expanded */}
+      {staleWarning && (
+        <div style={{
+          borderTop: "1px solid rgba(255,255,255,0.1)",
+          padding: "8px 14px",
+          background: "rgba(245, 158, 11, 0.12)",
+        }}>
+          <div style={{ fontSize: 11, color: "rgba(255, 200, 50, 0.9)", lineHeight: 1.4 }}>
+            ⚠ {staleWarning}
+          </div>
+          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 4, lineHeight: 1.3 }}>
+            Check{" "}
+            <span
+              onClick={onOpenFullSettings}
+              style={{ textDecoration: "underline", cursor: "pointer", color: "rgba(255, 200, 50, 0.7)" }}
+            >
+              settings
+            </span>
+            {" "}or contact brayden.parkinson@openspace.ai
+          </div>
+        </div>
+      )}
+
       {/* Settings footer */}
       <div style={{ borderTop: "1px solid rgba(255,255,255,0.1)", padding: "10px 14px" }}>
         <button
@@ -1794,7 +1867,7 @@ export default function App() {
   const [scanning, setScanning] = useState(false);
   const [proactiveMsg, setProactiveMsg] = useState<string | null>(null);
   const todoOverflowFiredRef = useRef(false);
-  const scanAgo = useScanAgo();
+  const { scanAgo, staleWarning } = useScanStatus();
   const realKanban = useKanban(boardFilter);
   const { isNew: isNewCommitment, markVisible, markHidden } = useSeenCommitments();
   const { settings: displaySettings, update: updateDisplay } = useDisplaySettings();
@@ -2190,6 +2263,7 @@ export default function App() {
           demoMode={demoMode}
           privacyMode={privacyMode}
           onTogglePrivacy={() => setPrivacyMode((p) => !p)}
+          staleWarning={demoMode ? null : staleWarning}
         />
       )}
 
@@ -2530,7 +2604,7 @@ export default function App() {
         </div>
       )}
 
-      {showSmartTags && <SmartTagsModal onClose={() => setShowSmartTags(false)} />}
+      {showSmartTags && <SmartTagsModal onClose={() => setShowSmartTags(false)} demoMode={demoMode} />}
 
       {toast && <Toast message={toast.message} variant={toast.variant} onClose={() => setToast(null)} />}
       {viewMode !== "chat" && <ClydeChat showToast={showToast} sidePanelOpen={showPanel} proactiveMessage={proactiveMsg} onProactiveHandled={() => setProactiveMsg(null)} demoMode={demoMode} hasApiKey={hasApiKey === true} />}

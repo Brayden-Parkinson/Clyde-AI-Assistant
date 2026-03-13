@@ -8,9 +8,10 @@ import { IconX } from "./Icons";
 
 interface SmartTagsModalProps {
   onClose: () => void;
+  demoMode?: boolean;
 }
 
-export function SmartTagsModal({ onClose }: SmartTagsModalProps) {
+export function SmartTagsModal({ onClose, demoMode }: SmartTagsModalProps) {
   const allTags = useLiveQuery(() => db.tags.orderBy("name").toArray(), []) ?? [];
   const [newLabel, setNewLabel] = useState("");
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -19,27 +20,31 @@ export function SmartTagsModal({ onClose }: SmartTagsModalProps) {
   const [retagResult, setRetagResult] = useState<string | null>(null);
 
   const handleAdd = useCallback(async (label: string) => {
+    if (demoMode) return;
     const trimmed = label.trim();
     if (!trimmed) return;
     const count = await db.tags.count();
     await db.tags.add({ name: trimmed, color: getNextTagColor(count), createdAt: new Date().toISOString() });
     setNewLabel("");
-  }, []);
+  }, [demoMode]);
 
   const handleRename = useCallback(async (id: number, label: string) => {
+    if (demoMode) return;
     const trimmed = label.trim();
     if (trimmed) await db.tags.update(id, { name: trimmed });
     setEditingId(null);
-  }, []);
+  }, [demoMode]);
 
   const handleDelete = useCallback(async (id: number) => {
+    if (demoMode) return;
     const generalTagId = await ensureGeneralTag();
     if (id === generalTagId) return;
     await db.commitments.where("tag_id").equals(id).modify({ tag_id: generalTagId });
     await db.tags.delete(id);
-  }, []);
+  }, [demoMode]);
 
   const handleRetagAll = useCallback(async () => {
+    if (demoMode) return;
     setRetagging(true);
     setRetagResult(null);
     try {

@@ -111,6 +111,9 @@ export const FOLLOW_UP_RULE_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 /** How long to keep external task links (90 days in ms) */
 export const EXTERNAL_TASK_LINK_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 
+/** How long to keep sync outbox entries (7 days in ms) */
+export const SYNC_OUTBOX_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
 /** Google OAuth configuration */
 export const GOOGLE_OAUTH = {
   AUTH_URL: "https://accounts.google.com/o/oauth2/v2/auth",

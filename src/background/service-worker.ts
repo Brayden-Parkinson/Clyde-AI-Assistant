@@ -17,6 +17,8 @@ import {
   ACTION_PROPOSAL_TTL_MS,
   DRAFT_TTL_MS,
   FOLLOW_UP_RULE_TTL_MS,
+  EXTERNAL_TASK_LINK_TTL_MS,
+  SYNC_OUTBOX_TTL_MS,
 } from "@shared/constants";
 import type { SlackMessagePayload, GmailMessagePayload } from "@shared/types";
 import { logStatus, updateStatus } from "@shared/status";
@@ -28,6 +30,7 @@ import { isGranolaConnected, sendNative } from "./granola-local";
 import { restoreFromBackup, executeBackupSave, requestBackupSave, BACKUP_SAVE_ALARM } from "./backup-sync";
 import { generateMorningBrief } from "./morning-brief";
 import { backfillTags } from "./tag-backfill";
+import { backfillPeopleFromHistory } from "./people-extractor";
 import { runConfidenceTuner } from "./confidence-tuner";
 import { extractMemories, decayMemories } from "./memory-engine";
 import { detectPatterns } from "./pattern-detector";
@@ -64,8 +67,22 @@ async function runCleanup(): Promise<void> {
     .each((c) => { if (c.id !== undefined) deletedCommitmentIds.push(c.id); });
   if (deletedCommitmentIds.length > 0) {
     await db.commitments.bulkDelete(deletedCommitmentIds);
-    // Clean up orphaned kanban assignments for deleted commitments
+    // Clean up all related records for deleted commitments
     await db.kanban_assignments.where("commitment_id").anyOf(deletedCommitmentIds).delete();
+    await db.action_log.where("commitmentId").anyOf(deletedCommitmentIds).delete();
+    await db.completion_suggestions.where("commitmentId").anyOf(deletedCommitmentIds).delete();
+    await db.follow_up_rules.where("commitmentId").anyOf(deletedCommitmentIds).delete();
+    await db.external_task_links.where("commitmentId").anyOf(deletedCommitmentIds).delete();
+    await db.commitment_okr_links.where("commitmentId").anyOf(deletedCommitmentIds).delete();
+    // Clean up action_proposals and their linked drafts
+    const orphanedProposals: number[] = [];
+    await db.action_proposals
+      .where("commitmentId").anyOf(deletedCommitmentIds)
+      .each((p) => { if (p.id != null) orphanedProposals.push(p.id); });
+    if (orphanedProposals.length > 0) {
+      await db.drafts.where("proposalId").anyOf(orphanedProposals).delete();
+      await db.action_proposals.bulkDelete(orphanedProposals);
+    }
   }
 
   // Action log: 90 days
@@ -112,15 +129,13 @@ async function runCleanup(): Promise<void> {
 
   // Chat messages: 90 days
   const chatCutoff = new Date(now - CHAT_HISTORY_TTL_MS).toISOString();
-  const deletedChatMsgCount = await db.chat_messages.where("createdAt").below(chatCutoff).delete();
-  // Orphaned chat sessions: sessions with no remaining messages
-  if (deletedChatMsgCount > 0) {
-    const allSessions = await db.chat_sessions.toArray();
-    for (const session of allSessions) {
-      if (session.id == null) continue;
-      const msgCount = await db.chat_messages.where("sessionId").equals(session.id).count();
-      if (msgCount === 0) await db.chat_sessions.delete(session.id);
-    }
+  await db.chat_messages.where("createdAt").below(chatCutoff).delete();
+  // Orphaned chat sessions: sessions with no remaining messages (including empty sessions)
+  const allSessions = await db.chat_sessions.toArray();
+  for (const session of allSessions) {
+    if (session.id == null) continue;
+    const msgCount = await db.chat_messages.where("sessionId").equals(session.id).count();
+    if (msgCount === 0) await db.chat_sessions.delete(session.id);
   }
 
   // Daily reviews: 90 days
@@ -147,6 +162,14 @@ async function runCleanup(): Promise<void> {
     .where('status').equals('completed')
     .filter((r) => r.createdAt < followUpCutoff)
     .delete();
+
+  // External task links: 90 days
+  const extLinkCutoff = new Date(now - EXTERNAL_TASK_LINK_TTL_MS).toISOString();
+  await db.external_task_links.where("createdAt").below(extLinkCutoff).delete();
+
+  // Sync outbox: 7 days
+  const syncCutoff = new Date(now - SYNC_OUTBOX_TTL_MS).toISOString();
+  await db.sync_outbox.where("timestamp").below(syncCutoff).delete();
 
   await logStatus("info", "worker", "Daily cleanup completed");
 
@@ -391,6 +414,11 @@ chrome.runtime.onInstalled.addListener(async () => {
   backfillTags().catch((err) =>
     console.warn("[CT:worker] Tag backfill failed:", err),
   );
+
+  // Seed the people table from commitment history (non-blocking, idempotent via name-match upsert)
+  backfillPeopleFromHistory().catch((err) =>
+    console.warn("[CT:worker] People backfill failed:", err),
+  );
 });
 
 chrome.runtime.onStartup.addListener(async () => {
@@ -449,6 +477,19 @@ chrome.runtime.onMessage.addListener(
     sender: chrome.runtime.MessageSender,
     sendResponse: (response?: unknown) => void,
   ) => {
+    // SECURITY: Restrict sensitive actions to extension pages only (popup, options, sidepanel, newtab).
+    // Content scripts run inside web page tabs (sender.tab is defined), so they must not
+    // be able to trigger actions that send messages, restore backups, or execute proposals.
+    const PRIVILEGED_TYPES = new Set([
+      "EXECUTE_ACTION", "RESTORE_BACKUP", "SEND_DRAFT", "GENERATE_DRAFT",
+      "REGENERATE_DRAFT", "SET_FOLLOW_UP", "GOOGLE_OAUTH_START", "GOOGLE_DISCONNECT",
+    ]);
+    if (PRIVILEGED_TYPES.has(message.type) && sender.tab) {
+      sendResponse({ ok: false, error: "Privileged action rejected — request must originate from extension page, not content script" });
+      logStatus("warn", "worker", `Rejected privileged message "${message.type}" from tab ${sender.tab.url?.slice(0, 60)}`);
+      return false;
+    }
+
     if (message.type === "SLACK_MESSAGES") {
       const tabInfo = sender.tab ? ` (tab: ${sender.tab.url?.slice(0, 50)})` : "";
       logStatus("info", "worker", `Received ${message.messages.length} messages from content script${tabInfo}`);
@@ -533,11 +574,16 @@ chrome.runtime.onMessage.addListener(
               steps.push(`added: ${cleaned.length}`);
             }
 
-            // Restore chrome.storage settings
+            // Restore chrome.storage settings — strip sensitive keys to prevent backup poisoning
             const chromeStorage = state.chrome_storage as Record<string, unknown> | undefined;
             if (chromeStorage) {
-              await chrome.storage.local.set(chromeStorage);
-              steps.push(`storage: ${Object.keys(chromeStorage).length} keys`);
+              const SENSITIVE_KEYS = new Set(["anthropicApiKey", "slackBotToken", "linearApiKey", "googleAuthTokens"]);
+              const safeStorage: Record<string, unknown> = {};
+              for (const [k, v] of Object.entries(chromeStorage)) {
+                if (!SENSITIVE_KEYS.has(k)) safeStorage[k] = v;
+              }
+              await chrome.storage.local.set(safeStorage);
+              steps.push(`storage: ${Object.keys(safeStorage).length} keys (${Object.keys(chromeStorage).length - Object.keys(safeStorage).length} sensitive stripped)`);
             }
 
             // Kanban columns
@@ -580,6 +626,11 @@ chrome.runtime.onMessage.addListener(
           connected: false,
           error: err instanceof Error ? err.message : "Native host not responding",
         }));
+      return true;
+    } else if (message.type === "SCAN_PEOPLE") {
+      backfillPeopleFromHistory()
+        .then(() => sendResponse({ ok: true }))
+        .catch((err) => sendResponse({ ok: false, error: err instanceof Error ? err.message : String(err) }));
       return true;
     } else if (message.type === "GENERATE_MORNING_BRIEF") {
       generateMorningBrief(true)

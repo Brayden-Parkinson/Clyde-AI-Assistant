@@ -120,7 +120,12 @@ export async function executeAction(
 // ─── Router ───
 
 async function routeToExecutor(proposal: ActionProposal): Promise<string> {
-  const payload = JSON.parse(proposal.payload) as ActionPayload;
+  let payload: ActionPayload;
+  try {
+    payload = JSON.parse(proposal.payload) as ActionPayload;
+  } catch {
+    throw new Error(`Malformed payload for proposal #${proposal.id}: invalid JSON`);
+  }
 
   switch (proposal.type) {
     case "send_message":

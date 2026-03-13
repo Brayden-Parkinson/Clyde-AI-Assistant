@@ -35,9 +35,13 @@ async function getDeviceId(): Promise<string> {
 
 // ─── Outbox writer ────────────────────────────────────────────────────
 
+/** Maximum outbox entries before evicting oldest — prevents unbounded growth if push fails */
+const MAX_OUTBOX_SIZE = 1000;
+
 /**
  * Queue a change to the sync outbox. Called from Dexie hooks.
  * Runs async but hooks are fire-and-forget — errors are logged.
+ * Caps outbox to MAX_OUTBOX_SIZE entries to prevent unbounded storage growth.
  */
 function logSyncChange(
   table: string,
@@ -56,6 +60,17 @@ function logSyncChange(
         deviceId,
       };
       await db.table("sync_outbox").add(envelope);
+
+      // Evict oldest entries if outbox exceeds cap
+      const count = await db.table("sync_outbox").count();
+      if (count > MAX_OUTBOX_SIZE) {
+        const excess = count - MAX_OUTBOX_SIZE;
+        const oldestIds = await db.table("sync_outbox")
+          .orderBy("id")
+          .limit(excess)
+          .primaryKeys();
+        await db.table("sync_outbox").bulkDelete(oldestIds);
+      }
     } catch (err) {
       console.error("[Sync] Failed to write outbox envelope:", err);
     }
