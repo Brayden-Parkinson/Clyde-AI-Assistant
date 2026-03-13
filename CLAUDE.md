@@ -2,6 +2,15 @@
 
 Chrome extension (MV3) that watches Slack + Granola meeting notes, extracts commitments via Claude, and presents an action inbox. All data local (IndexedDB). Say "Clyde" in any message to explicitly flag a commitment.
 
+## Codebase Navigation — Read This First
+Before reading any source files, read `CLAUDE.md` in the relevant subdirectory first:
+- Working in `src/background/`? Read `src/background/CLAUDE.md`
+- Working in `src/popup/`? Read `src/popup/CLAUDE.md`
+- Working in `src/shared/`? Read `src/shared/CLAUDE.md`
+- Working in `src/content/`? Read `src/content/CLAUDE.md`
+
+Only read source files listed in the relevant subdirectory `CLAUDE.md`. Do not glob or scan directories — load only what the task requires.
+
 ## Dev Commands
 ```bash
 npm run dev          # Vite + CRXJS hot reload → dist/
@@ -22,13 +31,13 @@ popup/App.tsx       React 18, useLiveQuery, inline styles, demo mode
 ```
 
 ## Directory Map
-- `src/shared/`    — Types, tokens, constants, Dexie DB — see `src/shared/CLAUDE.md`
+- `src/shared/`     — Types, tokens, constants, Dexie DB — see `src/shared/CLAUDE.md`
 - `src/background/` — Service worker, all background logic — see `src/background/CLAUDE.md`
-- `src/content/`  — Slack DOM observer (read-only) — see `src/content/CLAUDE.md`
-- `src/popup/`    — React 18 UI — see `src/popup/CLAUDE.md`
-- `src/options/`  — Settings page (shares `SettingsPanel` with popup)
-- `src/sidepanel/` — Renders popup App component in side panel mode
-- `native-host/`  — Python bridge for Granola native messaging
+- `src/content/`    — Slack DOM observer (read-only) — see `src/content/CLAUDE.md`
+- `src/popup/`      — React 18 UI — see `src/popup/CLAUDE.md`
+- `src/options/`    — Settings page (shares `SettingsPanel` with popup)
+- `src/sidepanel/`  — Renders popup App component in side panel mode
+- `native-host/`    — Python bridge for Granola native messaging
 - `CLAUDE_CODE_SPEC.md` — Full product spec (source of truth for requirements)
 - `UI_REFERENCE.jsx` — Pixel-perfect UI reference (source of truth for design)
 
