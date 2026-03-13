@@ -26,10 +26,6 @@ function IconCalendarBlock(): React.ReactElement {
   );
 }
 
-function IconLinear(): React.ReactElement {
-  return <span style={{ fontWeight: 700, fontSize: 11, letterSpacing: "-0.05em" }}>L</span>;
-}
-
 function IconX(): React.ReactElement {
   return (
     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
@@ -63,7 +59,6 @@ function getActionMeta(type: ActionProposal["type"]): { icon: React.ReactElement
     case "send_message": return { icon: <IconSend />, label: "Send Message", color: OS.blue };
     case "block_time": return { icon: <IconCalendarBlock />, label: "Block Time", color: OS.green };
     case "create_meeting": return { icon: <IconCalendarBlock />, label: "Create Meeting", color: "#7C3AED" };
-    case "create_linear_task": return { icon: <IconLinear />, label: "Push to Linear", color: "#5E6AD2" };
   }
 }
 

@@ -22,7 +22,6 @@ import type {
   ActionProposal,
   DraftMessage,
   FollowUpRule,
-  ExternalTaskLink,
 } from "./types";
 
 // ─── Date helpers ───
@@ -1210,19 +1209,6 @@ export const DEMO_ACTION_PROPOSALS: ActionProposal[] = [
     createdAt: hoursAgo(1),
     updatedAt: hoursAgo(1),
   },
-  {
-    id: -3,
-    commitmentId: -4,
-    type: "create_linear_task",
-    status: "completed",
-    description: `Push "Review the security audit" to Linear`,
-    payload: JSON.stringify({ title: "Review security audit", description: "From Clyde", teamId: "ENG", priority: 2 }),
-    resultMessage: "Linear issue created — ENG-1234",
-    errorMessage: null,
-    source: "manual",
-    createdAt: hoursAgo(48),
-    updatedAt: hoursAgo(24),
-  },
 ];
 
 // ─── Phase 2: Demo Drafts ───
@@ -1256,15 +1242,3 @@ export const DEMO_FOLLOW_UP_RULES: FollowUpRule[] = [
   },
 ];
 
-// ─── Phase 2: Demo External Task Links ───
-
-export const DEMO_EXTERNAL_TASK_LINKS: ExternalTaskLink[] = [
-  {
-    id: -1,
-    commitmentId: -7,
-    service: "linear",
-    externalId: "ENG-1234",
-    externalUrl: "https://linear.app/team/issue/ENG-1234",
-    createdAt: daysAgo(2),
-  },
-];

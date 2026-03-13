@@ -1,6 +1,10 @@
 import { db } from "@shared/db";
 import type { Commitment, CalendarEvent } from "@shared/types";
 import { logStatus } from "@shared/status";
+import { getUserProfile } from "@shared/user-profile";
+
+// Known bot/system names to skip — these are never actionable contacts
+const BOT_NAME_PATTERN = /^(slackbot|workflow|github|linear|jira|figma|notion|zapier|app|integration|automation|bot|alert|notification|webhook|deploy|ci|cd|jenkins|travis|circleci|datadog|pagerduty|sentry|slack app)/i;
 
 /**
  * Extract people from a commitment's conversation_messages senders.
@@ -10,12 +14,17 @@ import { logStatus } from "@shared/status";
 export async function extractPeopleFromCommitment(commitment: Commitment): Promise<void> {
   const now = new Date().toISOString();
   const messages = commitment.conversation_messages ?? [];
+  const profile = await getUserProfile();
+  const selfName = (profile.userName || "").toLowerCase();
 
-  // Collect unique senders, skip "You" or empty
+  // Collect unique senders — skip self, "You", and known bots
   const senders = new Set<string>();
   for (const msg of messages) {
     const name = msg.sender.trim();
-    if (!name || name.toLowerCase() === "you") continue;
+    if (!name) continue;
+    if (name.toLowerCase() === "you") continue;
+    if (selfName && name.toLowerCase() === selfName) continue;
+    if (BOT_NAME_PATTERN.test(name)) continue;
     senders.add(name);
   }
 
@@ -54,11 +63,14 @@ export async function extractPeopleFromCommitment(commitment: Commitment): Promi
  */
 export async function extractPeopleFromCalendar(events: CalendarEvent[]): Promise<void> {
   const now = new Date().toISOString();
+  const profile = await getUserProfile();
+  const selfName = (profile.userName || "").toLowerCase();
 
   for (const event of events) {
     for (const attendeeEmail of event.attendees) {
       const email = attendeeEmail.trim().toLowerCase();
       if (!email) continue;
+      if (BOT_NAME_PATTERN.test(email.split("@")[0] ?? "")) continue;
 
       // Try to find by email first
       const byEmail = await db.people.where("email").equals(email).first();
@@ -83,6 +95,7 @@ export async function extractPeopleFromCalendar(events: CalendarEvent[]): Promis
         .join(" ");
 
       if (!derivedName) continue;
+      if (selfName && derivedName.toLowerCase() === selfName) continue;
 
       // Try to find by derived name
       const byName = await db.people.where("name").equalsIgnoreCase(derivedName).first();

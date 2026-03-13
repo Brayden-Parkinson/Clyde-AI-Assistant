@@ -17,7 +17,6 @@ import {
   ACTION_PROPOSAL_TTL_MS,
   DRAFT_TTL_MS,
   FOLLOW_UP_RULE_TTL_MS,
-  EXTERNAL_TASK_LINK_TTL_MS,
   SYNC_OUTBOX_TTL_MS,
 } from "@shared/constants";
 import type { SlackMessagePayload, GmailMessagePayload } from "@shared/types";
@@ -72,7 +71,6 @@ async function runCleanup(): Promise<void> {
     await db.action_log.where("commitmentId").anyOf(deletedCommitmentIds).delete();
     await db.completion_suggestions.where("commitmentId").anyOf(deletedCommitmentIds).delete();
     await db.follow_up_rules.where("commitmentId").anyOf(deletedCommitmentIds).delete();
-    await db.external_task_links.where("commitmentId").anyOf(deletedCommitmentIds).delete();
     await db.commitment_okr_links.where("commitmentId").anyOf(deletedCommitmentIds).delete();
     // Clean up action_proposals and their linked drafts
     const orphanedProposals: number[] = [];
@@ -162,10 +160,6 @@ async function runCleanup(): Promise<void> {
     .where('status').equals('completed')
     .filter((r) => r.createdAt < followUpCutoff)
     .delete();
-
-  // External task links: 90 days
-  const extLinkCutoff = new Date(now - EXTERNAL_TASK_LINK_TTL_MS).toISOString();
-  await db.external_task_links.where("createdAt").below(extLinkCutoff).delete();
 
   // Sync outbox: 7 days
   const syncCutoff = new Date(now - SYNC_OUTBOX_TTL_MS).toISOString();
@@ -577,7 +571,7 @@ chrome.runtime.onMessage.addListener(
             // Restore chrome.storage settings — strip sensitive keys to prevent backup poisoning
             const chromeStorage = state.chrome_storage as Record<string, unknown> | undefined;
             if (chromeStorage) {
-              const SENSITIVE_KEYS = new Set(["anthropicApiKey", "slackBotToken", "linearApiKey", "googleAuthTokens"]);
+              const SENSITIVE_KEYS = new Set(["anthropicApiKey", "slackBotToken", "googleAuthTokens"]);
               const safeStorage: Record<string, unknown> = {};
               for (const [k, v] of Object.entries(chromeStorage)) {
                 if (!SENSITIVE_KEYS.has(k)) safeStorage[k] = v;

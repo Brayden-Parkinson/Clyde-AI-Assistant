@@ -26,8 +26,6 @@ import type {
   ActionProposal,
   DraftMessage,
   FollowUpRule,
-  ExternalIntegration,
-  ExternalTaskLink,
 } from "./types";
 
 class ClydeDB extends Dexie {
@@ -57,8 +55,6 @@ class ClydeDB extends Dexie {
   action_proposals!: EntityTable<ActionProposal, "id">;
   drafts!: EntityTable<DraftMessage, "id">;
   follow_up_rules!: EntityTable<FollowUpRule, "id">;
-  integrations!: EntityTable<ExternalIntegration, "id">;
-  external_task_links!: EntityTable<ExternalTaskLink, "id">;
 
   constructor() {
     super("CommitmentTracker");
@@ -192,7 +188,7 @@ class ClydeDB extends Dexie {
       follow_up_rules: "++id, commitmentId, status, checkAt, createdAt",
     });
 
-    // Phase 2: External integrations — Linear etc.
+    // Phase 2: External integrations (legacy — kept for Dexie migration history)
     this.version(13).stores({
       integrations: "++id, &service, status, createdAt",
       external_task_links: "++id, commitmentId, service, externalId, createdAt",

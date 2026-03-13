@@ -304,19 +304,6 @@ const TOOLS: ToolDefinition[] = [
       required: ["commitment_id"],
     },
   },
-  {
-    name: "create_external_task",
-    description: "Push a commitment to Linear as an issue.",
-    input_schema: {
-      type: "object",
-      properties: {
-        commitment_id: { type: "number", description: "Commitment to push" },
-        priority: { type: "string", enum: ["urgent", "high", "medium", "low", "none"], description: "Issue priority. Default medium." },
-        title_override: { type: "string", description: "Custom title — uses commitment text by default" },
-      },
-      required: ["commitment_id"],
-    },
-  },
 ];
 
 // ─── Tool Executors ───
@@ -803,35 +790,6 @@ async function executeBlockTime(
   return JSON.stringify({ success: true, proposalId, message: "Time block queued — approve in Actions queue" });
 }
 
-async function executeCreateExternalTask(
-  input: { commitment_id: number; priority?: string; title_override?: string },
-): Promise<string> {
-  const commitment = await db.commitments.get(input.commitment_id);
-  if (!commitment) return JSON.stringify({ error: "Commitment not found" });
-
-  const priorityMap: Record<string, 0 | 1 | 2 | 3 | 4> = {
-    urgent: 1, high: 2, medium: 3, low: 4, none: 0,
-  };
-
-  const stored = await chrome.storage.local.get("linearTeamId");
-  const teamId = (stored.linearTeamId as string | undefined) ?? "";
-
-  const { createProposal } = await import("../../background/action-executor");
-  const proposalId = await createProposal(
-    input.commitment_id,
-    "create_linear_task",
-    `Push "${(input.title_override ?? commitment.text).slice(0, 50)}" to Linear`,
-    {
-      title: input.title_override ?? commitment.text,
-      description: commitment.context_summary ?? commitment.original_quote,
-      teamId,
-      priority: priorityMap[input.priority ?? "medium"] ?? 3,
-    },
-    "clyde_chat",
-  );
-  return JSON.stringify({ success: true, proposalId, message: "Linear task queued — approve in Actions queue" });
-}
-
 // ─── Tool Dispatcher ───
 
 async function executeTool(name: string, input: Record<string, unknown>, callbacks?: { onNavigateToDraft?: (draftId: number) => void }): Promise<string> {
@@ -880,8 +838,6 @@ async function executeTool(name: string, input: Record<string, unknown>, callbac
       return executeCreateFollowUp(input as { commitment_id: number; check_at?: string });
     case "block_time":
       return executeBlockTime(input as { commitment_id: number; duration_minutes?: number; deadline?: string });
-    case "create_external_task":
-      return executeCreateExternalTask(input as { commitment_id: number; priority?: string; title_override?: string });
     default:
       return JSON.stringify({ error: `Unknown tool: ${name}` });
   }

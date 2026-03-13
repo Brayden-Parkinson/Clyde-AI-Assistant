@@ -105,7 +105,7 @@ export interface Dismissal {
 export interface ActionLogEntry {
   id?: number;
   commitmentId: number;
-  action: "calendar" | "reminder" | "slack" | "snooze" | "done" | "dismissed" | "started" | "send_message" | "block_time" | "create_meeting" | "create_linear_task";
+  action: "calendar" | "reminder" | "slack" | "snooze" | "done" | "dismissed" | "started" | "send_message" | "block_time" | "create_meeting";
   createdAt: string;
 }
 
@@ -546,8 +546,7 @@ export interface SyncEnvelope {
 export type ActionType =
   | "send_message"        // Draft + send via Slack or Gmail
   | "block_time"          // Create a Google Calendar time block
-  | "create_meeting"      // Create a Google Calendar event with attendees
-  | "create_linear_task"; // Push commitment to Linear as an issue
+  | "create_meeting";     // Create a Google Calendar event with attendees
 
 /** Lifecycle state of an ActionProposal */
 export type ActionProposalStatus =
@@ -620,32 +619,3 @@ export interface FollowUpRule {
   createdAt: string;
 }
 
-// ─── Phase 2: External Integrations ───
-
-export type IntegrationService = "linear";
-export type IntegrationStatus = "connected" | "disconnected" | "error";
-
-/** Configuration record for an external integration */
-export interface ExternalIntegration {
-  id?: number;
-  service: IntegrationService;
-  status: IntegrationStatus;
-  /** Display name fetched from the service (e.g. workspace name) */
-  workspaceName: string | null;
-  /** ISO timestamp of last successful connection check */
-  lastCheckedAt: string | null;
-  createdAt: string;
-}
-
-/** Links a local commitment to a task in an external system */
-export interface ExternalTaskLink {
-  id?: number;
-  /** FK to commitments.id */
-  commitmentId: number;
-  service: IntegrationService;
-  /** ID in the external system (e.g. "ENG-1234") */
-  externalId: string;
-  /** URL to open in browser */
-  externalUrl: string;
-  createdAt: string;
-}

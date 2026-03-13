@@ -22,7 +22,6 @@ import {
   DEMO_DIGESTS,
   DEMO_OKRS,
   DEMO_OKR_LINKS,
-  DEMO_ACTION_PROPOSALS,
 } from "@shared/demo-data";
 import { CommitmentCard } from "./components/CommitmentCard";
 import { KanbanBoard } from "./components/KanbanBoard";
@@ -38,7 +37,6 @@ import { DailyPlanner } from "./components/DailyPlanner";
 import { MemoryPanel } from "./components/MemoryPanel";
 import { InsightsPanel } from "./components/InsightsPanel";
 import { OKRPanel } from "./components/OKRPanel";
-import { ActionQueue, usePendingProposalCount } from "./components/ActionQueue";
 import { DraftComposer } from "./components/DraftComposer";
 import { PeoplePanel } from "./components/PeoplePanel";
 import {
@@ -48,7 +46,7 @@ import {
   IconSearch, InlineIcon, IconChat, IconPeople,
 } from "./components/Icons";
 
-type ViewMode = "list" | "board" | "brief" | "devlog" | "settings" | "chat" | "people" | "memory" | "insights" | "okrs" | "queue" | "draft";
+type ViewMode = "list" | "board" | "brief" | "devlog" | "settings" | "chat" | "people" | "memory" | "insights" | "okrs" | "draft";
 
 // ─── Display settings (persisted in chrome.storage.local) ───
 
@@ -1526,7 +1524,6 @@ function LeftNav({
   const [showNavSettings, setShowNavSettings] = useState(false);
   const settingsBtnRef = useRef<HTMLButtonElement>(null) as React.RefObject<HTMLButtonElement>;
   const settingsIconRef = useRef<HTMLButtonElement>(null) as React.RefObject<HTMLButtonElement>;
-  const pendingProposalCount = usePendingProposalCount(demoMode, 0);
 
   // Compute popover position from anchor button rect (fixed positioning to avoid overflow clipping)
   const getPopoverStyle = (anchor: React.RefObject<HTMLElement>, mode: "expanded" | "collapsed"): React.CSSProperties => {
@@ -1627,7 +1624,6 @@ function LeftNav({
           <NavIcon icon={<IconList size={14} />} label="List" active={viewMode === "list"} onClick={() => setViewMode("list")} />
           <NavIcon icon={<IconSun size={14} />} label="Planner" active={viewMode === "brief"} onClick={() => setViewMode("brief")} />
           <NavIcon icon={<IconChat size={14} />} label="Chat" active={viewMode === "chat"} onClick={() => setViewMode("chat")} />
-          <NavIcon icon={pendingProposalCount > 0 ? String(pendingProposalCount) : String.fromCodePoint(0x2197)} label="Actions" active={viewMode === "queue" || viewMode === "draft"} onClick={() => setViewMode("queue")} />
           <NavIcon icon={<IconPeople size={14} />} label="People" active={viewMode === "people"} onClick={() => setViewMode("people")} />
           <NavIcon icon={"M"} label="Memory" active={viewMode === "memory"} onClick={() => setViewMode("memory")} />
           <NavIcon icon={"I"} label="Insights" active={viewMode === "insights"} onClick={() => setViewMode("insights")} />
@@ -1743,7 +1739,6 @@ function LeftNav({
         <NavItem label="List" active={viewMode === "list"} onClick={() => setViewMode("list")} />
         <NavItem label="Planner" active={viewMode === "brief"} onClick={() => setViewMode("brief")} />
         <NavItem label="Chat" active={viewMode === "chat"} onClick={() => setViewMode("chat")} />
-        <NavItem label={pendingProposalCount > 0 ? `Actions (${pendingProposalCount})` : "Actions"} active={viewMode === "queue" || viewMode === "draft"} onClick={() => setViewMode("queue")} />
         <NavItem label="People" active={viewMode === "people"} onClick={() => setViewMode("people")} />
         <NavSection label="Intelligence" />
         <NavItem label="Memory" active={viewMode === "memory"} onClick={() => setViewMode("memory")} />
@@ -1846,6 +1841,8 @@ export default function App() {
   const [boardSearch, setBoardSearch] = useState("");
   const [listFilter, setListFilter] = useState<FilterKey>("all");
   const [listSearch, setListSearch] = useState("");
+  // People page filter: when set, list view shows only commitments involving this person
+  const [personFilter, setPersonFilter] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [toast, setToast] = useState<{ message: string; variant?: "success" | "error" | "warning" | "info" } | null>(null);
   const [hasApiKey, setHasApiKey] = useState<boolean | null>(null);
@@ -1874,7 +1871,6 @@ export default function App() {
   const nav = useNavCollapsed();
 
   const tags = useLiveQuery(() => db.tags.orderBy("name").toArray(), []) ?? [];
-  const pendingProposalCount = usePendingProposalCount(demoMode, demoMode ? DEMO_ACTION_PROPOSALS.filter(p => p.status === "pending").length : 0);
   const [listSelectedTags, setListSelectedTags] = useState<number[]>([]);
   const [boardSelectedTags, setBoardSelectedTags] = useState<number[]>([]);
   const toggleListTag = useCallback((id: number) => {
@@ -2058,26 +2054,6 @@ export default function App() {
     showToast("Following up in 48 hours");
   }, [demoMode, showToast]);
 
-  const onPushLinear = useCallback(async (id: number) => {
-    if (demoMode) { showToast("Queued for Linear (demo)"); return; }
-    const commitment = await db.commitments.get(id);
-    if (!commitment) return;
-    const stored = await chrome.storage.local.get("linearTeamId");
-    const { createProposal } = await import("../background/action-executor");
-    const proposalId = await createProposal(
-      id, "create_linear_task",
-      `Push "${commitment.text.slice(0, 50)}" to Linear`,
-      {
-        title: commitment.text,
-        description: commitment.context_summary ?? commitment.original_quote,
-        teamId: (stored.linearTeamId as string | undefined) ?? "",
-        priority: commitment.urgency === "high" ? 2 : commitment.urgency === "low" ? 4 : 3,
-      },
-      "manual",
-    );
-    showToast(`Queued for Linear — approve in Actions queue (proposal #${proposalId})`);
-  }, [demoMode, showToast]);
-
   const onAcceptCompletion = useCallback(async (suggestionId: number, commitmentId: number) => {
     if (demoMode) { showToast("\u2713 Marked done"); return; }
     const now = new Date().toISOString();
@@ -2149,6 +2125,16 @@ export default function App() {
     })
     .filter((c) => matchesSearch(c, listSearch))
     .filter((c) => listSelectedTags.length === 0 || (c.tag_id != null && listSelectedTags.includes(c.tag_id)))
+    .filter((c) => {
+      if (!personFilter) return true;
+      const pLower = personFilter.toLowerCase();
+      // Match if this person appears anywhere in the conversation
+      return (
+        c.conversation_messages?.some((m) => m.sender.toLowerCase() === pLower) ||
+        c.context.toLowerCase().includes(pLower) ||
+        c.text.toLowerCase().includes(pLower)
+      );
+    })
     .sort((a, b) => {
       if (a.likely_completed !== b.likely_completed) {
         return a.likely_completed ? 1 : -1;
@@ -2203,7 +2189,6 @@ export default function App() {
       onSlack={onSlack}
       onReminder={onReminder}
       onFollowUp={onFollowUp}
-      onPushLinear={onPushLinear}
       hasFollowUpRule={item.id != null && followUpRuleIds.has(item.id)}
     />
   );
@@ -2342,7 +2327,6 @@ export default function App() {
                   <option value="board">Board</option>
                   <option value="brief">Brief</option>
                   {developerMode && <option value="devlog">Dev Log</option>}
-                  <option value="queue">Actions{pendingProposalCount > 0 ? ` (${pendingProposalCount})` : ""}</option>
                   <option value="settings">Settings</option>
                 </select>
                 {viewMode !== "settings" && (
@@ -2451,12 +2435,38 @@ export default function App() {
             {/* List view */}
             {hasApiKey !== false && viewMode === "list" && (
               <div style={{ background: OS.white, paddingTop: 12 }}>
+                {/* Person filter banner — shown when navigating from People page */}
+                {personFilter && (
+                  <div style={{
+                    display: "flex", alignItems: "center", gap: 8,
+                    padding: "6px 16px 0",
+                  }}>
+                    <div style={{
+                      display: "inline-flex", alignItems: "center", gap: 6,
+                      padding: "4px 10px", borderRadius: 6,
+                      background: OS.blueBg, border: `1px solid ${OS.blue}30`,
+                      fontSize: 12, fontWeight: 500, color: OS.blue,
+                    }}>
+                      <span style={{ fontSize: 14 }}>👤</span>
+                      Commitments involving <strong>{personFilter}</strong>
+                      <button
+                        onClick={() => setPersonFilter(null)}
+                        style={{
+                          background: "none", border: "none", padding: "0 0 0 4px",
+                          color: OS.blue, cursor: "pointer", fontSize: 14, lineHeight: 1,
+                          opacity: 0.7,
+                        }}
+                        title="Clear filter"
+                      >×</button>
+                    </div>
+                  </div>
+                )}
                 <div style={{ padding: "0 16px" }}>
                   <ViewToolbar
                     filter={listFilter}
-                    onFilterChange={setListFilter}
+                    onFilterChange={(f) => { setListFilter(f); setPersonFilter(null); }}
                     search={listSearch}
-                    onSearchChange={setListSearch}
+                    onSearchChange={(s) => { setListSearch(s); if (s) setPersonFilter(null); }}
                     tags={effectiveTags}
                     selectedTags={listSelectedTags}
                     onTagToggle={toggleListTag}
@@ -2531,7 +2541,16 @@ export default function App() {
 
             {/* People view */}
             {viewMode === "people" && (
-              <PeoplePanel demoMode={demoMode} showToast={showToast} />
+              <PeoplePanel
+                demoMode={demoMode}
+                showToast={showToast}
+                onViewCommitments={(name) => {
+                  setPersonFilter(name);
+                  setListFilter("all");
+                  setListSearch("");
+                  setViewMode("list");
+                }}
+              />
             )}
 
             {/* Memory view */}
@@ -2549,21 +2568,12 @@ export default function App() {
               <OKRPanel demoMode={demoMode} demoOKRs={demoMode ? DEMO_OKRS : undefined} demoLinks={demoMode ? DEMO_OKR_LINKS : undefined} />
             )}
 
-            {/* Action Queue view */}
-            {viewMode === "queue" && (
-              <ActionQueue
-                demoMode={demoMode}
-                demoProposals={demoMode ? DEMO_ACTION_PROPOSALS : undefined}
-                onNavigateToDraft={(draftId) => { setActiveDraftId(draftId); setViewMode("draft"); }}
-              />
-            )}
-
-            {/* Draft Composer view */}
+            {/* Draft Composer view (reachable from Chat) */}
             {viewMode === "draft" && activeDraftId !== null && (
               <DraftComposer
                 draftId={activeDraftId}
                 demoMode={demoMode}
-                onBack={() => setViewMode("queue")}
+                onBack={() => setViewMode("chat")}
                 onSent={() => { setActiveDraftId(null); setViewMode("list"); }}
                 showToast={showToast}
               />

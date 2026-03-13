@@ -35,14 +35,7 @@ export interface CreateMeetingPayload {
   description: string;
 }
 
-export interface LinearTaskPayload {
-  title: string;
-  description: string;
-  teamId: string;
-  priority: 0 | 1 | 2 | 3 | 4;
-}
-
-export type ActionPayload = SendMessagePayload | BlockTimePayload | CreateMeetingPayload | LinearTaskPayload;
+export type ActionPayload = SendMessagePayload | BlockTimePayload | CreateMeetingPayload;
 
 // ─── Public API ───
 
@@ -96,10 +89,7 @@ export async function executeAction(
 
     await db.action_log.add({
       commitmentId: proposal.commitmentId,
-      action: proposal.type === "send_message" ? "send_message"
-        : proposal.type === "block_time" ? "block_time"
-        : proposal.type === "create_meeting" ? "create_meeting"
-        : "create_linear_task",
+      action: proposal.type,
       createdAt: new Date().toISOString(),
     });
 
@@ -134,8 +124,6 @@ async function routeToExecutor(proposal: ActionProposal): Promise<string> {
       return executeBlockTime(payload as BlockTimePayload);
     case "create_meeting":
       return executeCreateMeeting(payload as CreateMeetingPayload);
-    case "create_linear_task":
-      return executeCreateLinearTask(proposal.commitmentId, payload as LinearTaskPayload);
     default: {
       const _exhaustive: never = proposal.type;
       throw new Error(`Unknown action type: ${_exhaustive as string}`);
@@ -208,25 +196,3 @@ async function executeCreateMeeting(payload: CreateMeetingPayload): Promise<stri
   return result.eventUrl ? `Meeting created — ${result.eventUrl}` : "Meeting created";
 }
 
-async function executeCreateLinearTask(
-  commitmentId: number,
-  payload: LinearTaskPayload,
-): Promise<string> {
-  const { createLinearTask } = await import("./integrations/linear");
-  const result = await createLinearTask(payload);
-  if (!result.ok) throw new Error(result.error ?? "Linear task creation failed");
-
-  if (result.issueId && result.issueUrl) {
-    await db.external_task_links.add({
-      commitmentId,
-      service: "linear",
-      externalId: result.issueIdentifier ?? result.issueId,
-      externalUrl: result.issueUrl,
-      createdAt: new Date().toISOString(),
-    });
-  }
-
-  return result.issueUrl
-    ? `Linear issue created — ${result.issueIdentifier ?? result.issueId} (${result.issueUrl})`
-    : `Linear issue created — ${result.issueIdentifier ?? result.issueId}`;
-}

@@ -48,15 +48,47 @@ function IconRefresh({ spinning }: { spinning?: boolean }): React.ReactElement {
 
 interface PeoplePanelProps {
   demoMode: boolean;
-  showToast: (msg: string, variant?: "success" | "error") => void;
+  showToast: (msg: string, variant?: "success" | "error" | "info" | "warning") => void;
+  onViewCommitments?: (name: string) => void;
 }
 
-export function PeoplePanel({ demoMode, showToast }: PeoplePanelProps) {
+export function PeoplePanel({ demoMode, showToast, onViewCommitments }: PeoplePanelProps) {
   const livePeople = useLiveQuery(
     () => db.people.orderBy("commitmentCount").reverse().toArray(),
     [],
   );
-  const people: Person[] = demoMode ? DEMO_PEOPLE : (livePeople ?? []);
+
+  // Load user name to filter self out of display
+  const [selfName, setSelfName] = useState("");
+  useEffect(() => {
+    chrome.storage.local.get("userName").then((r) => {
+      setSelfName(((r.userName as string) || "").toLowerCase());
+    });
+  }, []);
+
+  // Count open (non-done, non-dismissed) commitments per person
+  const openCommitmentMap = useLiveQuery(async () => {
+    if (demoMode) return new Map<string, number>();
+    const open = await db.commitments.where("status").anyOf("new", "snoozed", "actioned").toArray();
+    const counts = new Map<string, number>();
+    for (const c of open) {
+      for (const msg of (c.conversation_messages ?? [])) {
+        const n = msg.sender.toLowerCase();
+        if (n && n !== "you") counts.set(n, (counts.get(n) ?? 0) + 1);
+      }
+    }
+    return counts;
+  }, [demoMode]) ?? new Map<string, number>();
+
+  const rawPeople: Person[] = demoMode ? DEMO_PEOPLE : (livePeople ?? []);
+  // Filter out the current user and obvious bots from display
+  const BOT_DISPLAY_PATTERN = /^(slackbot|workflow|github|linear|jira|figma|notion|zapier|app|integration|automation|bot|alert|notification|webhook|deploy|ci|cd|jenkins|travis|circleci|datadog|pagerduty|sentry|slack app)/i;
+  const people: Person[] = demoMode
+    ? rawPeople
+    : rawPeople.filter((p) =>
+        (!selfName || p.name.toLowerCase() !== selfName) &&
+        !BOT_DISPLAY_PATTERN.test(p.name)
+      );
 
   const [search, setSearch] = useState("");
   const [expandedId, setExpandedId] = useState<number | null>(null);
@@ -355,9 +387,27 @@ export function PeoplePanel({ demoMode, showToast }: PeoplePanelProps) {
                     {person.commitmentCount > 0 && (
                       <>
                         <span style={{ color: OS.faint }}>&middot;</span>
-                        <span style={{ color: person.commitmentCount > 2 ? OS.blue : OS.muted }}>
-                          {person.commitmentCount} commitment{person.commitmentCount !== 1 ? "s" : ""}
-                        </span>
+                        {(() => {
+                          const openCount = openCommitmentMap.get(person.name.toLowerCase()) ?? 0;
+                          return (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (onViewCommitments) onViewCommitments(person.name);
+                              }}
+                              style={{
+                                background: "none", border: "none", padding: 0,
+                                cursor: onViewCommitments ? "pointer" : "default",
+                                color: openCount > 0 ? OS.blue : OS.muted,
+                                fontSize: 12, fontFamily: OS.font, fontWeight: openCount > 0 ? 600 : 400,
+                                textDecoration: onViewCommitments ? "underline" : "none",
+                              }}
+                              title={onViewCommitments ? "View in commitments list" : undefined}
+                            >
+                              {openCount > 0 ? `${openCount} open` : `${person.commitmentCount} done`}
+                            </button>
+                          );
+                        })()}
                       </>
                     )}
                     {person.channels.length > 0 && (

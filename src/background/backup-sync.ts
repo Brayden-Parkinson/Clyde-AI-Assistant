@@ -10,7 +10,6 @@ const BACKUP_ALARM = "backup-save";
 const SENSITIVE_STORAGE_KEYS = new Set([
   "anthropicApiKey",
   "slackBotToken",
-  "linearApiKey",
   "googleAuthTokens",
 ]);
 

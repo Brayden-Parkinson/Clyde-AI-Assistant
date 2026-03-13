@@ -33,8 +33,6 @@ interface FormState {
   calendarEnabled: boolean;
   // Phase 2: external integration tokens (stored like anthropicApiKey)
   slackBotToken: string;
-  linearApiKey: string;
-  linearTeamId: string;
   nudgeEnabled: boolean;
 }
 
@@ -62,8 +60,6 @@ const DEFAULT_FORM: FormState = {
   granolaEnabled: true,
   calendarEnabled: true,
   slackBotToken: "",
-  linearApiKey: "",
-  linearTeamId: "",
   nudgeEnabled: true,
 };
 
@@ -344,8 +340,6 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
           granolaEnabled: result.granolaEnabled !== false,
           calendarEnabled: result.calendarEnabled !== false,
           slackBotToken: result.slackBotToken ?? "",
-          linearApiKey: result.linearApiKey ?? "",
-          linearTeamId: result.linearTeamId ?? "",
           nudgeEnabled: result.nudgeEnabled !== false,
         }));
         if (result.confidenceTuneInfo) {
@@ -435,8 +429,6 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
         granolaEnabled: formData.granolaEnabled,
         calendarEnabled: formData.calendarEnabled,
         slackBotToken: formData.slackBotToken,
-        linearApiKey: formData.linearApiKey,
-        linearTeamId: formData.linearTeamId,
         nudgeEnabled: formData.nudgeEnabled,
       },
       () => {
@@ -1263,41 +1255,6 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
             value={form.slackBotToken}
             placeholder="xoxb-..."
             onChange={(e) => update("slackBotToken", e.target.value)}
-          />
-        </div>
-      </div>
-
-      {/* Phase 2: Linear Integration */}
-      <div style={sectionStyle}>
-        <h2 style={sectionTitle}>Linear</h2>
-        <p style={{ fontSize: 12, color: OS.muted, marginBottom: 14, lineHeight: 1.5 }}>
-          Push commitments to Linear as issues. Requires a Linear API key (Personal API Keys in Linear Settings).
-          Token is stored locally and never sent to Anthropic.
-        </p>
-        <div style={{ ...fieldRow, marginBottom: 8 }}>
-          <div>
-            <div style={labelStyle}>Linear API Key</div>
-            <div style={subLabel}>lin_api_... — from Linear Settings &rarr; API &rarr; Personal API Keys</div>
-          </div>
-          <input
-            type="password"
-            style={inputStyle}
-            value={form.linearApiKey}
-            placeholder="lin_api_..."
-            onChange={(e) => update("linearApiKey", e.target.value)}
-          />
-        </div>
-        <div style={{ ...fieldRow, marginBottom: 0 }}>
-          <div>
-            <div style={labelStyle}>Default Team ID</div>
-            <div style={subLabel}>Linear team ID for new issues (found in team URL)</div>
-          </div>
-          <input
-            type="text"
-            style={inputStyle}
-            value={form.linearTeamId}
-            placeholder="TEAM-ID"
-            onChange={(e) => update("linearTeamId", e.target.value)}
           />
         </div>
       </div>
