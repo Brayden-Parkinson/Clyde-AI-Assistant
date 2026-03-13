@@ -54,6 +54,7 @@ interface CommitmentCardProps {
   isExpanded: boolean;
   isSelected?: boolean;
   isNarrow?: boolean;
+  isNew?: boolean;
   verboseMode?: boolean;
   displaySettings?: DisplaySettings;
   privacyMode?: boolean;
@@ -67,6 +68,8 @@ interface CommitmentCardProps {
   onSlack: (commitment: Commitment) => void;
   onReminder: (id: number) => void;
   onMetaUpdate?: (id: number, changes: MetaUpdate) => void;
+  onVisible?: () => void;
+  onHidden?: () => void;
   /** Phase 2: called when user clicks "Follow Up" — creates a follow-up rule */
   onFollowUp?: (id: number) => void;
   /** Phase 2: called when user clicks "Push to Linear" */
@@ -82,6 +85,7 @@ export function CommitmentCard({
   isExpanded,
   isSelected,
   isNarrow,
+  isNew,
   verboseMode,
   displaySettings,
   privacyMode,
@@ -95,6 +99,8 @@ export function CommitmentCard({
   onSlack,
   onReminder,
   onMetaUpdate,
+  onVisible,
+  onHidden,
   onFollowUp,
   onPushLinear,
   hasFollowUpRule = false,
@@ -102,6 +108,19 @@ export function CommitmentCard({
   const [hovered, setHovered] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
   const [editText, setEditText] = useState(item.text);
+  const cardRef = React.useRef<HTMLDivElement>(null);
+
+  // Intersection observer for visibility tracking (new indicator)
+  useEffect(() => {
+    if (!isNew || !onVisible || !onHidden || !cardRef.current) return;
+    const el = cardRef.current;
+    const observer = new IntersectionObserver(
+      ([entry]) => { entry.isIntersecting ? onVisible() : onHidden(); },
+      { threshold: 0.5 },
+    );
+    observer.observe(el);
+    return () => { observer.disconnect(); onHidden(); };
+  }, [isNew, onVisible, onHidden]);
 
   // Sync editText if the item changes externally (e.g. AI update)
   useEffect(() => { setEditText(item.text); }, [item.text]);
@@ -116,6 +135,7 @@ export function CommitmentCard({
 
   return (
     <div
+      ref={cardRef}
       onClick={(e) => {
         onToggle();
         if (onSelect && item.id != null) {
@@ -137,18 +157,26 @@ export function CommitmentCard({
       {/* Main row */}
       <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
         {/* Circle indicator */}
-        <div
-          style={{
-            width: 18,
-            height: 18,
-            borderRadius: 9,
-            flexShrink: 0,
-            marginTop: 2,
-            border: `2px solid ${isUrgent ? OS.red : OS.faint}`,
-            background: isUrgent ? OS.red + "0a" : "transparent",
-            transition: "border-color 0.15s ease",
-          }}
-        />
+        <div style={{ position: "relative", flexShrink: 0 }}>
+          <div
+            style={{
+              width: 18,
+              height: 18,
+              borderRadius: 9,
+              marginTop: 2,
+              border: `2px solid ${isUrgent ? OS.red : OS.faint}`,
+              background: isUrgent ? OS.red + "0a" : "transparent",
+              transition: "border-color 0.15s ease",
+            }}
+          />
+          {isNew && (
+            <div style={{
+              position: "absolute", top: 0, right: -3,
+              width: 7, height: 7, borderRadius: "50%",
+              background: OS.blue, border: `1.5px solid ${OS.white}`,
+            }} />
+          )}
+        </div>
 
         {/* Content */}
         <div style={{ flex: 1, minWidth: 0 }}>

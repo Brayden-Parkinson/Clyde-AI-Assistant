@@ -7,6 +7,7 @@ import { db } from "@shared/db";
 import { useCommitments } from "./hooks/useCommitments";
 import { useActions, type Actions } from "./hooks/useActions";
 import { useKanban } from "./hooks/useKanban";
+import { useSeenCommitments } from "./hooks/useSeenCommitments";
 import {
   DEMO_ACTIVE,
   DEMO_KANBAN,
@@ -1783,6 +1784,10 @@ export default function App() {
   const isNarrow = !isWide;
   const [viewMode, setViewMode] = useState<ViewMode>("board");
   const [activeDraftId, setActiveDraftId] = useState<number | null>(null);
+  // Clear draft state when user navigates away from draft view
+  useEffect(() => {
+    if (viewMode !== "draft") setActiveDraftId(null);
+  }, [viewMode]);
   const [developerMode, setDeveloperMode] = useState(false);
   const [demoMode, setDemoMode] = useState(false);
   const [privacyMode, setPrivacyMode] = useState(false);
@@ -1791,6 +1796,7 @@ export default function App() {
   const todoOverflowFiredRef = useRef(false);
   const scanAgo = useScanAgo();
   const realKanban = useKanban(boardFilter);
+  const { isNew: isNewCommitment, markVisible, markHidden } = useSeenCommitments();
   const { settings: displaySettings, update: updateDisplay } = useDisplaySettings();
   const nav = useNavCollapsed();
 
@@ -1809,6 +1815,15 @@ export default function App() {
     () => db.completion_suggestions.where("status").equals("pending").toArray(),
     []
   ) ?? [];
+
+  // Phase 2: set of commitment IDs that have an active follow-up rule (for CommitmentCard badges)
+  const followUpRuleIds = useLiveQuery(
+    () => demoMode
+      ? Promise.resolve(new Set<number>())
+      : db.follow_up_rules.where("status").equals("active").toArray()
+          .then((rules) => new Set(rules.map((r) => r.commitmentId))),
+    [demoMode],
+  ) ?? new Set<number>();
 
   useEffect(() => {
     chrome.storage.local.get(["anthropicApiKey", "userName", "developerMode", "demoMode"]).then((result) => {
@@ -1964,6 +1979,32 @@ export default function App() {
     [demoMode, showToast],
   );
 
+  const onFollowUp = useCallback(async (id: number) => {
+    if (demoMode) { showToast("Follow-up set (demo)"); return; }
+    await chrome.runtime.sendMessage({ type: "SET_FOLLOW_UP", commitmentId: id });
+    showToast("Following up in 48 hours");
+  }, [demoMode, showToast]);
+
+  const onPushLinear = useCallback(async (id: number) => {
+    if (demoMode) { showToast("Queued for Linear (demo)"); return; }
+    const commitment = await db.commitments.get(id);
+    if (!commitment) return;
+    const stored = await chrome.storage.local.get("linearTeamId");
+    const { createProposal } = await import("../background/action-executor");
+    const proposalId = await createProposal(
+      id, "create_linear_task",
+      `Push "${commitment.text.slice(0, 50)}" to Linear`,
+      {
+        title: commitment.text,
+        description: commitment.context_summary ?? commitment.original_quote,
+        teamId: (stored.linearTeamId as string | undefined) ?? "",
+        priority: commitment.urgency === "high" ? 2 : commitment.urgency === "low" ? 4 : 3,
+      },
+      "manual",
+    );
+    showToast(`Queued for Linear — approve in Actions queue (proposal #${proposalId})`);
+  }, [demoMode, showToast]);
+
   const onAcceptCompletion = useCallback(async (suggestionId: number, commitmentId: number) => {
     if (demoMode) { showToast("\u2713 Marked done"); return; }
     const now = new Date().toISOString();
@@ -2071,6 +2112,7 @@ export default function App() {
       isExpanded={expandedId === item.id}
       isSelected={selectedId === item.id}
       isNarrow={!isWide}
+      isNew={isNewCommitment(item.id, item.createdAt)}
       verboseMode={displaySettings.showConfidence}
       displaySettings={displaySettings}
       privacyMode={privacyMode}
@@ -2078,6 +2120,8 @@ export default function App() {
         setExpandedId(expandedId === item.id ? null : (item.id ?? null))
       }
       onSelect={(id) => setSelectedId(selectedId === id ? null : id)}
+      onVisible={item.id != null ? () => markVisible(item.id!) : undefined}
+      onHidden={item.id != null ? () => markHidden(item.id!) : undefined}
       onDismiss={onDismiss}
       onClose={onClose}
       onDone={onDone}
@@ -2085,6 +2129,9 @@ export default function App() {
       onCalendar={onCalendar}
       onSlack={onSlack}
       onReminder={onReminder}
+      onFollowUp={onFollowUp}
+      onPushLinear={onPushLinear}
+      hasFollowUpRule={item.id != null && followUpRuleIds.has(item.id)}
     />
   );
 
@@ -2320,6 +2367,9 @@ export default function App() {
                   privacyMode={privacyMode}
                   onTodoOverflow={handleTodoOverflow}
                   tagMap={tagMap}
+                  isNewFn={isNewCommitment}
+                  onMarkVisible={markVisible}
+                  onMarkHidden={markHidden}
                 />
               </>
             )}

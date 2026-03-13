@@ -1283,6 +1283,7 @@ export function ClydeChat({ fullView, showToast, sidePanelOpen, proactiveMessage
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const sendMessageRef = useRef<(text: string) => void>(() => {});
+  const [hoveredSessionId, setHoveredSessionId] = useState<number | null>(null);
 
   // Chat history persistence
   const {
@@ -1293,6 +1294,7 @@ export function ClydeChat({ fullView, showToast, sidePanelOpen, proactiveMessage
     loadSession,
     persistMessage,
     deleteSession,
+    renameSession,
   } = useChatHistory(!!demoMode);
 
   // On mount, if fullView and no active session, create one
@@ -1386,11 +1388,17 @@ export function ClydeChat({ fullView, showToast, sidePanelOpen, proactiveMessage
   const sendMessage = useCallback(
     async (text: string) => {
       if (!text.trim() || loading || demoMode || !hasApiKey) return;
+      const isFirstMessage = messages.length === 0;
       const userMsg: ChatMessage = { role: "user", content: text.trim() };
       setMessages((prev) => [...prev, userMsg]);
       setInput("");
       setInterimVoice("");
       setLoading(true);
+
+      // Auto-rename session from first user message
+      if (isFirstMessage && fullView && activeSessionId != null) {
+        renameSession(activeSessionId, text.trim().slice(0, 50));
+      }
 
       try {
         // Build API messages: context + conversation history (last 20) + new message
@@ -1440,7 +1448,7 @@ export function ClydeChat({ fullView, showToast, sidePanelOpen, proactiveMessage
         setLoading(false);
       }
     },
-    [messages, loading, fullView, activeSessionId, persistMessage],
+    [messages, loading, fullView, activeSessionId, persistMessage, renameSession],
   );
   sendMessageRef.current = sendMessage;
 
@@ -1559,6 +1567,22 @@ export function ClydeChat({ fullView, showToast, sidePanelOpen, proactiveMessage
     return `${days}d ago`;
   };
 
+  // ─── Timestamp helper for messages ───
+  const formatMsgTime = (index: number) => {
+    if (!fullView) return null;
+    // Use persisted message timestamps when available
+    const persisted = persistedMessages[index];
+    if (!persisted?.createdAt) return null;
+    const date = new Date(persisted.createdAt);
+    const now = new Date();
+    const isToday = date.toDateString() === now.toDateString();
+    if (isToday) {
+      return date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+    }
+    return date.toLocaleDateString("en-US", { month: "short", day: "numeric" }) +
+      " " + date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+  };
+
   // ─── Shared chat content builders ───
 
   const renderChatMessages = () => (
@@ -1574,13 +1598,26 @@ export function ClydeChat({ fullView, showToast, sidePanelOpen, proactiveMessage
       }}
     >
       {messages.length === 0 && !loading && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 8 }}>
+        <div style={{
+          display: "flex", flexDirection: "column", gap: 12,
+          ...(fullView ? { flex: 1, justifyContent: "center", alignItems: "center", padding: "32px 0" } : { marginTop: 8 }),
+        }}>
           {demoMode ? (
             <div style={{
-              alignSelf: "flex-start", maxWidth: "88%",
+              alignSelf: fullView ? "center" : "flex-start", maxWidth: "88%",
               padding: "10px 14px", borderRadius: 12,
               background: OS.bg, fontSize: 13, lineHeight: 1.5, color: OS.text,
+              textAlign: fullView ? "center" : "left",
             }}>
+              {fullView && (
+                <div style={{
+                  width: 40, height: 40, borderRadius: "50%", background: OS.blue,
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  margin: "0 auto 8px",
+                }}>
+                  <span style={{ fontSize: 16, fontWeight: 700, color: OS.white, fontFamily: OS.font }}>C</span>
+                </div>
+              )}
               <div style={{ fontWeight: 600, marginBottom: 4 }}>Hey! I'm Clyde.</div>
               <div style={{ color: OS.secondary }}>
                 Chat is available once you exit demo mode and add your Anthropic API key in Settings.
@@ -1588,10 +1625,20 @@ export function ClydeChat({ fullView, showToast, sidePanelOpen, proactiveMessage
             </div>
           ) : !hasApiKey ? (
             <div style={{
-              alignSelf: "flex-start", maxWidth: "88%",
+              alignSelf: fullView ? "center" : "flex-start", maxWidth: "88%",
               padding: "10px 14px", borderRadius: 12,
               background: OS.bg, fontSize: 13, lineHeight: 1.5, color: OS.text,
+              textAlign: fullView ? "center" : "left",
             }}>
+              {fullView && (
+                <div style={{
+                  width: 40, height: 40, borderRadius: "50%", background: OS.blue,
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  margin: "0 auto 8px",
+                }}>
+                  <span style={{ fontSize: 16, fontWeight: 700, color: OS.white, fontFamily: OS.font }}>C</span>
+                </div>
+              )}
               <div style={{ fontWeight: 600, marginBottom: 4 }}>Hey! I'm Clyde.</div>
               <div style={{ color: OS.secondary }}>
                 To use chat, add your Anthropic API key in Settings first.
@@ -1599,42 +1646,54 @@ export function ClydeChat({ fullView, showToast, sidePanelOpen, proactiveMessage
             </div>
           ) : (
             <>
+              {fullView && (
+                <div style={{
+                  width: 48, height: 48, borderRadius: "50%", background: OS.blue,
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  marginBottom: 4,
+                }}>
+                  <span style={{ fontSize: 20, fontWeight: 700, color: OS.white, fontFamily: OS.font }}>C</span>
+                </div>
+              )}
               <div style={{
-                alignSelf: "flex-start", maxWidth: "88%",
-                padding: "10px 14px", borderRadius: 12,
-                background: OS.bg, fontSize: 13, lineHeight: 1.5, color: OS.text,
+                alignSelf: fullView ? "center" : "flex-start", maxWidth: "88%",
+                padding: fullView ? "12px 20px" : "10px 14px", borderRadius: 12,
+                background: OS.bg,
+                fontSize: fullView ? 14 : 13, lineHeight: 1.5, color: OS.text,
+                textAlign: fullView ? "center" : "left",
               }}>
-                <div style={{ fontWeight: 600, marginBottom: 4 }}>Hey! I'm Clyde.</div>
+                <div style={{ fontWeight: 600, marginBottom: 4, fontSize: fullView ? 16 : undefined }}>Hey! I'm Clyde.</div>
                 <div style={{ color: OS.secondary }}>
                   I keep track of your commitments so nothing slips through. Ask me anything — or try one of these:
                 </div>
               </div>
-              {[
-                "What's overdue?",
-                "Add task: review PR by Friday",
-                "Show my urgent items",
-                "Summarize my board",
-              ].map((prompt) => (
-                <button
-                  key={prompt}
-                  onClick={() => sendMessage(prompt)}
-                  style={{
-                    alignSelf: "flex-end",
-                    padding: "7px 12px",
-                    border: `1px solid ${OS.blue}`,
-                    borderRadius: 16,
-                    background: OS.white,
-                    color: OS.blue,
-                    fontSize: 12,
-                    fontWeight: 500,
-                    fontFamily: OS.font,
-                    cursor: "pointer",
-                    textAlign: "left",
-                  }}
-                >
-                  {prompt}
-                </button>
-              ))}
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignSelf: "flex-start" }}>
+                {[
+                  "What's overdue?",
+                  "Add task: review PR by Friday",
+                  "Show my urgent items",
+                  "Summarize my board",
+                ].map((prompt) => (
+                  <button
+                    key={prompt}
+                    onClick={() => sendMessage(prompt)}
+                    style={{
+                      padding: "7px 12px",
+                      border: `1px solid ${OS.blue}`,
+                      borderRadius: 16,
+                      background: OS.white,
+                      color: OS.blue,
+                      fontSize: 12,
+                      fontWeight: 500,
+                      fontFamily: OS.font,
+                      cursor: "pointer",
+                      textAlign: "left",
+                    }}
+                  >
+                    {prompt}
+                  </button>
+                ))}
+              </div>
             </>
           )}
         </div>
@@ -1682,6 +1741,19 @@ export function ClydeChat({ fullView, showToast, sidePanelOpen, proactiveMessage
                 ))}
               </div>
             )}
+            {(() => {
+              const ts = formatMsgTime(i);
+              return ts ? (
+                <div style={{
+                  alignSelf: msg.role === "user" ? "flex-end" : "flex-start",
+                  fontSize: 10, color: OS.faint, marginTop: -4,
+                  paddingLeft: msg.role === "user" ? 0 : 2,
+                  paddingRight: msg.role === "user" ? 2 : 0,
+                }}>
+                  {ts}
+                </div>
+              ) : null;
+            })()}
           </React.Fragment>
         );
       })}
@@ -1790,11 +1862,14 @@ export function ClydeChat({ fullView, showToast, sidePanelOpen, proactiveMessage
                 onClick={() => {
                   if (s.id != null) loadSession(s.id);
                 }}
+                onMouseEnter={() => { if (s.id != null) setHoveredSessionId(s.id); }}
+                onMouseLeave={() => setHoveredSessionId(null)}
                 style={{
                   padding: "8px 12px", cursor: "pointer", display: "flex",
                   alignItems: "center", justifyContent: "space-between",
-                  background: s.id === activeSessionId ? OS.white : "transparent",
+                  background: s.id === activeSessionId ? OS.white : s.id === hoveredSessionId ? OS.white : "transparent",
                   borderLeft: s.id === activeSessionId ? `2px solid ${OS.blue}` : "2px solid transparent",
+                  transition: "background 0.15s ease",
                 }}
               >
                 <div style={{ flex: 1, minWidth: 0 }}>

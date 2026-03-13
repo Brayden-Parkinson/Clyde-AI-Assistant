@@ -211,6 +211,11 @@ class ClydeDB extends Dexie {
       commitment_okr_links: "++id, commitmentId, okrId, createdAt",
       sync_outbox: "++id, table, timestamp",
     });
+
+    // Fix: index commitmentCount on people for orderBy queries
+    this.version(16).stores({
+      people: "++id, &name, email, relationship, lastSeenAt, commitmentCount, createdAt",
+    });
   }
 }
 

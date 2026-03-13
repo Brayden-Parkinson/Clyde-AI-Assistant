@@ -5,13 +5,13 @@ import { db } from "@shared/db";
 import type { Commitment, MorningBrief, CalendarEvent, DailyReview } from "@shared/types";
 import { DEMO_BRIEFS } from "@shared/demo-data";
 
-// ─── Action Badge Colors ───
+// ─── Action Badge Colors (using OS tokens, no hardcoded hex) ───
 
-const ACTION_COLORS: Record<string, { bg: string; text: string }> = {
-  calendar: { bg: OS.blueBg, text: OS.blue },
-  do: { bg: "#f0fdf4", text: OS.green },
-  delegate: { bg: OS.yellowBg, text: OS.yellowText },
-  prep: { bg: "#faf5ff", text: "#7c3aed" },
+const ACTION_COLORS: Record<string, { bg: string; text: string; border: string }> = {
+  calendar: { bg: OS.blueBg, text: OS.blue, border: OS.blue },
+  do: { bg: `${OS.green}10`, text: OS.green, border: OS.green },
+  delegate: { bg: OS.yellowBg, text: OS.yellowText, border: OS.warning },
+  prep: { bg: `${OS.blue}15`, text: OS.blue, border: OS.blue },
 };
 
 // ─── Helper: format time from ISO string ───
@@ -27,6 +27,39 @@ function formatTime(iso: string): string {
 
 function formatTimeRange(start: string, end: string): string {
   return `${formatTime(start)} - ${formatTime(end)}`;
+}
+
+function formatTodayDate(): string {
+  return new Date().toLocaleDateString("en-US", {
+    weekday: "long", month: "long", day: "numeric",
+  });
+}
+
+// ─── Skeleton placeholder ───
+
+function SkeletonCard({ width = "100%" }: { width?: string }) {
+  return (
+    <div style={{
+      height: 56, borderRadius: 8, background: OS.bg,
+      border: `1px solid ${OS.border}`, width,
+      animation: "pulse 1.5s ease-in-out infinite",
+    }} />
+  );
+}
+
+// ─── Section header helper ───
+
+function SectionHeader({ children }: { children: React.ReactNode }) {
+  return (
+    <div style={{
+      fontSize: 12, fontWeight: 600, color: OS.muted,
+      textTransform: "uppercase" as const, letterSpacing: "0.04em", marginBottom: 10,
+      display: "flex", alignItems: "center", gap: 6,
+    }}>
+      <div style={{ width: 3, height: 14, borderRadius: 2, background: OS.blue, flexShrink: 0 }} />
+      {children}
+    </div>
+  );
 }
 
 // ─── Demo calendar events ───
@@ -53,6 +86,17 @@ const DEMO_CALENDAR_EVENTS: Array<{ title: string; startTime: string; endTime: s
   ];
 })();
 
+// ─── Pulse keyframe injection (only once) ───
+
+let pulseInjected = false;
+function ensurePulseAnimation() {
+  if (pulseInjected) return;
+  pulseInjected = true;
+  const style = document.createElement("style");
+  style.textContent = `@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }`;
+  document.head.appendChild(style);
+}
+
 // ─── DailyPlanner Component ───
 
 export function DailyPlanner({
@@ -65,6 +109,9 @@ export function DailyPlanner({
   showToast: (msg: string, variant?: "success" | "error") => void;
 }) {
   const todayDateStr = new Date().toISOString().slice(0, 10);
+
+  // Inject pulse animation for skeletons
+  useEffect(() => { ensurePulseAnimation(); }, []);
 
   // ─── Data queries ───
 
@@ -184,17 +231,50 @@ export function DailyPlanner({
   return (
     <div style={{ fontFamily: OS.font, paddingTop: 0 }}>
 
-      {/* Auto-generating indicator */}
-      {!todayBrief && generating && (
+      {/* Day Header — always visible */}
+      {todayBrief ? (
         <div style={{
-          display: "flex", alignItems: "center", justifyContent: "center",
-          padding: "16px", background: OS.white, borderBottom: `1px solid ${OS.border}`,
-          fontSize: 13, color: OS.muted, gap: 8,
+          padding: "16px 16px 14px", background: OS.white,
+          borderBottom: `1px solid ${OS.border}`,
         }}>
-          Building your daily plan...
+          <div style={{ fontSize: 18, fontWeight: 700, color: OS.text, lineHeight: 1.3 }}>
+            {todayBrief.greeting}
+          </div>
+          <div style={{ fontSize: 12, color: OS.muted, marginTop: 2, marginBottom: 10 }}>
+            {formatTodayDate()}
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <input
+              type="text"
+              placeholder="What's your focus today?"
+              value={dayIntention}
+              onChange={(e) => setDayIntention(e.target.value)}
+              onBlur={handleSaveIntention}
+              onKeyDown={(e) => { if (e.key === "Enter") handleSaveIntention(); }}
+              style={{
+                flex: 1, padding: "7px 10px", fontSize: 13,
+                border: `1px solid ${OS.border}`, borderRadius: 6,
+                fontFamily: OS.font, color: OS.text,
+                background: OS.bg, outline: "none",
+              }}
+            />
+          </div>
+        </div>
+      ) : (
+        <div style={{
+          padding: "16px 16px 14px", background: OS.white,
+          borderBottom: `1px solid ${OS.border}`,
+        }}>
+          <div style={{ fontSize: 18, fontWeight: 700, color: OS.text, lineHeight: 1.3 }}>
+            Good {new Date().getHours() < 12 ? "morning" : new Date().getHours() < 17 ? "afternoon" : "evening"}
+          </div>
+          <div style={{ fontSize: 12, color: OS.muted, marginTop: 2 }}>
+            {formatTodayDate()}
+          </div>
         </div>
       )}
 
+      {/* Error banner */}
       {genError && (
         <div style={{
           margin: "12px 16px 0", padding: "8px 12px",
@@ -205,19 +285,43 @@ export function DailyPlanner({
         </div>
       )}
 
-      {/* No brief + not generating */}
-      {!todayBrief && !generating && (
-        <div style={{ textAlign: "center", padding: "52px 16px" }}>
-          <div style={{ fontSize: 14, fontWeight: 600, color: OS.text, marginBottom: 6 }}>
+      {/* Loading skeleton state — no brief, generation in progress */}
+      {!todayBrief && generating && (
+        <div style={{ padding: "16px", display: "flex", flexDirection: "column", gap: 16 }}>
+          <div>
+            <SectionHeader>Building your plan...</SectionHeader>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <SkeletonCard />
+              <SkeletonCard />
+              <SkeletonCard width="80%" />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* No brief + not generating — empty state with CTA */}
+      {!todayBrief && !generating && !genError && (
+        <div style={{
+          textAlign: "center", padding: "48px 24px",
+          display: "flex", flexDirection: "column", alignItems: "center", gap: 8,
+        }}>
+          <div style={{
+            width: 48, height: 48, borderRadius: "50%",
+            background: OS.blueBg, display: "flex", alignItems: "center",
+            justifyContent: "center", marginBottom: 4,
+          }}>
+            <span style={{ fontSize: 22 }}>&#x1F4CB;</span>
+          </div>
+          <div style={{ fontSize: 15, fontWeight: 600, color: OS.text }}>
             No brief yet
           </div>
-          <div style={{ fontSize: 13, color: OS.muted, lineHeight: 1.6, marginBottom: 16 }}>
-            Check your API key in settings and try again.
+          <div style={{ fontSize: 13, color: OS.muted, lineHeight: 1.6, maxWidth: 260 }}>
+            Generate your daily plan to see priorities, calendar, and schedule suggestions.
           </div>
           <button
             onClick={handleGenerateBrief}
             style={{
-              padding: "6px 14px", fontSize: 12, fontWeight: 600,
+              marginTop: 8, padding: "8px 18px", fontSize: 13, fontWeight: 600,
               background: OS.blue, color: OS.white, border: "none",
               borderRadius: 6, cursor: "pointer",
             }}
@@ -227,218 +331,184 @@ export function DailyPlanner({
         </div>
       )}
 
-      {/* Main planner content */}
-      {todayBrief && (
-        <>
-          {/* Section 1: Day Header */}
-          <div style={{
-            padding: "16px 16px 12px", background: OS.white,
-            borderBottom: `1px solid ${OS.border}`,
-          }}>
-            <div style={{ fontSize: 14, fontWeight: 600, color: OS.text, marginBottom: 8 }}>
-              {todayBrief.greeting}
-            </div>
-            <div style={{ display: "flex", gap: 8 }}>
-              <input
-                type="text"
-                placeholder="What's your focus today?"
-                value={dayIntention}
-                onChange={(e) => setDayIntention(e.target.value)}
-                onBlur={handleSaveIntention}
-                onKeyDown={(e) => { if (e.key === "Enter") handleSaveIntention(); }}
-                style={{
-                  flex: 1, padding: "7px 10px", fontSize: 13,
-                  border: `1px solid ${OS.border}`, borderRadius: 6,
-                  fontFamily: OS.font, color: OS.text,
-                  background: OS.bg, outline: "none",
-                }}
-              />
-            </div>
-          </div>
-
-          {/* Section 2: Calendar Timeline */}
-          {todayCalendarEvents.length > 0 && (
-            <div style={{ padding: "12px 16px", background: OS.white, borderBottom: `1px solid ${OS.border}` }}>
-              <div style={{
-                fontSize: 11, fontWeight: 600, color: OS.muted,
-                textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 8,
+      {/* Calendar Timeline — always visible (not gated on todayBrief) */}
+      <div style={{ padding: "14px 16px 0", background: OS.white }}>
+        <SectionHeader>Calendar</SectionHeader>
+        {todayCalendarEvents.length > 0 ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, paddingBottom: 14 }}>
+            {todayCalendarEvents.map((event, i) => (
+              <div key={i} style={{
+                display: "flex", alignItems: "flex-start", gap: 10,
               }}>
-                Calendar
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                {todayCalendarEvents.map((event, i) => (
-                  <div key={i} style={{
-                    display: "flex", alignItems: "flex-start", gap: 10,
-                  }}>
-                    <div style={{
-                      fontSize: 11, color: OS.muted, fontFamily: OS.mono,
-                      minWidth: 72, flexShrink: 0, paddingTop: 2,
-                    }}>
-                      {formatTime(event.startTime)}
-                    </div>
-                    <div style={{
-                      flex: 1, padding: "6px 10px",
-                      background: OS.blueBg, borderRadius: 6,
-                      borderLeft: `3px solid ${OS.blue}`,
-                    }}>
-                      <div style={{ fontSize: 12, fontWeight: 600, color: OS.text }}>
-                        {event.title}
-                      </div>
-                      <div style={{ fontSize: 11, color: OS.muted, marginTop: 2 }}>
-                        {formatTimeRange(event.startTime, event.endTime)}
-                      </div>
-                    </div>
+                <div style={{
+                  fontSize: 11, color: OS.muted, fontFamily: OS.mono,
+                  minWidth: 72, flexShrink: 0, paddingTop: 2,
+                }}>
+                  {formatTime(event.startTime)}
+                </div>
+                <div style={{
+                  flex: 1, padding: "6px 10px",
+                  background: OS.blueBg, borderRadius: 6,
+                  borderLeft: `3px solid ${OS.blue}`,
+                }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: OS.text }}>
+                    {event.title}
                   </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {todayCalendarEvents.length === 0 && (
-            <div style={{
-              padding: "10px 16px", background: OS.white,
-              borderBottom: `1px solid ${OS.border}`,
-              fontSize: 12, color: OS.faint,
-            }}>
-              No calendar events for today
-            </div>
-          )}
-
-          {/* Section 3: Priorities */}
-          {todayBrief.priorities.length > 0 && (
-            <div style={{ padding: "12px 16px", background: OS.white, borderBottom: `1px solid ${OS.border}` }}>
-              <div style={{
-                fontSize: 11, fontWeight: 600, color: OS.muted,
-                textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 8,
-              }}>
-                Priorities
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {todayBrief.priorities.map((priority, i) => {
-                  const actionStyle = ACTION_COLORS[priority.action] ?? ACTION_COLORS.do;
-                  return (
-                    <div key={i} style={{
-                      padding: "10px 12px", background: OS.bg,
-                      borderRadius: 8, border: `1px solid ${OS.border}`,
-                    }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-                        <span style={{ fontSize: 13, fontWeight: 600, color: OS.text, flex: 1 }}>
-                          {priority.text}
-                        </span>
-                        <span style={{
-                          fontSize: 10, fontWeight: 600, padding: "2px 6px",
-                          borderRadius: 4, background: actionStyle.bg, color: actionStyle.text,
-                          textTransform: "uppercase", letterSpacing: "0.03em", flexShrink: 0,
-                        }}>
-                          {priority.action}
-                        </span>
-                      </div>
-                      <div style={{ fontSize: 12, color: OS.secondary, lineHeight: 1.5 }}>
-                        {priority.reason}
-                      </div>
-                      {priority.suggestedTime && (
-                        <div style={{ fontSize: 11, color: OS.muted, marginTop: 4 }}>
-                          Suggested: {priority.suggestedTime}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {/* Section 4: Schedule Suggestion */}
-          {todayBrief.scheduleSuggestion && (
-            <div style={{ padding: "12px 16px", background: OS.white, borderBottom: `1px solid ${OS.border}` }}>
-              <div style={{
-                fontSize: 11, fontWeight: 600, color: OS.muted,
-                textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 8,
-              }}>
-                Suggested Schedule
-              </div>
-              <div style={{
-                fontSize: 13, color: OS.secondary, lineHeight: 1.6,
-                padding: "10px 12px", background: OS.bg, borderRadius: 6,
-                border: `1px solid ${OS.border}`,
-              }}>
-                {todayBrief.scheduleSuggestion}
-              </div>
-            </div>
-          )}
-
-          {/* Section 5: EOD Review */}
-          <div style={{ padding: "12px 16px", background: OS.white, borderBottom: `1px solid ${OS.border}` }}>
-            <div style={{
-              fontSize: 11, fontWeight: 600, color: OS.muted,
-              textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 8,
-            }}>
-              End of Day Review
-            </div>
-
-            {todayReview ? (
-              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                {/* Completed count */}
-                <div style={{
-                  display: "flex", alignItems: "center", gap: 8,
-                  padding: "8px 12px", background: "#f0fdf4", borderRadius: 6,
-                  border: `1px solid ${OS.green}20`,
-                }}>
-                  <span style={{ fontSize: 20, fontWeight: 700, color: OS.green }}>
-                    {todayReview.completedItems.length}
-                  </span>
-                  <span style={{ fontSize: 12, color: OS.secondary }}>
-                    {todayReview.completedItems.length === 1 ? "item completed" : "items completed"} today
-                  </span>
+                  <div style={{ fontSize: 11, color: OS.muted, marginTop: 2 }}>
+                    {formatTimeRange(event.startTime, event.endTime)}
+                  </div>
                 </div>
-
-                {/* Reflection */}
-                <div style={{
-                  fontSize: 13, color: OS.secondary, lineHeight: 1.6,
-                  padding: "10px 12px", background: OS.bg, borderRadius: 6,
-                  border: `1px solid ${OS.border}`, whiteSpace: "pre-line",
-                }}>
-                  {todayReview.reflection}
-                </div>
-
-                {/* User notes */}
-                <textarea
-                  placeholder="Add your own notes about today..."
-                  value={userNotes}
-                  onChange={(e) => setUserNotes(e.target.value)}
-                  onBlur={handleSaveUserNotes}
-                  style={{
-                    width: "100%", minHeight: 60, padding: "8px 10px",
-                    fontSize: 12, fontFamily: OS.font, color: OS.text,
-                    border: `1px solid ${OS.border}`, borderRadius: 6,
-                    background: OS.white, outline: "none", resize: "vertical",
-                    boxSizing: "border-box",
-                  }}
-                />
               </div>
-            ) : (
-              <div style={{ textAlign: "center", padding: "16px 0" }}>
-                <div style={{ fontSize: 12, color: OS.muted, marginBottom: 10 }}>
-                  Reflect on what you accomplished today
-                </div>
-                <button
-                  onClick={handleStartReview}
-                  disabled={reviewGenerating}
-                  style={{
-                    padding: "6px 14px", fontSize: 12, fontWeight: 600,
-                    background: reviewGenerating ? OS.faint : OS.blue,
-                    color: OS.white, border: "none", borderRadius: 6,
-                    cursor: reviewGenerating ? "default" : "pointer",
-                    opacity: reviewGenerating ? 0.7 : 1,
-                  }}
-                >
-                  {reviewGenerating ? "Generating..." : "Start Review"}
-                </button>
-              </div>
-            )}
+            ))}
           </div>
+        ) : (
+          <div style={{ fontSize: 12, color: OS.faint, paddingBottom: 14 }}>
+            No calendar events for today
+          </div>
+        )}
+      </div>
+
+      {/* Divider */}
+      <div style={{ height: 1, background: OS.border }} />
+
+      {/* Priorities — gated on todayBrief since data depends on it */}
+      {todayBrief && todayBrief.priorities.length > 0 && (
+        <>
+          <div style={{ padding: "14px 16px 0", background: OS.white }}>
+            <SectionHeader>Priorities</SectionHeader>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, paddingBottom: 14 }}>
+              {todayBrief.priorities.map((priority, i) => {
+                const actionStyle = ACTION_COLORS[priority.action] ?? ACTION_COLORS.do;
+                return (
+                  <div key={i} style={{
+                    padding: "10px 12px", background: OS.bg,
+                    borderRadius: 8, border: `1px solid ${OS.border}`,
+                    borderLeft: `3px solid ${actionStyle.border}`,
+                  }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                      <span style={{ fontSize: 13, fontWeight: 600, color: OS.text, flex: 1 }}>
+                        {priority.text}
+                      </span>
+                      <span style={{
+                        fontSize: 11, fontWeight: 600, padding: "3px 8px",
+                        borderRadius: 4, background: actionStyle.bg, color: actionStyle.text,
+                        textTransform: "uppercase", letterSpacing: "0.03em", flexShrink: 0,
+                      }}>
+                        {priority.action}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: 12, color: OS.secondary, lineHeight: 1.5 }}>
+                      {priority.reason}
+                    </div>
+                    {priority.suggestedTime && (
+                      <div style={{ fontSize: 11, color: OS.muted, marginTop: 4 }}>
+                        Suggested: {priority.suggestedTime}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+          <div style={{ height: 1, background: OS.border }} />
         </>
       )}
+
+      {/* Schedule Suggestion — gated on todayBrief */}
+      {todayBrief?.scheduleSuggestion && (
+        <>
+          <div style={{ padding: "14px 16px 0", background: OS.white }}>
+            <SectionHeader>Suggested Schedule</SectionHeader>
+            <div style={{
+              fontSize: 13, color: OS.secondary, lineHeight: 1.6,
+              padding: "10px 12px", background: OS.bg, borderRadius: 6,
+              border: `1px solid ${OS.border}`, marginBottom: 14,
+            }}>
+              {todayBrief.scheduleSuggestion}
+            </div>
+          </div>
+          <div style={{ height: 1, background: OS.border }} />
+        </>
+      )}
+
+      {/* EOD Review — always visible */}
+      <div style={{ padding: "14px 16px 16px", background: OS.white }}>
+        <SectionHeader>End of Day Review</SectionHeader>
+
+        {todayReview ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {/* Completed count */}
+            <div style={{
+              display: "flex", alignItems: "center", gap: 8,
+              padding: "8px 12px", background: `${OS.green}10`, borderRadius: 6,
+              border: `1px solid ${OS.green}20`,
+            }}>
+              <span style={{ fontSize: 20, fontWeight: 700, color: OS.green }}>
+                {todayReview.completedItems.length}
+              </span>
+              <span style={{ fontSize: 12, color: OS.secondary }}>
+                {todayReview.completedItems.length === 1 ? "item completed" : "items completed"} today
+              </span>
+            </div>
+
+            {/* Reflection */}
+            <div style={{
+              fontSize: 13, color: OS.secondary, lineHeight: 1.6,
+              padding: "10px 12px", background: OS.bg, borderRadius: 6,
+              border: `1px solid ${OS.border}`, whiteSpace: "pre-line",
+            }}>
+              {todayReview.reflection}
+            </div>
+
+            {/* User notes */}
+            <textarea
+              placeholder="Add your own notes about today..."
+              value={userNotes}
+              onChange={(e) => setUserNotes(e.target.value)}
+              onBlur={handleSaveUserNotes}
+              style={{
+                width: "100%", minHeight: 60, padding: "8px 10px",
+                fontSize: 12, fontFamily: OS.font, color: OS.text,
+                border: `1px solid ${OS.border}`, borderRadius: 6,
+                background: OS.white, outline: "none", resize: "vertical",
+                boxSizing: "border-box",
+              }}
+            />
+          </div>
+        ) : (
+          <div style={{
+            textAlign: "center", padding: "20px 0",
+            display: "flex", flexDirection: "column", alignItems: "center", gap: 6,
+          }}>
+            <div style={{
+              width: 40, height: 40, borderRadius: "50%",
+              background: OS.bg, display: "flex", alignItems: "center",
+              justifyContent: "center", marginBottom: 2,
+            }}>
+              <span style={{ fontSize: 18 }}>&#x2728;</span>
+            </div>
+            <div style={{ fontSize: 13, color: OS.secondary, fontWeight: 500 }}>
+              Reflect on what you accomplished today
+            </div>
+            <div style={{ fontSize: 12, color: OS.muted, maxWidth: 220, lineHeight: 1.5 }}>
+              Clyde will summarize your progress and suggest what to carry forward.
+            </div>
+            <button
+              onClick={handleStartReview}
+              disabled={reviewGenerating}
+              style={{
+                marginTop: 6, padding: "8px 18px", fontSize: 13, fontWeight: 600,
+                background: reviewGenerating ? OS.faint : OS.blue,
+                color: OS.white, border: "none", borderRadius: 6,
+                cursor: reviewGenerating ? "default" : "pointer",
+                opacity: reviewGenerating ? 0.7 : 1,
+              }}
+            >
+              {reviewGenerating ? "Generating..." : "Start Review"}
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

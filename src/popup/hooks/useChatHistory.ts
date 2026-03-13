@@ -11,6 +11,7 @@ interface UseChatHistoryReturn {
   loadSession: (id: number) => void;
   persistMessage: (sessionId: number, role: "user" | "assistant", content: string, snapshots?: string | null) => Promise<void>;
   deleteSession: (id: number) => Promise<void>;
+  renameSession: (id: number, title: string) => Promise<void>;
 }
 
 export function useChatHistory(demoMode: boolean): UseChatHistoryReturn {
@@ -83,6 +84,14 @@ export function useChatHistory(demoMode: boolean): UseChatHistoryReturn {
     [demoMode],
   );
 
+  const renameSession = useCallback(
+    async (id: number, title: string) => {
+      if (demoMode) return;
+      await db.chat_sessions.update(id, { title });
+    },
+    [demoMode],
+  );
+
   const deleteSession = useCallback(
     async (id: number) => {
       if (demoMode) return;
@@ -107,5 +116,6 @@ export function useChatHistory(demoMode: boolean): UseChatHistoryReturn {
     loadSession,
     persistMessage,
     deleteSession,
+    renameSession,
   };
 }

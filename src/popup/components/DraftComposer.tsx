@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { OS } from "@shared/tokens";
 import { db } from "@shared/db";
-import type { DraftTone } from "@shared/types";
+import type { Commitment, DraftTone } from "@shared/types";
 
 // ─── Icons ───
 
@@ -73,8 +73,8 @@ function ToneSelector({
             borderRadius: 6,
             fontSize: 12,
             fontWeight: value === t.value ? 600 : 400,
-            background: value === t.value ? OS.blue ?? "#2563EB" : OS.bg,
-            color: value === t.value ? "#fff" : OS.text ?? "#111827",
+            background: value === t.value ? OS.blue : OS.bg,
+            color: value === t.value ? "#fff" : OS.text,
             border: "none",
             cursor: "pointer",
           }}
@@ -107,29 +107,59 @@ export function DraftComposer({
   const commitment = useLiveQuery(
     () => draft ? db.commitments.get(draft.commitmentId) : Promise.resolve(undefined),
     [draft?.commitmentId],
-  );
+  ) as Commitment | undefined;
 
   const [editedBody, setEditedBody] = useState<string>("");
+  const [editedSubject, setEditedSubject] = useState<string | null>(null);
   const [tone, setTone] = useState<DraftTone>("professional");
   const [regenerating, setRegenerating] = useState(false);
   const [sending, setSending] = useState(false);
   const [extraInstruction, setExtraInstruction] = useState("");
   const [showInstruction, setShowInstruction] = useState(false);
 
-  // Sync body from DB when draft loads/changes
+  // Sync from DB when draft loads
+  const initializedRef = useRef(false);
   useEffect(() => {
-    if (draft && editedBody === "") {
+    if (draft && !initializedRef.current) {
       setEditedBody(draft.body);
+      setEditedSubject(draft.subject);
       setTone(draft.tone);
+      initializedRef.current = true;
     }
-  }, [draft, editedBody]);
+  }, [draft]);
 
-  // Handle missing draft (deleted/sent)
+  // Reset init flag when draftId changes
+  useEffect(() => {
+    initializedRef.current = false;
+  }, [draftId]);
+
+  // Navigate back when draft is deleted/sent externally
   useEffect(() => {
     if (draft === null) {
       onBack();
     }
   }, [draft, onBack]);
+
+  const handleSave = useCallback(async () => {
+    if (demoMode) { showToast("Saved (demo)"); return; }
+    await db.drafts.update(draftId, {
+      body: editedBody,
+      ...(editedSubject !== null && { subject: editedSubject }),
+      tone,
+      updatedAt: new Date().toISOString(),
+    });
+    showToast("Draft saved");
+  }, [draftId, editedBody, editedSubject, tone, demoMode, showToast]);
+
+  const handleSaveBody = useCallback(async () => {
+    if (demoMode) return;
+    await db.drafts.update(draftId, { body: editedBody, updatedAt: new Date().toISOString() });
+  }, [draftId, editedBody, demoMode]);
+
+  const handleSaveSubject = useCallback(async () => {
+    if (demoMode || editedSubject === null) return;
+    await db.drafts.update(draftId, { subject: editedSubject, updatedAt: new Date().toISOString() });
+  }, [draftId, editedSubject, demoMode]);
 
   const handleToneChange = useCallback(async (newTone: DraftTone) => {
     setTone(newTone);
@@ -138,13 +168,8 @@ export function DraftComposer({
     }
   }, [draftId, demoMode]);
 
-  const handleSaveBody = useCallback(async () => {
-    if (demoMode) return;
-    await db.drafts.update(draftId, { body: editedBody, updatedAt: new Date().toISOString() });
-  }, [draftId, editedBody, demoMode]);
-
   const handleRegenerate = useCallback(async () => {
-    if (demoMode) { showToast("Regenerate unavailable in demo mode"); return; }
+    if (demoMode) { showToast("Regenerate unavailable in demo mode", "info"); return; }
     setRegenerating(true);
     try {
       const result = await chrome.runtime.sendMessage({
@@ -168,15 +193,18 @@ export function DraftComposer({
   }, [draftId, tone, extraInstruction, demoMode, showToast]);
 
   const handleSend = useCallback(async () => {
-    if (demoMode) { showToast("Send unavailable in demo mode"); return; }
+    if (demoMode) { showToast("Send unavailable in demo mode", "info"); return; }
     if (!draft) return;
 
     setSending(true);
     try {
-      // First save any edits
-      await db.drafts.update(draftId, { body: editedBody, updatedAt: new Date().toISOString() });
+      // Save any edits first
+      await db.drafts.update(draftId, {
+        body: editedBody,
+        ...(editedSubject !== null && { subject: editedSubject }),
+        updatedAt: new Date().toISOString(),
+      });
 
-      // If there's a linked proposal, execute it
       if (draft.proposalId) {
         const result = await chrome.runtime.sendMessage({
           type: "EXECUTE_ACTION",
@@ -190,7 +218,6 @@ export function DraftComposer({
           showToast(result.message, "error");
         }
       } else {
-        // Standalone draft — create a proposal and execute it
         const proposalResult = await chrome.runtime.sendMessage({
           type: "SEND_DRAFT",
           draftId,
@@ -208,16 +235,26 @@ export function DraftComposer({
     } finally {
       setSending(false);
     }
-  }, [draft, draftId, editedBody, demoMode, showToast, onSent]);
+  }, [draft, draftId, editedBody, editedSubject, demoMode, showToast, onSent]);
 
+  const handleDiscard = useCallback(() => {
+    if (!demoMode) {
+      void db.drafts.update(draftId, { status: "discarded", updatedAt: new Date().toISOString() });
+    }
+    onBack();
+  }, [draftId, demoMode, onBack]);
+
+  // Loading state
   if (draft === undefined) {
     return (
       <div style={{ padding: 24, textAlign: "center", color: OS.secondary }}>
+        <div style={{ marginBottom: 8, opacity: 0.5, fontSize: 20 }}>✏️</div>
         Loading draft…
       </div>
     );
   }
 
+  // Draft deleted externally — useEffect handles navigation, render nothing
   if (!draft) return <></>;
 
   const platformIcon = draft.platform === "slack" ? <IconSlack /> : <IconMail />;
@@ -225,13 +262,13 @@ export function DraftComposer({
   const sendLabel = draft.platform === "gmail" ? "Create Gmail Draft" : "Send in Slack";
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", background: OS.bg ?? "#F9FAFB" }}>
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", background: OS.bg }}>
       {/* Header */}
       <div style={{
         display: "flex", alignItems: "center", gap: 10,
         padding: "12px 16px",
         background: OS.white,
-        borderBottom: `1px solid ${OS.border ?? "#E5E7EB"}`,
+        borderBottom: `1px solid ${OS.border}`,
         flexShrink: 0,
       }}>
         <button
@@ -246,8 +283,8 @@ export function DraftComposer({
           <IconArrowLeft />
         </button>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <span style={{ color: OS.blue ?? "#2563EB" }}>{platformIcon}</span>
-          <span style={{ fontSize: 13, fontWeight: 600, color: OS.text ?? "#111827" }}>
+          <span style={{ color: OS.blue }}>{platformIcon}</span>
+          <span style={{ fontSize: 13, fontWeight: 600, color: OS.text }}>
             Draft — {platformLabel}
           </span>
         </div>
@@ -261,36 +298,39 @@ export function DraftComposer({
         </div>
       </div>
 
-      {/* Commitment context */}
+      {/* Commitment context strip */}
       {commitment && (
         <div style={{
           padding: "8px 16px",
           background: OS.bg,
-          borderBottom: `1px solid ${OS.border ?? "#E5E7EB"}`,
+          borderBottom: `1px solid ${OS.border}`,
           fontSize: 11, color: OS.secondary,
           flexShrink: 0,
         }}>
-          Re: <span style={{ color: OS.text ?? "#111827", fontWeight: 500 }}>{(commitment as { text?: string } | undefined)?.text}</span>
+          Re: <span style={{ color: OS.text, fontWeight: 500 }}>{commitment.text}</span>
         </div>
       )}
 
       {/* Body */}
       <div style={{ flex: 1, padding: 16, display: "flex", flexDirection: "column", gap: 12, overflow: "auto" }}>
         {/* Subject (Gmail only) */}
-        {draft.platform === "gmail" && draft.subject && (
+        {draft.platform === "gmail" && (
           <div>
             <label style={{ fontSize: 11, fontWeight: 600, color: OS.secondary, display: "block", marginBottom: 4 }}>
               Subject
             </label>
             <input
               type="text"
-              defaultValue={draft.subject}
+              value={editedSubject ?? ""}
+              onChange={(e) => setEditedSubject(e.target.value)}
+              onBlur={handleSaveSubject}
+              placeholder="Email subject"
               style={{
                 width: "100%", padding: "7px 10px",
-                border: `1px solid ${OS.border ?? "#E5E7EB"}`,
+                border: `1px solid ${OS.border}`,
                 borderRadius: 6, fontSize: 13, fontFamily: OS.font,
                 background: OS.white,
-                color: OS.text ?? "#111827",
+                color: OS.text,
                 boxSizing: "border-box",
               }}
             />
@@ -318,12 +358,12 @@ export function DraftComposer({
             style={{
               width: "100%",
               padding: "10px 12px",
-              border: `1px solid ${OS.border ?? "#E5E7EB"}`,
+              border: `1px solid ${OS.border}`,
               borderRadius: 8,
               fontSize: 13,
               lineHeight: 1.6,
               fontFamily: OS.font,
-              color: OS.text ?? "#111827",
+              color: OS.text,
               background: OS.white,
               resize: "vertical",
               boxSizing: "border-box",
@@ -344,17 +384,17 @@ export function DraftComposer({
               placeholder="e.g. 'mention the April 15 deadline'"
               style={{
                 width: "100%", padding: "7px 10px",
-                border: `1px solid ${OS.border ?? "#E5E7EB"}`,
+                border: `1px solid ${OS.border}`,
                 borderRadius: 6, fontSize: 12, fontFamily: OS.font,
                 background: OS.white,
-                color: OS.text ?? "#111827",
+                color: OS.text,
                 boxSizing: "border-box",
               }}
             />
           </div>
         )}
 
-        {/* Regenerate */}
+        {/* Regenerate row */}
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <button
             onClick={handleRegenerate}
@@ -363,8 +403,8 @@ export function DraftComposer({
               display: "flex", alignItems: "center", gap: 5,
               padding: "6px 12px",
               background: OS.bg,
-              color: OS.text ?? "#111827",
-              border: `1px solid ${OS.border ?? "#E5E7EB"}`,
+              color: OS.text,
+              border: `1px solid ${OS.border}`,
               borderRadius: 6, fontSize: 12, fontWeight: 500,
               cursor: regenerating ? "not-allowed" : "pointer",
               opacity: regenerating ? 0.6 : 1,
@@ -390,7 +430,7 @@ export function DraftComposer({
       <div style={{
         padding: "12px 16px",
         background: OS.white,
-        borderTop: `1px solid ${OS.border ?? "#E5E7EB"}`,
+        borderTop: `1px solid ${OS.border}`,
         display: "flex", gap: 8,
         flexShrink: 0,
       }}>
@@ -399,8 +439,8 @@ export function DraftComposer({
           style={{
             padding: "7px 14px",
             background: OS.bg,
-            color: OS.text ?? "#111827",
-            border: `1px solid ${OS.border ?? "#E5E7EB"}`,
+            color: OS.text,
+            border: `1px solid ${OS.border}`,
             borderRadius: 6, fontSize: 12, fontWeight: 500, cursor: "pointer",
           }}
         >
@@ -412,7 +452,7 @@ export function DraftComposer({
           style={{
             display: "flex", alignItems: "center", gap: 6,
             padding: "7px 16px",
-            background: OS.blue ?? "#2563EB",
+            background: OS.blue,
             color: "#fff",
             border: "none",
             borderRadius: 6, fontSize: 13, fontWeight: 600,
@@ -426,15 +466,12 @@ export function DraftComposer({
           {sending ? "Sending…" : sendLabel}
         </button>
         <button
-          onClick={() => {
-            if (!demoMode) void db.drafts.update(draftId, { status: "discarded", updatedAt: new Date().toISOString() });
-            onBack();
-          }}
+          onClick={handleDiscard}
           style={{
             padding: "7px 12px",
             background: "none",
             color: OS.secondary,
-            border: `1px solid ${OS.border ?? "#E5E7EB"}`,
+            border: `1px solid ${OS.border}`,
             borderRadius: 6, fontSize: 12, cursor: "pointer",
           }}
         >
@@ -443,10 +480,4 @@ export function DraftComposer({
       </div>
     </div>
   );
-
-  async function handleSave() {
-    if (demoMode) { showToast("Saved (demo)"); return; }
-    await db.drafts.update(draftId, { body: editedBody, tone, updatedAt: new Date().toISOString() });
-    showToast("Draft saved");
-  }
 }

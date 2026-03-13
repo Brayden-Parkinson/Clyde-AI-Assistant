@@ -122,7 +122,7 @@ function ProposalCard({ proposal, commitment, demoMode, onNavigateToDraft }: Pro
   if (status === "dismissed") return null;
 
   async function handleApprove(): Promise<void> {
-    if (demoMode) return;
+    if (demoMode) { setLocalStatus("completed"); return; }
     setExecuting(true);
     setLocalStatus("executing");
     try {
@@ -139,7 +139,7 @@ function ProposalCard({ proposal, commitment, demoMode, onNavigateToDraft }: Pro
   }
 
   async function handleDismiss(): Promise<void> {
-    if (demoMode) return;
+    if (demoMode) { setLocalStatus("dismissed"); return; }
     if (proposal.id) {
       await db.action_proposals.update(proposal.id, {
         status: "dismissed",
@@ -154,7 +154,7 @@ function ProposalCard({ proposal, commitment, demoMode, onNavigateToDraft }: Pro
   return (
     <div style={{
       background: OS.white,
-      border: `1px solid ${OS.border ?? "#E5E7EB"}`,
+      border: `1px solid ${OS.border}`,
       borderRadius: 10,
       padding: "12px 14px",
       marginBottom: 10,
@@ -173,7 +173,7 @@ function ProposalCard({ proposal, commitment, demoMode, onNavigateToDraft }: Pro
             <span style={{ fontSize: 11, fontWeight: 600, color: meta.color }}>{meta.label}</span>
             <StatusBadge status={status} />
           </div>
-          <p style={{ margin: 0, fontSize: 13, fontWeight: 500, color: OS.text ?? "#111827", lineHeight: 1.4 }}>
+          <p style={{ margin: 0, fontSize: 13, fontWeight: 500, color: OS.text, lineHeight: 1.4 }}>
             {proposal.description}
           </p>
         </div>
@@ -186,7 +186,7 @@ function ProposalCard({ proposal, commitment, demoMode, onNavigateToDraft }: Pro
           borderRadius: 6, marginBottom: 8,
           fontSize: 11, color: OS.secondary,
         }}>
-          Re: <span style={{ color: OS.text ?? "#111827" }}>{commitment.text}</span>
+          Re: <span style={{ color: OS.text }}>{commitment.text}</span>
           {" · "}
           <span>{getSourceLabel(proposal.source)}</span>
         </div>
@@ -219,7 +219,7 @@ function ProposalCard({ proposal, commitment, demoMode, onNavigateToDraft }: Pro
             disabled={executing}
             style={{
               display: "flex", alignItems: "center", gap: 4,
-              padding: "5px 10px", background: OS.blue ?? "#2563EB",
+              padding: "5px 10px", background: OS.blue,
               color: "#fff", border: "none", borderRadius: 6,
               fontSize: 12, fontWeight: 600,
               cursor: executing ? "not-allowed" : "pointer",
@@ -237,8 +237,8 @@ function ProposalCard({ proposal, commitment, demoMode, onNavigateToDraft }: Pro
                 display: "flex", alignItems: "center", gap: 4,
                 padding: "5px 10px",
                 background: OS.bg,
-                color: OS.text ?? "#111827",
-                border: `1px solid ${OS.border ?? "#E5E7EB"}`,
+                color: OS.text,
+                border: `1px solid ${OS.border}`,
                 borderRadius: 6, fontSize: 12, fontWeight: 500, cursor: "pointer",
               }}
             >
@@ -253,7 +253,7 @@ function ProposalCard({ proposal, commitment, demoMode, onNavigateToDraft }: Pro
               display: "flex", alignItems: "center", gap: 4,
               padding: "5px 8px", background: "transparent",
               color: OS.secondary,
-              border: `1px solid ${OS.border ?? "#E5E7EB"}`,
+              border: `1px solid ${OS.border}`,
               borderRadius: 6, fontSize: 12, cursor: "pointer",
               marginLeft: "auto",
             }}
@@ -306,7 +306,7 @@ export function ActionQueue({ demoMode, demoProposals = [], onNavigateToDraft }:
         textAlign: "center", color: OS.secondary,
       }}>
         <div style={{ fontSize: 32, marginBottom: 12, opacity: 0.4 }}>✅</div>
-        <p style={{ margin: 0, fontSize: 14, fontWeight: 500, color: OS.text ?? "#111827" }}>
+        <p style={{ margin: 0, fontSize: 14, fontWeight: 500, color: OS.text }}>
           No pending actions
         </p>
         <p style={{ margin: "4px 0 0", fontSize: 12 }}>
