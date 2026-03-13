@@ -50,9 +50,11 @@ interface PeoplePanelProps {
   demoMode: boolean;
   showToast: (msg: string, variant?: "success" | "error" | "info" | "warning") => void;
   onViewCommitments?: (name: string) => void;
+  /** Called after a draft is generated — navigates to DraftComposer */
+  onNavigateToDraft?: (draftId: number) => void;
 }
 
-export function PeoplePanel({ demoMode, showToast, onViewCommitments }: PeoplePanelProps) {
+export function PeoplePanel({ demoMode, showToast, onViewCommitments, onNavigateToDraft }: PeoplePanelProps) {
   const livePeople = useLiveQuery(
     () => db.people.orderBy("commitmentCount").reverse().toArray(),
     [],
@@ -99,6 +101,7 @@ export function PeoplePanel({ demoMode, showToast, onViewCommitments }: PeoplePa
   const [newEmail, setNewEmail] = useState("");
   const [newRelationship, setNewRelationship] = useState<Relationship | "">("");
   const [scanning, setScanning] = useState(false);
+  const [followUpLoading, setFollowUpLoading] = useState<string | null>(null); // person name being drafted
   const [expandedCommitments, setExpandedCommitments] = useState<Commitment[]>([]);
 
   // Auto-backfill on first open if people table is empty (real mode only)
@@ -183,6 +186,59 @@ export function PeoplePanel({ demoMode, showToast, onViewCommitments }: PeoplePa
       showToast("Scan failed — background worker not ready", "error");
     } finally {
       setScanning(false);
+    }
+  }
+
+  async function handleFollowUp(person: Person) {
+    if (demoMode) { showToast("Draft unavailable in demo mode", "info"); return; }
+    if (!onNavigateToDraft) return;
+
+    setFollowUpLoading(person.name);
+    try {
+      // Find the most urgent open commitment involving this person
+      const all = await db.commitments
+        .where("status").anyOf("new", "actioned")
+        .toArray();
+      const theirs = all.filter((c) =>
+        c.conversation_messages?.some((m) => m.sender.toLowerCase() === person.name.toLowerCase()) ||
+        c.context.toLowerCase().includes(person.name.toLowerCase())
+      ).sort((a, b) => {
+        const u: Record<string, number> = { high: 0, medium: 1, low: 2 };
+        return (u[a.urgency] ?? 1) - (u[b.urgency] ?? 1);
+      });
+
+      if (theirs.length === 0) {
+        showToast(`No open commitments involving ${person.name}`, "info");
+        return;
+      }
+
+      const primary = theirs[0];
+      const additionalCtx = theirs.length > 1
+        ? `Other open commitments: ${theirs.slice(1, 4).map((c) => c.text).join("; ")}`
+        : null;
+
+      const result = await chrome.runtime.sendMessage({
+        type: "GENERATE_DRAFT",
+        input: {
+          commitmentId: primary.id,
+          proposalId: null,
+          platform: "slack",
+          recipient: person.name,
+          subject: null,
+          tone: "professional",
+          instruction: additionalCtx ?? null,
+        },
+      }) as { ok: boolean; draftId?: number; error?: string };
+
+      if (result.ok && result.draftId) {
+        onNavigateToDraft(result.draftId);
+      } else {
+        showToast(result.error ?? "Draft generation failed", "error");
+      }
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Failed to generate draft", "error");
+    } finally {
+      setFollowUpLoading(null);
     }
   }
 
@@ -476,12 +532,30 @@ export function PeoplePanel({ demoMode, showToast, onViewCommitments }: PeoplePa
                     />
                   </div>
 
-                  <button
-                    onClick={() => handleSave(person)}
-                    style={{ padding: "6px 14px", fontSize: 12, fontWeight: 600, fontFamily: OS.font, border: "none", borderRadius: 5, background: OS.blue, color: OS.white, cursor: "pointer" }}
-                  >
-                    Save
-                  </button>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                    <button
+                      onClick={() => handleSave(person)}
+                      style={{ padding: "6px 14px", fontSize: 12, fontWeight: 600, fontFamily: OS.font, border: "none", borderRadius: 5, background: OS.blue, color: OS.white, cursor: "pointer" }}
+                    >
+                      Save
+                    </button>
+                    {onNavigateToDraft && (
+                      <button
+                        onClick={() => handleFollowUp(person)}
+                        disabled={followUpLoading === person.name}
+                        style={{
+                          display: "flex", alignItems: "center", gap: 5,
+                          padding: "6px 12px", fontSize: 12, fontWeight: 500, fontFamily: OS.font,
+                          border: `1px solid ${OS.border}`, borderRadius: 5,
+                          background: OS.white, color: OS.text,
+                          cursor: followUpLoading === person.name ? "default" : "pointer",
+                          opacity: followUpLoading === person.name ? 0.6 : 1,
+                        }}
+                      >
+                        {followUpLoading === person.name ? "Drafting…" : "✉ Draft Follow-Up"}
+                      </button>
+                    )}
+                  </div>
                 </div>
               )}
             </div>

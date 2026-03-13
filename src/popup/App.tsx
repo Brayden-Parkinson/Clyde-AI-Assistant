@@ -2550,6 +2550,10 @@ export default function App() {
                   setListSearch("");
                   setViewMode("list");
                 }}
+                onNavigateToDraft={(draftId) => {
+                  setActiveDraftId(draftId);
+                  setViewMode("draft");
+                }}
               />
             )}
 
