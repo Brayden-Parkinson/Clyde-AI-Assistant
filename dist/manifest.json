@@ -50,7 +50,7 @@
     },
     {
       "js": [
-        "assets/gmail.ts-loader-DeLCt4ll.js"
+        "assets/gmail.ts-loader-CXRvZMms.js"
       ],
       "matches": [
         "https://mail.google.com/*"
@@ -108,8 +108,8 @@
         "https://mail.google.com/*"
       ],
       "resources": [
-        "assets/constants-XE6MBKaq.js",
-        "assets/gmail.ts-zocsYa3R.js"
+        "assets/constants-8qxrAJNn.js",
+        "assets/gmail.ts-BvbflQKW.js"
       ],
       "use_dynamic_url": false
     }

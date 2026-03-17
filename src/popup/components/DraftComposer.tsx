@@ -3,6 +3,7 @@ import { useLiveQuery } from "dexie-react-hooks";
 import { OS } from "@shared/tokens";
 import { db } from "@shared/db";
 import type { Commitment, DraftTone } from "@shared/types";
+import { useDarkMode, dk } from "../DarkModeContext";
 
 // ─── Icons ───
 
@@ -58,9 +59,11 @@ const TONES: { value: DraftTone; label: string }[] = [
 function ToneSelector({
   value,
   onChange,
+  darkMode,
 }: {
   value: DraftTone;
   onChange: (tone: DraftTone) => void;
+  darkMode: boolean;
 }): React.ReactElement {
   return (
     <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
@@ -73,9 +76,15 @@ function ToneSelector({
             borderRadius: 6,
             fontSize: 12,
             fontWeight: value === t.value ? 600 : 400,
-            background: value === t.value ? OS.blue : OS.bg,
-            color: value === t.value ? "#fff" : OS.text,
-            border: "none",
+            background: value === t.value
+              ? dk(darkMode, "rgba(94,106,210,0.18)", OS.blueBg)
+              : "none",
+            color: value === t.value
+              ? OS.blue
+              : dk(darkMode, "rgba(255,255,255,0.55)", OS.secondary),
+            border: value === t.value
+              ? "none"
+              : `1px solid ${dk(darkMode, "rgba(255,255,255,0.10)", "rgba(0,0,0,0.12)")}`,
             cursor: "pointer",
           }}
         >
@@ -103,6 +112,8 @@ export function DraftComposer({
   onSent,
   showToast,
 }: DraftComposerProps): React.ReactElement {
+  const darkMode = useDarkMode();
+
   const draft = useLiveQuery(() => db.drafts.get(draftId), [draftId]);
   const commitment = useLiveQuery(
     () => draft ? db.commitments.get(draft.commitmentId) : Promise.resolve(undefined),
@@ -247,7 +258,7 @@ export function DraftComposer({
   // Loading state
   if (draft === undefined) {
     return (
-      <div style={{ padding: 24, textAlign: "center", color: OS.secondary }}>
+      <div style={{ padding: 24, textAlign: "center", color: dk(darkMode, "rgba(255,255,255,0.55)", OS.secondary) }}>
         <div style={{ marginBottom: 8, opacity: 0.5, fontSize: 20 }}>✏️</div>
         Loading draft…
       </div>
@@ -262,20 +273,20 @@ export function DraftComposer({
   const sendLabel = draft.platform === "gmail" ? "Create Gmail Draft" : "Send in Slack";
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", background: OS.bg }}>
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", background: dk(darkMode, "#111113", OS.bg) }}>
       {/* Header */}
       <div style={{
         display: "flex", alignItems: "center", gap: 10,
         padding: "12px 16px",
-        background: OS.white,
-        borderBottom: `1px solid ${OS.border}`,
+        background: dk(darkMode, "#1c1c1e", OS.white),
+        borderBottom: `1px solid ${dk(darkMode, "rgba(255,255,255,0.08)", OS.border)}`,
         flexShrink: 0,
       }}>
         <button
           onClick={onBack}
           style={{
             background: "none", border: "none",
-            color: OS.secondary,
+            color: dk(darkMode, "rgba(255,255,255,0.55)", OS.secondary),
             cursor: "pointer", display: "flex", alignItems: "center",
             padding: 4,
           }}
@@ -284,14 +295,14 @@ export function DraftComposer({
         </button>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <span style={{ color: OS.blue }}>{platformIcon}</span>
-          <span style={{ fontSize: 13, fontWeight: 600, color: OS.text }}>
+          <span style={{ fontSize: 13, fontWeight: 600, color: dk(darkMode, "rgba(255,255,255,0.90)", OS.text) }}>
             Draft — {platformLabel}
           </span>
         </div>
         <div style={{
           marginLeft: "auto", fontSize: 11,
-          color: OS.secondary,
-          background: OS.bg,
+          color: dk(darkMode, "rgba(255,255,255,0.55)", OS.secondary),
+          background: dk(darkMode, "#111113", OS.bg),
           padding: "2px 8px", borderRadius: 4,
         }}>
           To: {draft.recipient}
@@ -302,12 +313,12 @@ export function DraftComposer({
       {commitment && (
         <div style={{
           padding: "8px 16px",
-          background: OS.bg,
-          borderBottom: `1px solid ${OS.border}`,
-          fontSize: 11, color: OS.secondary,
+          background: dk(darkMode, "rgba(255,255,255,0.04)", OS.bg),
+          borderBottom: `1px solid ${dk(darkMode, "rgba(255,255,255,0.08)", OS.border)}`,
+          fontSize: 11, color: dk(darkMode, "rgba(255,255,255,0.55)", OS.secondary),
           flexShrink: 0,
         }}>
-          Re: <span style={{ color: OS.text, fontWeight: 500 }}>{commitment.text}</span>
+          Re: <span style={{ color: dk(darkMode, "rgba(255,255,255,0.90)", OS.text), fontWeight: 500 }}>{commitment.text}</span>
         </div>
       )}
 
@@ -316,7 +327,7 @@ export function DraftComposer({
         {/* Subject (Gmail only) */}
         {draft.platform === "gmail" && (
           <div>
-            <label style={{ fontSize: 11, fontWeight: 600, color: OS.secondary, display: "block", marginBottom: 4 }}>
+            <label style={{ fontSize: 11, fontWeight: 600, color: dk(darkMode, "rgba(255,255,255,0.55)", OS.secondary), display: "block", marginBottom: 4 }}>
               Subject
             </label>
             <input
@@ -327,10 +338,10 @@ export function DraftComposer({
               placeholder="Email subject"
               style={{
                 width: "100%", padding: "7px 10px",
-                border: `1px solid ${OS.border}`,
+                border: `1px solid ${dk(darkMode, "rgba(255,255,255,0.10)", OS.border)}`,
                 borderRadius: 6, fontSize: 13, fontFamily: OS.font,
-                background: OS.white,
-                color: OS.text,
+                background: dk(darkMode, "rgba(255,255,255,0.06)", OS.white),
+                color: dk(darkMode, "rgba(255,255,255,0.85)", OS.text),
                 boxSizing: "border-box",
               }}
             />
@@ -339,15 +350,15 @@ export function DraftComposer({
 
         {/* Tone selector */}
         <div>
-          <label style={{ fontSize: 11, fontWeight: 600, color: OS.secondary, display: "block", marginBottom: 6 }}>
+          <label style={{ fontSize: 11, fontWeight: 600, color: dk(darkMode, "rgba(255,255,255,0.55)", OS.secondary), display: "block", marginBottom: 6 }}>
             Tone
           </label>
-          <ToneSelector value={tone} onChange={handleToneChange} />
+          <ToneSelector value={tone} onChange={handleToneChange} darkMode={darkMode} />
         </div>
 
         {/* Message body editor */}
         <div style={{ flex: 1 }}>
-          <label style={{ fontSize: 11, fontWeight: 600, color: OS.secondary, display: "block", marginBottom: 6 }}>
+          <label style={{ fontSize: 11, fontWeight: 600, color: dk(darkMode, "rgba(255,255,255,0.55)", OS.secondary), display: "block", marginBottom: 6 }}>
             Message
           </label>
           <textarea
@@ -358,13 +369,13 @@ export function DraftComposer({
             style={{
               width: "100%",
               padding: "10px 12px",
-              border: `1px solid ${OS.border}`,
+              border: `1px solid ${dk(darkMode, "rgba(255,255,255,0.10)", "rgba(0,0,0,0.12)")}`,
               borderRadius: 8,
               fontSize: 13,
               lineHeight: 1.6,
               fontFamily: OS.font,
-              color: OS.text,
-              background: OS.white,
+              color: dk(darkMode, "rgba(255,255,255,0.85)", OS.text),
+              background: dk(darkMode, "rgba(255,255,255,0.06)", OS.white),
               resize: "vertical",
               boxSizing: "border-box",
             }}
@@ -374,7 +385,7 @@ export function DraftComposer({
         {/* Extra instruction for regeneration */}
         {showInstruction && (
           <div>
-            <label style={{ fontSize: 11, fontWeight: 600, color: OS.secondary, display: "block", marginBottom: 4 }}>
+            <label style={{ fontSize: 11, fontWeight: 600, color: dk(darkMode, "rgba(255,255,255,0.55)", OS.secondary), display: "block", marginBottom: 4 }}>
               Instruction for regeneration
             </label>
             <input
@@ -384,10 +395,10 @@ export function DraftComposer({
               placeholder="e.g. 'mention the April 15 deadline'"
               style={{
                 width: "100%", padding: "7px 10px",
-                border: `1px solid ${OS.border}`,
+                border: `1px solid ${dk(darkMode, "rgba(255,255,255,0.10)", OS.border)}`,
                 borderRadius: 6, fontSize: 12, fontFamily: OS.font,
-                background: OS.white,
-                color: OS.text,
+                background: dk(darkMode, "rgba(255,255,255,0.06)", OS.white),
+                color: dk(darkMode, "rgba(255,255,255,0.85)", OS.text),
                 boxSizing: "border-box",
               }}
             />
@@ -402,9 +413,9 @@ export function DraftComposer({
             style={{
               display: "flex", alignItems: "center", gap: 5,
               padding: "6px 12px",
-              background: OS.bg,
-              color: OS.text,
-              border: `1px solid ${OS.border}`,
+              background: dk(darkMode, "#111113", OS.bg),
+              color: dk(darkMode, "rgba(255,255,255,0.55)", OS.text),
+              border: `1px solid ${dk(darkMode, "rgba(255,255,255,0.10)", OS.border)}`,
               borderRadius: 6, fontSize: 12, fontWeight: 500,
               cursor: regenerating ? "not-allowed" : "pointer",
               opacity: regenerating ? 0.6 : 1,
@@ -417,7 +428,7 @@ export function DraftComposer({
             onClick={() => setShowInstruction(!showInstruction)}
             style={{
               background: "none", border: "none",
-              fontSize: 11, color: OS.secondary,
+              fontSize: 11, color: dk(darkMode, "rgba(255,255,255,0.55)", OS.secondary),
               cursor: "pointer", textDecoration: "underline",
             }}
           >
@@ -429,8 +440,8 @@ export function DraftComposer({
       {/* Send bar */}
       <div style={{
         padding: "12px 16px",
-        background: OS.white,
-        borderTop: `1px solid ${OS.border}`,
+        background: dk(darkMode, "#1c1c1e", OS.white),
+        borderTop: `1px solid ${dk(darkMode, "rgba(255,255,255,0.08)", OS.border)}`,
         display: "flex", gap: 8,
         flexShrink: 0,
       }}>
@@ -438,9 +449,9 @@ export function DraftComposer({
           onClick={handleSave}
           style={{
             padding: "7px 14px",
-            background: OS.bg,
-            color: OS.text,
-            border: `1px solid ${OS.border}`,
+            background: dk(darkMode, "#111113", OS.bg),
+            color: dk(darkMode, "rgba(255,255,255,0.55)", OS.text),
+            border: `1px solid ${dk(darkMode, "rgba(255,255,255,0.10)", OS.border)}`,
             borderRadius: 6, fontSize: 12, fontWeight: 500, cursor: "pointer",
           }}
         >
@@ -470,8 +481,8 @@ export function DraftComposer({
           style={{
             padding: "7px 12px",
             background: "none",
-            color: OS.secondary,
-            border: `1px solid ${OS.border}`,
+            color: dk(darkMode, "rgba(255,255,255,0.55)", OS.secondary),
+            border: `1px solid ${dk(darkMode, "rgba(255,255,255,0.10)", OS.border)}`,
             borderRadius: 6, fontSize: 12, cursor: "pointer",
           }}
         >

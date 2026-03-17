@@ -1,7 +1,8 @@
 import React, { useState, useCallback, useEffect, useRef } from "react";
+import { DarkModeContext, useDarkMode as useDarkModeContext, dk } from "./DarkModeContext";
 import { useLiveQuery } from "dexie-react-hooks";
 import { OS } from "@shared/tokens";
-import type { Commitment, CompletionSuggestion, MorningBrief, DecisionLogEntry, ActionLogEntry, Tag } from "@shared/types";
+import type { Commitment, Tag } from "@shared/types";
 import type { PipelineStatus } from "@shared/status";
 import { db } from "@shared/db";
 import { useCommitments } from "./hooks/useCommitments";
@@ -17,36 +18,25 @@ import {
   DEMO_BRIEFS,
   DEMO_DECISION_LOG,
   DEMO_TAGS,
-  DEMO_MEMORIES,
-  DEMO_PATTERNS,
-  DEMO_DIGESTS,
-  DEMO_OKRS,
-  DEMO_OKR_LINKS,
 } from "@shared/demo-data";
-import { CommitmentCard } from "./components/CommitmentCard";
 import { KanbanBoard } from "./components/KanbanBoard";
-import type { FilterKey } from "./components/FilterBar";
-import { ViewToolbar, matchesSearch } from "./components/ViewToolbar";
+import { matchesSearch } from "./components/ViewToolbar";
+import { FilterBubbles } from "./components/FilterBubbles";
 import { Toast } from "./components/Toast";
 import { TranscriptPanel } from "./components/TranscriptPanel";
 import { SmartTagsModal } from "./components/SmartTagsModal";
 import { SetupWizard } from "./components/SetupWizard";
 import { SettingsPanel } from "../options/Options";
 import { ClydeChat } from "./components/ClydeChat";
-import { DailyPlanner } from "./components/DailyPlanner";
-import { MemoryPanel } from "./components/MemoryPanel";
-import { InsightsPanel } from "./components/InsightsPanel";
-import { OKRPanel } from "./components/OKRPanel";
 import { DraftComposer } from "./components/DraftComposer";
 import { PeoplePanel } from "./components/PeoplePanel";
 import {
   IconSettings, IconWarning, IconX, IconRefresh, IconLoader, IconCheck,
-  IconBoard, IconList, IconSun, IconChevronRight, IconChevronLeft,
-  IconChevronUp, IconChevronDown, IconArrowRight, IconClock, IconLogo,
-  IconSearch, InlineIcon, IconChat, IconPeople,
+  IconChevronUp, IconChevronDown, IconArrowRight, IconClock, IconPeople,
+  InlineIcon,
 } from "./components/Icons";
 
-type ViewMode = "list" | "board" | "brief" | "devlog" | "settings" | "chat" | "people" | "memory" | "insights" | "okrs" | "draft";
+type ViewMode = "board" | "people" | "devlog" | "settings" | "draft";
 
 // ─── Display settings (persisted in chrome.storage.local) ───
 
@@ -63,6 +53,26 @@ const DEFAULT_DISPLAY: DisplaySettings = {
   showDeadlines: true,
   showConfidence: false,
 };
+
+function useDarkMode() {
+  const [darkMode, setDarkMode] = useState(false);
+
+  useEffect(() => {
+    chrome.storage.local.get("darkMode").then((result) => {
+      if (result.darkMode === true) setDarkMode(true);
+    });
+  }, []);
+
+  const toggle = useCallback(() => {
+    setDarkMode((prev) => {
+      const next = !prev;
+      chrome.storage.local.set({ darkMode: next });
+      return next;
+    });
+  }, []);
+
+  return { darkMode, toggleDarkMode: toggle };
+}
 
 function useDisplaySettings() {
   const [settings, setSettings] = useState<DisplaySettings>(DEFAULT_DISPLAY);
@@ -84,32 +94,6 @@ function useDisplaySettings() {
   }, []);
 
   return { settings, update };
-}
-
-// ─── Nav collapse state (persisted in chrome.storage.local) ───
-
-function useNavCollapsed() {
-  const [collapsed, setCollapsed] = useState(false);
-
-  useEffect(() => {
-    chrome.storage.local.get("navCollapsed").then((result) => {
-      if (result.navCollapsed === true) setCollapsed(true);
-    });
-  }, []);
-
-  const toggle = useCallback(() => {
-    setCollapsed((prev) => {
-      chrome.storage.local.set({ navCollapsed: !prev });
-      return !prev;
-    });
-  }, []);
-
-  const setTo = useCallback((val: boolean) => {
-    setCollapsed(val);
-    chrome.storage.local.set({ navCollapsed: val });
-  }, []);
-
-  return { collapsed, toggle, setTo };
 }
 
 // ─── Toggle Switch ───
@@ -157,6 +141,8 @@ function SettingsPopover({
   style: positionStyle,
   privacyMode,
   onTogglePrivacy,
+  darkMode,
+  onToggleDark,
 }: {
   display: DisplaySettings;
   onUpdateDisplay: (patch: Partial<DisplaySettings>) => void;
@@ -166,6 +152,8 @@ function SettingsPopover({
   style?: React.CSSProperties;
   privacyMode: boolean;
   onTogglePrivacy: () => void;
+  darkMode: boolean;
+  onToggleDark: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
 
@@ -196,17 +184,17 @@ function SettingsPopover({
         right: 0,
         marginTop: 6,
         width: 300,
-        background: OS.white,
-        border: `1px solid ${OS.border}`,
+        background: darkMode ? '#1c1c1e' : OS.white,
+        border: `1px solid ${dk(darkMode, 'rgba(255,255,255,0.10)', OS.border)}`,
         borderRadius: 10,
-        boxShadow: "0 8px 24px rgba(0,0,0,0.12)",
+        boxShadow: dk(darkMode, '0 8px 24px rgba(0,0,0,0.5)', '0 8px 24px rgba(0,0,0,0.12)'),
         zIndex: 40,
         padding: "14px 16px",
         fontFamily: OS.font,
         ...positionStyle,
       }}
     >
-      <div style={{ fontSize: 13, fontWeight: 700, color: OS.text, marginBottom: 12 }}>
+      <div style={{ fontSize: 13, fontWeight: 700, color: dk(darkMode, 'rgba(255,255,255,0.90)', OS.text), marginBottom: 12 }}>
         Display Settings
       </div>
 
@@ -218,12 +206,12 @@ function SettingsPopover({
             alignItems: "center",
             justifyContent: "space-between",
             padding: "8px 0",
-            borderTop: `1px solid ${OS.border}`,
+            borderTop: `1px solid ${dk(darkMode, 'rgba(255,255,255,0.08)', OS.border)}`,
           }}
         >
           <div>
-            <div style={{ fontSize: 12, fontWeight: 600, color: OS.text }}>{row.label}</div>
-            <div style={{ fontSize: 11, color: OS.muted, marginTop: 1 }}>{row.desc}</div>
+            <div style={{ fontSize: 12, fontWeight: 600, color: dk(darkMode, 'rgba(255,255,255,0.90)', OS.text) }}>{row.label}</div>
+            <div style={{ fontSize: 11, color: dk(darkMode, 'rgba(255,255,255,0.35)', OS.muted), marginTop: 1 }}>{row.desc}</div>
           </div>
           <ToggleSwitch on={display[row.key]} onToggle={() => onUpdateDisplay({ [row.key]: !display[row.key] })} />
         </div>
@@ -236,23 +224,40 @@ function SettingsPopover({
           alignItems: "center",
           justifyContent: "space-between",
           padding: "10px 0 8px",
-          borderTop: `1px solid ${OS.border}`,
+          borderTop: `1px solid ${dk(darkMode, 'rgba(255,255,255,0.08)', OS.border)}`,
           marginTop: 4,
         }}
       >
         <div>
-          <div style={{ fontSize: 12, fontWeight: 600, color: OS.text }}>Hide sensitive items</div>
-          <div style={{ fontSize: 11, color: OS.muted, marginTop: 1 }}>Blur HR, personal & confidential</div>
+          <div style={{ fontSize: 12, fontWeight: 600, color: dk(darkMode, 'rgba(255,255,255,0.90)', OS.text) }}>Hide sensitive items</div>
+          <div style={{ fontSize: 11, color: dk(darkMode, 'rgba(255,255,255,0.35)', OS.muted), marginTop: 1 }}>Blur HR, personal & confidential</div>
         </div>
         <ToggleSwitch on={privacyMode} onToggle={onTogglePrivacy} />
+      </div>
+
+      {/* Dark mode toggle */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          padding: "10px 0 8px",
+          borderTop: `1px solid ${dk(darkMode, 'rgba(255,255,255,0.08)', OS.border)}`,
+        }}
+      >
+        <div>
+          <div style={{ fontSize: 12, fontWeight: 600, color: dk(darkMode, 'rgba(255,255,255,0.90)', OS.text) }}>Dark mode</div>
+          <div style={{ fontSize: 11, color: dk(darkMode, 'rgba(255,255,255,0.35)', OS.muted), marginTop: 1 }}>Switch to dark appearance</div>
+        </div>
+        <ToggleSwitch on={darkMode} onToggle={onToggleDark} />
       </div>
 
       <div style={{
         marginTop: 10,
         paddingTop: 10,
-        borderTop: `1px solid ${OS.border}`,
+        borderTop: `1px solid ${dk(darkMode, 'rgba(255,255,255,0.08)', OS.border)}`,
         fontSize: 11,
-        color: OS.muted,
+        color: dk(darkMode, 'rgba(255,255,255,0.35)', OS.muted),
         lineHeight: 1.5,
       }}>
         Actions are always available in expanded view and conversation panel regardless of these settings.
@@ -266,17 +271,17 @@ function SettingsPopover({
           width: "100%",
           padding: "8px 0",
           borderRadius: 6,
-          border: `1px solid ${OS.border}`,
-          background: OS.bg,
-          color: OS.secondary,
+          border: `1px solid ${dk(darkMode, 'rgba(255,255,255,0.10)', OS.border)}`,
+          background: dk(darkMode, 'rgba(255,255,255,0.04)', OS.bg),
+          color: dk(darkMode, 'rgba(255,255,255,0.55)', OS.secondary),
           fontSize: 12,
           fontWeight: 600,
           cursor: "pointer",
           fontFamily: OS.font,
           transition: "background 0.1s ease",
         }}
-        onMouseEnter={(e) => { e.currentTarget.style.background = OS.border; }}
-        onMouseLeave={(e) => { e.currentTarget.style.background = OS.bg; }}
+        onMouseEnter={(e) => { e.currentTarget.style.background = dk(darkMode, 'rgba(255,255,255,0.08)', OS.border); }}
+        onMouseLeave={(e) => { e.currentTarget.style.background = dk(darkMode, 'rgba(255,255,255,0.04)', OS.bg); }}
       >
         <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><IconSettings size={12} /> All settings...</span>
       </button>
@@ -287,6 +292,7 @@ function SettingsPopover({
 // ─── Warning banner (replaces StatusPanel) ───
 
 function WarningBanner({ onOpenSettings, demoMode }: { onOpenSettings: () => void; demoMode?: boolean }) {
+  const darkMode = useDarkModeContext();
   const [status, setStatus] = useState<PipelineStatus | null>(null);
   const [dismissed, setDismissed] = useState(false);
 
@@ -321,12 +327,12 @@ function WarningBanner({ onOpenSettings, demoMode }: { onOpenSettings: () => voi
       alignItems: "center",
       justifyContent: "space-between",
       padding: "8px 14px",
-      background: OS.yellowBg,
-      border: `1px solid ${OS.yellowBorder}`,
+      background: dk(darkMode, 'rgba(180,120,0,0.18)', OS.yellowBg),
+      border: `1px solid ${dk(darkMode, 'rgba(180,120,0,0.35)', OS.yellowBorder)}`,
       borderRadius: 6,
       margin: "8px 16px 0",
       fontSize: 12,
-      color: "#8a6e1a",
+      color: dk(darkMode, 'rgba(255,190,80,0.85)', '#8a6e1a'),
       fontFamily: OS.font,
     }}>
       <span>
@@ -345,7 +351,7 @@ function WarningBanner({ onOpenSettings, demoMode }: { onOpenSettings: () => voi
       <button
         onClick={() => setDismissed(true)}
         style={{
-          background: "none", border: "none", color: "#8a6e1a",
+          background: "none", border: "none", color: dk(darkMode, 'rgba(255,190,80,0.85)', '#8a6e1a'),
           cursor: "pointer", lineHeight: 1, padding: "0 0 0 8px",
           display: "inline-flex", alignItems: "center",
         }}
@@ -415,88 +421,6 @@ function useScanStatus(): ScanStatus {
   return { scanAgo, staleWarning };
 }
 
-// ─── API Key Setup ───
-
-function ApiKeySetup({ onSaved }: { onSaved: () => void }) {
-  const [apiKey, setApiKey] = useState("");
-  const [saving, setSaving] = useState(false);
-
-  const handleSave = async () => {
-    if (!apiKey.trim()) return;
-    setSaving(true);
-    await chrome.storage.local.set({ anthropicApiKey: apiKey.trim() });
-    setSaving(false);
-    onSaved();
-  };
-
-  return (
-    <div style={{
-      background: OS.white, border: `1px solid ${OS.border}`, borderRadius: 12,
-      padding: 32, maxWidth: 480, margin: "0 auto",
-    }}>
-      <h2 style={{ fontSize: 18, fontWeight: 700, color: OS.text, marginBottom: 4 }}>
-        Set up Clyde
-      </h2>
-      <p style={{ fontSize: 13, color: OS.secondary, marginBottom: 20, lineHeight: 1.5 }}>
-        Enter your Anthropic API key to enable AI-powered commitment detection.
-        Your key is stored locally and never leaves your browser except to call the Claude API.
-      </p>
-      <label style={{ fontSize: 12, fontWeight: 600, color: OS.text, marginBottom: 6, display: "block" }}>
-        Anthropic API Key
-      </label>
-      <input
-        type="password"
-        value={apiKey}
-        onChange={(e) => setApiKey(e.target.value)}
-        onKeyDown={(e) => e.key === "Enter" && handleSave()}
-        placeholder="sk-ant-..."
-        style={{
-          width: "100%", padding: "10px 14px", borderRadius: 8,
-          border: `1px solid ${OS.border}`, fontSize: 14,
-          fontFamily: "monospace", outline: "none", marginBottom: 16,
-        }}
-      />
-      <button
-        onClick={handleSave}
-        disabled={!apiKey.trim() || saving}
-        style={{
-          width: "100%", padding: "10px 0", borderRadius: 8,
-          background: apiKey.trim() ? OS.blue : OS.faint,
-          border: "none", color: OS.white, fontSize: 14, fontWeight: 700,
-          fontFamily: OS.font, cursor: apiKey.trim() ? "pointer" : "default",
-          transition: "all 0.15s ease",
-        }}
-      >
-        {saving ? "Saving..." : "Save & Start Tracking"}
-      </button>
-      <p style={{ fontSize: 11, color: OS.muted, marginTop: 12, textAlign: "center" }}>
-        Get your API key at console.anthropic.com
-      </p>
-    </div>
-  );
-}
-
-// ─── Section header ───
-
-function SectionHeader({ label, color }: { label: string; color: string }) {
-  return (
-    <div
-      style={{
-        padding: "10px 16px 6px 16px",
-        fontSize: 11,
-        fontWeight: 600,
-        color,
-        textTransform: "uppercase",
-        letterSpacing: "0.04em",
-        background: OS.bg,
-        borderBottom: `1px solid ${OS.border}`,
-      }}
-    >
-      {label}
-    </div>
-  );
-}
-
 // ─── Dev Log View ───
 
 type LogEntryType = "accepted" | "rejected" | "user_dismissed" | "user_done";
@@ -519,10 +443,20 @@ const LOG_TYPE_META: Record<LogEntryType, { label: string; color: string; bg: st
   user_done:      { label: "Done",      color: OS.blue,   bg: OS.bg },
 };
 
+import type { DecisionLogEntry } from "@shared/types";
+
 function DevLogView({ demoMode, demoEntries }: { demoMode?: boolean; demoEntries?: DecisionLogEntry[] } = {}) {
+  const darkMode = useDarkModeContext();
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState<LogEntryType | "all">("all");
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const filterTabRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const [filterSlider, setFilterSlider] = useState({ left: 0, width: 0 });
+
+  useEffect(() => {
+    const el = filterTabRefs.current[typeFilter];
+    if (el) setFilterSlider({ left: el.offsetLeft, width: el.offsetWidth });
+  }, [typeFilter]);
 
   const liveDecisions = useLiveQuery(
     () => db.decision_log.orderBy("createdAt").reverse().limit(500).toArray(),
@@ -610,7 +544,7 @@ function DevLogView({ demoMode, demoEntries }: { demoMode?: boolean; demoEntries
   if (unified.length === 0) {
     return (
       <div style={{ textAlign: "center", padding: "56px 16px", fontFamily: OS.font }}>
-        <div style={{ fontSize: 13, color: OS.muted }}>
+        <div style={{ fontSize: 13, color: dk(darkMode, 'rgba(255,255,255,0.30)', OS.muted) }}>
           No log entries yet. Decisions will appear after the next scan.
         </div>
       </div>
@@ -652,8 +586,8 @@ function DevLogView({ demoMode, demoEntries }: { demoMode?: boolean; demoEntries
       <div style={{ display: "flex", gap: 8, marginBottom: 12, alignItems: "center" }}>
         <div style={{
           flex: 1, display: "flex", alignItems: "center",
-          background: OS.white, borderRadius: 8, padding: "0 10px",
-          border: `1px solid ${OS.border}`,
+          background: dk(darkMode, 'rgba(255,255,255,0.06)', OS.white), borderRadius: 999, padding: "0 10px",
+          border: `0.5px solid ${dk(darkMode, 'rgba(255,255,255,0.10)', 'rgba(0,0,0,0.08)')}`,
         }}>
           <input
             type="text"
@@ -663,7 +597,7 @@ function DevLogView({ demoMode, demoEntries }: { demoMode?: boolean; demoEntries
             style={{
               flex: 1, padding: "8px 0", fontSize: 13,
               fontFamily: OS.font, border: "none", background: "transparent",
-              color: OS.text, outline: "none",
+              color: dk(darkMode, 'rgba(255,255,255,0.85)', OS.text), outline: "none",
             }}
           />
           {search && (
@@ -679,8 +613,10 @@ function DevLogView({ demoMode, demoEntries }: { demoMode?: boolean; demoEntries
           <button
             onClick={() => db.decision_log.clear()}
             style={{
-              background: OS.white, border: `1px solid ${OS.border}`, borderRadius: 8,
-              color: OS.muted, fontSize: 12, cursor: "pointer",
+              background: dk(darkMode, 'rgba(255,255,255,0.06)', OS.white),
+              border: `0.5px solid ${dk(darkMode, 'rgba(255,255,255,0.10)', 'rgba(0,0,0,0.12)')}`,
+              borderRadius: 999,
+              color: dk(darkMode, 'rgba(255,255,255,0.45)', OS.muted), fontSize: 12, cursor: "pointer",
               fontFamily: OS.font, padding: "8px 12px", whiteSpace: "nowrap",
             }}
           >
@@ -689,37 +625,72 @@ function DevLogView({ demoMode, demoEntries }: { demoMode?: boolean; demoEntries
         )}
       </div>
 
-      {/* Filter pills */}
-      <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap", alignItems: "center" }}>
-        {(["all", "accepted", "rejected", "user_dismissed", "user_done"] as const).map((key) => {
-          const count = counts[key] ?? 0;
-          if (key !== "all" && count === 0) return null;
-          const active = typeFilter === key;
-          const meta = key === "all" ? null : LOG_TYPE_META[key];
-          return (
-            <button
-              key={key}
-              onClick={() => setTypeFilter(key)}
-              style={{
-                padding: "5px 12px", borderRadius: 6, fontSize: 12,
-                fontFamily: OS.font, fontWeight: active ? 600 : 500,
-                border: `1px solid ${active ? (meta?.color ?? OS.text) + "33" : OS.border}`,
-                cursor: "pointer",
-                background: active ? (meta?.bg ?? OS.bg) : OS.white,
-                color: active ? (meta?.color ?? OS.text) : OS.muted,
-                transition: "all 0.1s ease",
-              }}
-            >
-              {key === "all" ? "All" : meta!.label}
-              <span style={{
-                marginLeft: 5, fontSize: 11, opacity: 0.6,
-                fontFamily: OS.mono,
-              }}>
-                {count}
-              </span>
-            </button>
-          );
-        })}
+      {/* Filter pills — sliding pill nav */}
+      <div style={{ display: "flex", alignItems: "center", marginBottom: 14, gap: 8 }}>
+        <div style={{
+          display: "flex",
+          alignItems: "center",
+          background: dk(darkMode, 'rgba(255,255,255,0.06)', 'rgba(0,0,0,0.03)'),
+          borderRadius: 999,
+          padding: 3,
+          position: "relative",
+          width: "fit-content",
+          flexWrap: "nowrap",
+          gap: 0,
+        }}>
+          {/* Slider */}
+          <div style={{
+            position: "absolute",
+            top: 3,
+            left: filterSlider.left + 3,
+            width: filterSlider.width,
+            height: "calc(100% - 6px)",
+            background: dk(darkMode, 'rgba(255,255,255,0.10)', OS.white),
+            borderRadius: 999,
+            border: `0.5px solid ${dk(darkMode, 'rgba(255,255,255,0.12)', 'rgba(0,0,0,0.08)')}`,
+            transition: "left 450ms cubic-bezier(0.34, 1.56, 0.64, 1), width 300ms cubic-bezier(0.34, 1.2, 0.64, 1)",
+            zIndex: 0,
+            pointerEvents: "none",
+          }} />
+
+          {/* Tab buttons */}
+          {(["all", "accepted", "rejected", "user_dismissed", "user_done"] as const).map((key) => {
+            const count = counts[key] ?? 0;
+            if (key !== "all" && count === 0) return null;
+            const active = typeFilter === key;
+            const meta = key === "all" ? null : LOG_TYPE_META[key];
+            return (
+              <button
+                key={key}
+                ref={(el) => { filterTabRefs.current[key] = el; }}
+                onClick={() => setTypeFilter(key)}
+                style={{
+                  position: "relative", zIndex: 1,
+                  padding: "5px 12px",
+                  borderRadius: 999,
+                  border: "none",
+                  background: "transparent",
+                  fontSize: 12,
+                  fontWeight: active ? 500 : 400,
+                  fontFamily: OS.font,
+                  color: active ? dk(darkMode, 'rgba(255,255,255,0.90)', OS.text) : dk(darkMode, 'rgba(255,255,255,0.45)', OS.secondary),
+                  cursor: "pointer",
+                  transition: "color 0.2s ease",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {key === "all" ? "All" : meta!.label}
+                <span style={{
+                  marginLeft: 5, fontSize: 10,
+                  color: active ? dk(darkMode, 'rgba(255,255,255,0.35)', OS.muted) : dk(darkMode, 'rgba(255,255,255,0.20)', OS.faint),
+                  fontFamily: OS.mono,
+                }}>
+                  {count}
+                </span>
+              </button>
+            );
+          })}
+        </div>
         <span style={{ marginLeft: "auto", fontSize: 11, color: OS.faint, fontFamily: OS.mono }}>
           {filtered.length}/{unified.length}
         </span>
@@ -727,12 +698,12 @@ function DevLogView({ demoMode, demoEntries }: { demoMode?: boolean; demoEntries
 
       {/* Log entries — grouped */}
       <div style={{
-        background: OS.white, borderRadius: 10, overflow: "hidden",
-        border: `1px solid ${OS.border}`,
+        background: dk(darkMode, '#1c1c1e', OS.white), borderRadius: 10, overflow: "hidden",
+        border: `1px solid ${dk(darkMode, 'rgba(255,255,255,0.08)', OS.border)}`,
         maxHeight: "calc(100vh - 220px)", overflowY: "auto",
       }}>
         {filtered.length === 0 ? (
-          <div style={{ padding: "32px 16px", color: OS.muted, textAlign: "center", fontSize: 13 }}>
+          <div style={{ padding: "32px 16px", color: dk(darkMode, 'rgba(255,255,255,0.30)', OS.muted), textAlign: "center", fontSize: 13 }}>
             No matching entries
           </div>
         ) : groups.map((group) => (
@@ -741,12 +712,11 @@ function DevLogView({ demoMode, demoEntries }: { demoMode?: boolean; demoEntries
             <div style={{
               padding: "10px 16px 6px",
               fontSize: 11,
-              fontWeight: 600,
-              color: OS.muted,
-              textTransform: "uppercase",
-              letterSpacing: "0.05em",
-              background: OS.bg,
-              borderBottom: `1px solid ${OS.border}`,
+              fontWeight: 500,
+              color: dk(darkMode, 'rgba(255,255,255,0.30)', OS.muted),
+              letterSpacing: "0.02em",
+              background: dk(darkMode, 'rgba(255,255,255,0.04)', OS.bg),
+              borderBottom: `1px solid ${dk(darkMode, 'rgba(255,255,255,0.06)', OS.border)}`,
               position: "sticky",
               top: 0,
               zIndex: 1,
@@ -758,32 +728,32 @@ function DevLogView({ demoMode, demoEntries }: { demoMode?: boolean; demoEntries
               const meta = LOG_TYPE_META[entry.type];
               const isExpanded = expandedId === entry.id;
               return (
-                <div key={entry.id} style={{ borderBottom: `1px solid ${OS.border}` }}>
+                <div key={entry.id} style={{ borderBottom: `1px solid ${dk(darkMode, 'rgba(255,255,255,0.06)', OS.border)}` }}>
                   <div
                     onClick={() => setExpandedId(isExpanded ? null : entry.id)}
                     style={{
                       padding: "10px 16px",
                       cursor: "pointer",
                       display: "flex", gap: 12, alignItems: "flex-start",
-                      background: isExpanded ? OS.bg : OS.white,
+                      background: isExpanded ? dk(darkMode, 'rgba(255,255,255,0.04)', OS.bg) : dk(darkMode, '#1c1c1e', OS.white),
                       borderLeft: `3px solid ${meta.color}`,
                       transition: "background 0.1s ease",
                     }}
-                    onMouseEnter={(e) => { if (!isExpanded) e.currentTarget.style.background = OS.bg; }}
-                    onMouseLeave={(e) => { if (!isExpanded) e.currentTarget.style.background = OS.white; }}
+                    onMouseEnter={(e) => { if (!isExpanded) e.currentTarget.style.background = dk(darkMode, 'rgba(255,255,255,0.04)', OS.bg); }}
+                    onMouseLeave={(e) => { if (!isExpanded) e.currentTarget.style.background = dk(darkMode, '#1c1c1e', OS.white); }}
                   >
                     {/* Left: timestamp + badge stacked */}
                     <div style={{ flexShrink: 0, width: 62, paddingTop: 1 }}>
-                      <div style={{ fontSize: 11, color: OS.muted, fontFamily: OS.mono, lineHeight: 1.4 }}>
+                      <div style={{ fontSize: 11, color: dk(darkMode, 'rgba(255,255,255,0.35)', OS.muted), fontFamily: OS.mono, lineHeight: 1.4 }}>
                         {formatTime(entry.timestamp)}
                       </div>
                       <div style={{
                         display: "inline-block",
                         marginTop: 4,
                         padding: "1px 7px",
-                        borderRadius: 4,
+                        borderRadius: 999,
                         fontSize: 10,
-                        fontWeight: 600,
+                        fontWeight: 500,
                         color: meta.color,
                         background: meta.bg,
                         border: `1px solid ${meta.color}22`,
@@ -797,7 +767,7 @@ function DevLogView({ demoMode, demoEntries }: { demoMode?: boolean; demoEntries
                     {/* Center: message text + metadata */}
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{
-                        fontSize: 13, color: OS.text, lineHeight: 1.5,
+                        fontSize: 13, color: dk(darkMode, 'rgba(255,255,255,0.85)', OS.text), lineHeight: 1.5,
                         overflow: "hidden", textOverflow: "ellipsis",
                         whiteSpace: isExpanded ? "pre-wrap" : "nowrap",
                         fontFamily: OS.font,
@@ -805,7 +775,7 @@ function DevLogView({ demoMode, demoEntries }: { demoMode?: boolean; demoEntries
                         {entry.text}
                       </div>
                       {!isExpanded && entry.source && (
-                        <div style={{ fontSize: 11, color: OS.faint, marginTop: 2, fontFamily: OS.font }}>
+                        <div style={{ fontSize: 11, color: dk(darkMode, 'rgba(255,255,255,0.35)', OS.faint), marginTop: 2, fontFamily: OS.font }}>
                           {entry.source}
                         </div>
                       )}
@@ -813,16 +783,23 @@ function DevLogView({ demoMode, demoEntries }: { demoMode?: boolean; demoEntries
 
                     {/* Right: confidence */}
                     {entry.confidence != null && (
-                      <div style={{
+                      <span style={{
                         flexShrink: 0,
-                        fontSize: 11,
-                        fontWeight: 600,
+                        fontSize: 10,
+                        fontWeight: 500,
                         fontFamily: OS.mono,
+                        padding: "1px 6px",
+                        borderRadius: 999,
+                        background: entry.confidence >= 0.8 ? OS.green + "18" : entry.confidence >= 0.6 ? "#b08d33" + "18" : OS.faint + "18",
                         color: entry.confidence >= 0.8 ? OS.green : entry.confidence >= 0.6 ? "#b08d33" : OS.faint,
-                        paddingTop: 2,
+                        lineHeight: 1.6,
+                        display: "inline-flex",
+                        alignItems: "center",
+                        alignSelf: "flex-start",
+                        marginTop: 2,
                       }}>
                         {Math.round(entry.confidence * 100)}%
-                      </div>
+                      </span>
                     )}
                   </div>
 
@@ -830,7 +807,7 @@ function DevLogView({ demoMode, demoEntries }: { demoMode?: boolean; demoEntries
                   {isExpanded && (
                     <div style={{
                       padding: "0 16px 14px 93px",
-                      background: OS.bg,
+                      background: dk(darkMode, 'rgba(255,255,255,0.04)', OS.bg),
                       borderLeft: `3px solid ${meta.color}`,
                     }}>
                       <div style={{
@@ -839,28 +816,28 @@ function DevLogView({ demoMode, demoEntries }: { demoMode?: boolean; demoEntries
                       }}>
                         {entry.source && (
                           <div style={{ display: "flex", gap: 8 }}>
-                            <span style={{ color: OS.faint, flexShrink: 0, width: 60 }}>Source</span>
-                            <span style={{ color: OS.secondary }}>{entry.source}</span>
+                            <span style={{ color: dk(darkMode, 'rgba(255,255,255,0.25)', OS.faint), flexShrink: 0, width: 60 }}>Source</span>
+                            <span style={{ color: dk(darkMode, 'rgba(255,255,255,0.55)', OS.secondary) }}>{entry.source}</span>
                           </div>
                         )}
                         {entry.reason && (
                           <div style={{ display: "flex", gap: 8 }}>
-                            <span style={{ color: OS.faint, flexShrink: 0, width: 60 }}>
+                            <span style={{ color: dk(darkMode, 'rgba(255,255,255,0.25)', OS.faint), flexShrink: 0, width: 60 }}>
                               {entry.type === "accepted" ? "Extracted" : entry.type.startsWith("user_") ? "Task" : "Reason"}
                             </span>
-                            <span style={{ color: OS.secondary }}>{entry.reason}</span>
+                            <span style={{ color: dk(darkMode, 'rgba(255,255,255,0.55)', OS.secondary) }}>{entry.reason}</span>
                           </div>
                         )}
                         {entry.category && (
                           <div style={{ display: "flex", gap: 8 }}>
-                            <span style={{ color: OS.faint, flexShrink: 0, width: 60 }}>Category</span>
-                            <span style={{ color: OS.muted }}>{entry.category.replace(/_/g, " ")}</span>
+                            <span style={{ color: dk(darkMode, 'rgba(255,255,255,0.25)', OS.faint), flexShrink: 0, width: 60 }}>Category</span>
+                            <span style={{ color: dk(darkMode, 'rgba(255,255,255,0.55)', OS.muted) }}>{entry.category.replace(/_/g, " ")}</span>
                           </div>
                         )}
                         {entry.confidence != null && (
                           <div style={{ display: "flex", gap: 8 }}>
-                            <span style={{ color: OS.faint, flexShrink: 0, width: 60 }}>Conf.</span>
-                            <span style={{ color: OS.secondary }}>{Math.round(entry.confidence * 100)}%</span>
+                            <span style={{ color: dk(darkMode, 'rgba(255,255,255,0.25)', OS.faint), flexShrink: 0, width: 60 }}>Conf.</span>
+                            <span style={{ color: dk(darkMode, 'rgba(255,255,255,0.55)', OS.secondary) }}>{Math.round(entry.confidence * 100)}%</span>
                           </div>
                         )}
                       </div>
@@ -876,66 +853,9 @@ function DevLogView({ demoMode, demoEntries }: { demoMode?: boolean; demoEntries
   );
 }
 
-// ─── Completion Suggestion Card ───
-
-function CompletionSuggestionCard({
-  suggestion,
-  commitment,
-  onAccept,
-  onDismiss,
-}: {
-  suggestion: CompletionSuggestion;
-  commitment: Commitment | undefined;
-  onAccept: () => void;
-  onDismiss: () => void;
-}) {
-  return (
-    <div style={{
-      background: OS.bg,
-      borderLeft: `3px solid ${OS.green}`,
-      padding: "14px 16px",
-      borderBottom: `1px solid ${OS.border}`,
-    }}>
-      <div style={{ fontSize: 13, fontWeight: 600, color: OS.green, marginBottom: 8 }}>
-        Looks like you completed this
-      </div>
-      {commitment && (
-        <div style={{ fontSize: 14, fontWeight: 500, color: OS.text, marginBottom: 8 }}>
-          {commitment.text}
-        </div>
-      )}
-      <div style={{
-        fontSize: 12, color: OS.secondary, fontStyle: "italic", marginBottom: 12,
-      }}>
-        &quot;{suggestion.evidence}&quot;
-      </div>
-      <div style={{ display: "flex", gap: 8 }}>
-        <button
-          onClick={onAccept}
-          style={{
-            padding: "6px 14px", fontSize: 12, fontWeight: 600, fontFamily: OS.font,
-            background: OS.green, color: "#fff", border: "none", borderRadius: 5,
-            cursor: "pointer",
-          }}
-        >
-          Yes, mark done
-        </button>
-        <button
-          onClick={onDismiss}
-          style={{
-            padding: "6px 14px", fontSize: 12, fontWeight: 500, fontFamily: OS.font,
-            background: OS.white, color: OS.muted, border: `1px solid ${OS.border}`,
-            borderRadius: 5, cursor: "pointer",
-          }}
-        >
-          Not yet
-        </button>
-      </div>
-    </div>
-  );
-}
-
 // ─── Morning Brief Card ───
+
+import type { MorningBrief } from "@shared/types";
 
 function formatEventTime(iso: string): string {
   if (!iso || iso === "All day") return iso;
@@ -965,6 +885,7 @@ function MorningBriefCard({
   onRefresh?: () => void;
   onDone?: (id: number) => void;
 }) {
+  const darkMode = useDarkModeContext();
   const findCommitment = (id: number) => commitments.find(c => c.id === id);
   const [hoveredPriorityIdx, setHoveredPriorityIdx] = useState<number | null>(null);
   const [dismissedMoveIds, setDismissedMoveIds] = useState<Set<number>>(new Set());
@@ -1002,22 +923,22 @@ function MorningBriefCard({
       {/* ── a) Header ── */}
       <div style={{
         padding: "20px 24px 16px",
-        borderBottom: `1px solid ${OS.border}`,
-        background: OS.white,
+        borderBottom: `1px solid ${dk(darkMode, 'rgba(255,255,255,0.08)', OS.border)}`,
+        background: dk(darkMode, '#1c1c1e', OS.white),
       }}>
         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 8 }}>
           <div>
             <div style={{
-              fontSize: 10, fontWeight: 700, color: OS.muted,
+              fontSize: 10, fontWeight: 700, color: dk(darkMode, 'rgba(255,255,255,0.35)', OS.muted),
               textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4,
             }}>
               Morning Brief
             </div>
-            <div style={{ fontSize: 18, fontWeight: 700, color: OS.text, lineHeight: 1.2 }}>
+            <div style={{ fontSize: 18, fontWeight: 700, color: dk(darkMode, 'rgba(255,255,255,0.90)', OS.text), lineHeight: 1.2 }}>
               {dateStr}
             </div>
             {summaryParts.length > 0 && (
-              <div style={{ fontSize: 12, color: OS.muted, marginTop: 4 }}>
+              <div style={{ fontSize: 12, color: dk(darkMode, 'rgba(255,255,255,0.35)', OS.muted), marginTop: 4 }}>
                 {summaryParts.join(" \u00B7 ")}
               </div>
             )}
@@ -1028,8 +949,8 @@ function MorningBriefCard({
                 onClick={onRefresh}
                 style={{
                   padding: "5px 12px", fontSize: 11, fontWeight: 600, fontFamily: OS.font,
-                  background: OS.white, color: OS.secondary,
-                  border: `1px solid ${OS.border}`, borderRadius: 6, cursor: "pointer",
+                  background: dk(darkMode, '#1c1c1e', OS.white), color: dk(darkMode, 'rgba(255,255,255,0.55)', OS.secondary),
+                  border: `1px solid ${dk(darkMode, 'rgba(255,255,255,0.08)', OS.border)}`, borderRadius: 6, cursor: "pointer",
                 }}
               >
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><IconRefresh size={11} /> ✦ Refresh brief</span>
@@ -1039,8 +960,8 @@ function MorningBriefCard({
               onClick={onDismiss}
               style={{
                 padding: "5px 12px", fontSize: 11, fontWeight: 600, fontFamily: OS.font,
-                background: OS.white, color: OS.muted,
-                border: `1px solid ${OS.border}`, borderRadius: 6, cursor: "pointer",
+                background: dk(darkMode, '#1c1c1e', OS.white), color: dk(darkMode, 'rgba(255,255,255,0.35)', OS.muted),
+                border: `1px solid ${dk(darkMode, 'rgba(255,255,255,0.08)', OS.border)}`, borderRadius: 6, cursor: "pointer",
               }}
             >
               Dismiss
@@ -1051,9 +972,9 @@ function MorningBriefCard({
 
       {/* ── b) Today's priorities ── */}
       {brief.priorities.length > 0 && (
-        <div style={{ padding: "14px 24px", borderBottom: `1px solid ${OS.border}` }}>
+        <div style={{ padding: "14px 24px", borderBottom: `1px solid ${dk(darkMode, 'rgba(255,255,255,0.08)', OS.border)}` }}>
           <div style={{
-            fontSize: 10, fontWeight: 700, color: OS.muted,
+            fontSize: 10, fontWeight: 700, color: dk(darkMode, 'rgba(255,255,255,0.35)', OS.muted),
             textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10,
           }}>
             Today&apos;s Priorities
@@ -1074,7 +995,7 @@ function MorningBriefCard({
                 style={{
                   display: "flex", alignItems: "flex-start", gap: 10,
                   padding: "8px 4px", borderRadius: 6,
-                  background: isHovered ? OS.bg : "transparent",
+                  background: isHovered ? dk(darkMode, 'rgba(255,255,255,0.06)', OS.bg) : "transparent",
                   transition: "background 0.1s ease",
                 }}
               >
@@ -1088,25 +1009,25 @@ function MorningBriefCard({
                   {i + 1}
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13, fontWeight: 500, color: OS.text }}>{p.text}</div>
+                  <div style={{ fontSize: 13, fontWeight: 500, color: dk(darkMode, 'rgba(255,255,255,0.90)', OS.text) }}>{p.text}</div>
                   <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 3, flexWrap: "wrap" }}>
                     {p.suggestedTime && (
-                      <span style={{ fontSize: 11, color: OS.muted }}>
+                      <span style={{ fontSize: 11, color: dk(darkMode, 'rgba(255,255,255,0.35)', OS.muted) }}>
                         <InlineIcon><IconClock size={11} /></InlineIcon> {p.suggestedTime}
                       </span>
                     )}
                     {statusTag && (
                       <span style={{
                         fontSize: 10, fontWeight: 600, padding: "1px 6px", borderRadius: 4,
-                        background: OS.bg,
+                        background: dk(darkMode, 'rgba(255,255,255,0.06)', OS.bg),
                         color: statusTag.color,
-                        border: `1px solid ${OS.border}`,
+                        border: `1px solid ${dk(darkMode, 'rgba(255,255,255,0.08)', OS.border)}`,
                       }}>
                         {statusTag.label}
                       </span>
                     )}
                     {!p.suggestedTime && !statusTag && p.reason && (
-                      <span style={{ fontSize: 11, color: OS.muted }}>{p.reason}</span>
+                      <span style={{ fontSize: 11, color: dk(darkMode, 'rgba(255,255,255,0.35)', OS.muted) }}>{p.reason}</span>
                     )}
                   </div>
                 </div>
@@ -1121,8 +1042,8 @@ function MorningBriefCard({
                       title="Block time"
                       style={{
                         padding: "3px 8px", fontSize: 11, fontWeight: 600, fontFamily: OS.font,
-                        background: OS.white, color: OS.secondary,
-                        border: `1px solid ${OS.border}`, borderRadius: 4, cursor: "pointer",
+                        background: dk(darkMode, '#1c1c1e', OS.white), color: dk(darkMode, 'rgba(255,255,255,0.55)', OS.secondary),
+                        border: `1px solid ${dk(darkMode, 'rgba(255,255,255,0.08)', OS.border)}`, borderRadius: 4, cursor: "pointer",
                       }}
                     >
                       Block time
@@ -1134,8 +1055,8 @@ function MorningBriefCard({
                       title="Mark done"
                       style={{
                         padding: "3px 8px", fontSize: 11, fontWeight: 600, fontFamily: OS.font,
-                        background: OS.white, color: OS.secondary,
-                        border: `1px solid ${OS.border}`, borderRadius: 4, cursor: "pointer",
+                        background: dk(darkMode, '#1c1c1e', OS.white), color: dk(darkMode, 'rgba(255,255,255,0.55)', OS.secondary),
+                        border: `1px solid ${dk(darkMode, 'rgba(255,255,255,0.08)', OS.border)}`, borderRadius: 4, cursor: "pointer",
                       }}
                     >
                       Done
@@ -1149,9 +1070,9 @@ function MorningBriefCard({
       )}
 
       {/* ── c) Your day timeline ── */}
-      <div style={{ padding: "14px 24px", borderBottom: `1px solid ${OS.border}` }}>
+      <div style={{ padding: "14px 24px", borderBottom: `1px solid ${dk(darkMode, 'rgba(255,255,255,0.08)', OS.border)}` }}>
         <div style={{
-          fontSize: 10, fontWeight: 700, color: OS.muted,
+          fontSize: 10, fontWeight: 700, color: dk(darkMode, 'rgba(255,255,255,0.35)', OS.muted),
           textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10,
         }}>
           Your Day
@@ -1159,12 +1080,11 @@ function MorningBriefCard({
         {brief.calendarEvents && brief.calendarEvents.length > 0 ? (
           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
             {brief.calendarEvents.map((ev, i) => {
-              const isMeeting = true;
-              const barColor = isMeeting ? OS.blue : OS.green;
+              const barColor = OS.blue;
               return (
                 <div key={i} style={{ display: "flex", alignItems: "center", gap: 10 }}>
                   <span style={{
-                    fontSize: 11, color: OS.muted, width: 72, flexShrink: 0, textAlign: "right",
+                    fontSize: 11, color: dk(darkMode, 'rgba(255,255,255,0.35)', OS.muted), width: 72, flexShrink: 0, textAlign: "right",
                   }}>
                     {formatEventTime(ev.start)}
                   </span>
@@ -1173,9 +1093,9 @@ function MorningBriefCard({
                     background: `${barColor}15`, borderLeft: `3px solid ${barColor}`,
                     display: "flex", alignItems: "center", paddingLeft: 8,
                   }}>
-                    <span style={{ fontSize: 12, color: OS.text, fontWeight: 500 }}>{ev.title}</span>
+                    <span style={{ fontSize: 12, color: dk(darkMode, 'rgba(255,255,255,0.90)', OS.text), fontWeight: 500 }}>{ev.title}</span>
                     {ev.end !== ev.start && ev.end !== "All day" && (
-                      <span style={{ fontSize: 10, color: OS.muted, marginLeft: 6 }}>
+                      <span style={{ fontSize: 10, color: dk(darkMode, 'rgba(255,255,255,0.35)', OS.muted), marginLeft: 6 }}>
                         <InlineIcon><IconArrowRight size={11} /></InlineIcon> {formatEventTime(ev.end)}
                       </span>
                     )}
@@ -1186,13 +1106,13 @@ function MorningBriefCard({
           </div>
         ) : brief.scheduleSuggestion ? (
           <div style={{
-            fontSize: 12, color: OS.secondary, lineHeight: 1.5,
-            padding: "8px 12px", background: OS.bg, borderRadius: 6,
+            fontSize: 12, color: dk(darkMode, 'rgba(255,255,255,0.55)', OS.secondary), lineHeight: 1.5,
+            padding: "8px 12px", background: dk(darkMode, 'rgba(255,255,255,0.06)', OS.bg), borderRadius: 6,
           }}>
             {brief.scheduleSuggestion}
           </div>
         ) : (
-          <div style={{ fontSize: 12, color: OS.muted, fontStyle: "italic" }}>
+          <div style={{ fontSize: 12, color: dk(darkMode, 'rgba(255,255,255,0.35)', OS.muted), fontStyle: "italic" }}>
             No calendar connected — add an ICS feed in Settings to see your timeline.
           </div>
         )}
@@ -1200,9 +1120,9 @@ function MorningBriefCard({
 
       {/* ── d) Suggested moves ── */}
       {activeMoves.length > 0 && (
-        <div style={{ padding: "14px 24px", borderBottom: `1px solid ${OS.border}` }}>
+        <div style={{ padding: "14px 24px", borderBottom: `1px solid ${dk(darkMode, 'rgba(255,255,255,0.08)', OS.border)}` }}>
           <div style={{
-            fontSize: 10, fontWeight: 700, color: OS.muted,
+            fontSize: 10, fontWeight: 700, color: dk(darkMode, 'rgba(255,255,255,0.35)', OS.muted),
             textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10,
           }}>
             Suggested Moves
@@ -1214,18 +1134,18 @@ function MorningBriefCard({
               return (
                 <div key={i} style={{
                   display: "flex", alignItems: "center", gap: 8,
-                  padding: "8px 10px", background: OS.bg, borderRadius: 6,
+                  padding: "8px 10px", background: dk(darkMode, 'rgba(255,255,255,0.06)', OS.bg), borderRadius: 6,
                 }}>
-                  <span style={{ fontSize: 13, color: OS.muted, flexShrink: 0 }}><InlineIcon><IconArrowRight size={11} /></InlineIcon></span>
+                  <span style={{ fontSize: 13, color: dk(darkMode, 'rgba(255,255,255,0.35)', OS.muted), flexShrink: 0 }}><InlineIcon><IconArrowRight size={11} /></InlineIcon></span>
                   <span style={{
-                    flex: 1, fontSize: 12, color: OS.text,
+                    flex: 1, fontSize: 12, color: dk(darkMode, 'rgba(255,255,255,0.90)', OS.text),
                     overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
                   }}>
                     {commitment.text}
                   </span>
                   <span style={{
                     fontSize: 10, fontWeight: 500, padding: "2px 7px", borderRadius: 4,
-                    background: OS.bg, color: OS.secondary,
+                    background: dk(darkMode, 'rgba(255,255,255,0.06)', OS.bg), color: dk(darkMode, 'rgba(255,255,255,0.55)', OS.secondary),
                     flexShrink: 0, textTransform: "capitalize",
                   }}>
                     {move.to.replace(/_/g, " ")}
@@ -1239,8 +1159,8 @@ function MorningBriefCard({
                     }}
                     style={{
                       padding: "3px 8px", fontSize: 11, fontWeight: 600, fontFamily: OS.font,
-                      background: OS.white, color: OS.secondary,
-                      border: `1px solid ${OS.border}`, borderRadius: 4, cursor: "pointer",
+                      background: dk(darkMode, '#1c1c1e', OS.white), color: dk(darkMode, 'rgba(255,255,255,0.55)', OS.secondary),
+                      border: `1px solid ${dk(darkMode, 'rgba(255,255,255,0.08)', OS.border)}`, borderRadius: 4, cursor: "pointer",
                       flexShrink: 0,
                     }}
                   >
@@ -1250,8 +1170,8 @@ function MorningBriefCard({
                     onClick={() => setDismissedMoveIds(prev => new Set([...prev, move.commitmentId]))}
                     style={{
                       padding: "3px 6px", fontSize: 11, fontWeight: 500, fontFamily: OS.font,
-                      background: "none", color: OS.muted,
-                      border: `1px solid ${OS.border}`, borderRadius: 4, cursor: "pointer",
+                      background: "none", color: dk(darkMode, 'rgba(255,255,255,0.35)', OS.muted),
+                      border: `1px solid ${dk(darkMode, 'rgba(255,255,255,0.08)', OS.border)}`, borderRadius: 4, cursor: "pointer",
                       flexShrink: 0, display: "inline-flex", alignItems: "center",
                     }}
                   >
@@ -1267,7 +1187,7 @@ function MorningBriefCard({
       {/* ── f) Footer ── */}
       <div style={{
         padding: "10px 24px", display: "flex", alignItems: "center", justifyContent: "space-between",
-        fontSize: 11, color: OS.muted,
+        fontSize: 11, color: dk(darkMode, 'rgba(255,255,255,0.35)', OS.muted),
       }}>
         <span>
           Generated {new Date(brief.createdAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
@@ -1276,7 +1196,7 @@ function MorningBriefCard({
         <button
           onClick={onSnooze}
           style={{
-            fontSize: 11, color: OS.muted, background: "none", border: "none",
+            fontSize: 11, color: dk(darkMode, 'rgba(255,255,255,0.35)', OS.muted), background: "none", border: "none",
             cursor: "pointer", fontFamily: OS.font, textDecoration: "underline",
           }}
         >
@@ -1385,7 +1305,7 @@ function BriefView({
           />
         ) : !generating ? (
           <div style={{ textAlign: "center", padding: "52px 16px" }}>
-            <div style={{ marginBottom: 10, color: OS.muted, display: "inline-flex" }}><IconSun size={28} /></div>
+            <div style={{ marginBottom: 10, color: OS.muted, display: "inline-flex" }}><IconLoader size={28} /></div>
             <div style={{ fontSize: 14, fontWeight: 600, color: OS.text, marginBottom: 6 }}>
               No brief yet
             </div>
@@ -1395,7 +1315,7 @@ function BriefView({
           </div>
         ) : (
           <div style={{ textAlign: "center", padding: "52px 16px" }}>
-            <div style={{ marginBottom: 10, color: OS.muted, display: "inline-flex" }}><IconSun size={28} /></div>
+            <div style={{ marginBottom: 10, color: OS.muted, display: "inline-flex" }}><IconLoader size={28} /></div>
             <div style={{ fontSize: 14, fontWeight: 600, color: OS.text, marginBottom: 6 }}>
               ✦ Building your brief...
             </div>
@@ -1461,373 +1381,224 @@ function BriefView({
   );
 }
 
-// ─── Nav Icon (collapsed mode button) ───
+// ─── Top Bar ───
 
-function NavIcon({ icon, label, active, onClick }: {
-  icon: React.ReactNode; label: string; active: boolean; onClick: () => void;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      title={label}
-      style={{
-        width: 36, height: 36, borderRadius: 6,
-        display: "flex", alignItems: "center", justifyContent: "center",
-        background: active ? "rgba(255,255,255,0.08)" : "transparent",
-        border: "1px solid transparent",
-        color: active ? "rgba(255,255,255,0.95)" : "rgba(255,255,255,0.4)",
-        fontSize: 16, cursor: "pointer",
-        transition: "all 0.1s ease",
-        margin: "2px auto",
-      }}
-    >
-      {icon}
-    </button>
-  );
-}
-
-// ─── Left Navigation Sidebar ───
-
-function LeftNav({
+function TopBar({
   viewMode,
   setViewMode,
   developerMode,
-  collapsed,
-  onToggleCollapse,
-  displaySettings,
-  onUpdateDisplay,
-  onOpenFullSettings,
-  scanAgo,
+  onOpenSettings,
   scanning,
   onRescan,
+  scanAgo,
   demoMode,
+  displaySettings,
+  onUpdateDisplay,
   privacyMode,
   onTogglePrivacy,
-  staleWarning,
+  darkMode,
+  onToggleDark,
 }: {
   viewMode: ViewMode;
   setViewMode: (v: ViewMode) => void;
   developerMode: boolean;
-  collapsed: boolean;
-  onToggleCollapse: () => void;
-  displaySettings: DisplaySettings;
-  onUpdateDisplay: (patch: Partial<DisplaySettings>) => void;
-  onOpenFullSettings: () => void;
-  scanAgo: string | null;
+  onOpenSettings: () => void;
   scanning: boolean;
   onRescan: () => void;
+  scanAgo: string | null;
   demoMode: boolean;
+  displaySettings: DisplaySettings;
+  onUpdateDisplay: (patch: Partial<DisplaySettings>) => void;
   privacyMode: boolean;
   onTogglePrivacy: () => void;
-  staleWarning: string | null;
+  darkMode: boolean;
+  onToggleDark: () => void;
 }) {
-  const [showNavSettings, setShowNavSettings] = useState(false);
-  const settingsBtnRef = useRef<HTMLButtonElement>(null) as React.RefObject<HTMLButtonElement>;
-  const settingsIconRef = useRef<HTMLButtonElement>(null) as React.RefObject<HTMLButtonElement>;
+  const [showTopBarSettings, setShowTopBarSettings] = useState(false);
+  const settingsRef = useRef<HTMLButtonElement>(null) as React.RefObject<HTMLButtonElement>;
 
-  // Compute popover position from anchor button rect (fixed positioning to avoid overflow clipping)
-  const getPopoverStyle = (anchor: React.RefObject<HTMLElement>, mode: "expanded" | "collapsed"): React.CSSProperties => {
-    const rect = anchor.current?.getBoundingClientRect();
-    if (!rect) return {};
-    if (mode === "expanded") {
-      // Above the button, aligned left
-      return {
-        position: "fixed",
-        top: "auto",
-        bottom: window.innerHeight - rect.top + 6,
-        left: rect.left,
-        right: "auto",
-        marginTop: 0,
-      };
+  const navItems: Array<{ key: ViewMode; label: string; show: boolean }> = [
+    { key: "board", label: "Board", show: true },
+    { key: "people", label: "People", show: true },
+    { key: "devlog", label: "Dev Log", show: developerMode },
+  ];
+
+  const visibleItems = navItems.filter((i) => i.show);
+
+  // Sliding indicator positioning
+  const itemRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const [slider, setSlider] = useState({ left: 0, width: 0 });
+
+  useEffect(() => {
+    const el = itemRefs.current[viewMode];
+    if (el) {
+      setSlider({ left: el.offsetLeft, width: el.offsetWidth });
     }
-    // Collapsed: to the right of the icon
-    return {
-      position: "fixed",
-      top: "auto",
-      bottom: window.innerHeight - rect.bottom,
-      left: rect.right + 6,
-      right: "auto",
-      marginTop: 0,
-    };
-  };
+  }, [viewMode, developerMode]);
 
-  const labelColor = "rgba(255,255,255,0.35)";
-  const itemColor = "rgba(255,255,255,0.7)";
-  const activeItemColor = "rgba(255,255,255,0.95)";
-  const activeBg = "rgba(255,255,255,0.08)";
-
-  function NavSection({ label }: { label: string }) {
-    return (
-      <div style={{
-        fontSize: 10, fontWeight: 700, color: labelColor,
-        textTransform: "uppercase", letterSpacing: "0.08em",
-        padding: "14px 16px 5px",
-      }}>
-        {label}
+  return (
+    <div
+      style={{
+        height: 52,
+        flexShrink: 0,
+        display: "flex",
+        alignItems: "center",
+        padding: "0 20px",
+        borderBottom: `0.5px solid ${darkMode ? "rgba(255,255,255,0.08)" : OS.border}`,
+        background: darkMode ? "#1c1c1e" : OS.white,
+        position: "relative",
+        zIndex: 10,
+      }}
+    >
+      {/* Wordmark — left */}
+      <div style={{ flex: 1, fontSize: 14, fontWeight: 500, color: darkMode ? "rgba(255,255,255,0.85)" : OS.text, letterSpacing: "-0.04em", fontFamily: OS.font }}>
+        clyde
       </div>
-    );
-  }
 
-  function NavItem({ label, active, onClick }: {
-    label: string; active: boolean; onClick: () => void;
-  }) {
-    return (
+      {/* Pill nav — center */}
       <div
-        onClick={onClick}
         style={{
-          display: "flex", alignItems: "center",
-          padding: "7px 14px", cursor: "pointer",
-          background: active ? activeBg : "transparent",
-          margin: "1px 8px", borderRadius: 6,
-          transition: "background 0.1s ease",
+          position: "relative",
+          display: "flex",
+          alignItems: "center",
+          background: darkMode ? "rgba(255,255,255,0.06)" : OS.bg,
+          borderRadius: 999,
+          padding: 3,
         }}
       >
-        <span style={{
-          flex: 1, fontSize: 13,
-          fontWeight: active ? 600 : 400,
-          color: active ? activeItemColor : itemColor,
-        }}>
-          {label}
-        </span>
-      </div>
-    );
-  }
-
-  // ── Collapsed mode: icon column ──
-  if (collapsed) {
-    return (
-      <div style={{
-        width: 56, flexShrink: 0, height: "100vh",
-        background: OS.darkBlue, display: "flex",
-        flexDirection: "column", alignItems: "center",
-        fontFamily: OS.font,
-        transition: "width 0.15s ease",
-      }}>
-        {/* Expand button */}
-        <div style={{ padding: "14px 0 10px", borderBottom: "1px solid rgba(255,255,255,0.1)", width: "100%", textAlign: "center" }}>
+        {/* Sliding pill indicator */}
+        <div
+          style={{
+            position: "absolute",
+            top: 3,
+            left: slider.left,
+            width: slider.width,
+            height: "calc(100% - 6px)",
+            background: darkMode ? "rgba(255,255,255,0.10)" : OS.white,
+            borderRadius: 999,
+            border: `0.5px solid ${darkMode ? "rgba(255,255,255,0.12)" : OS.border}`,
+            boxShadow: darkMode ? "none" : "0 1px 3px rgba(0,0,0,0.06)",
+            transition: `left 300ms cubic-bezier(0.34, 1.2, 0.64, 1), width 250ms cubic-bezier(0.34, 1.2, 0.64, 1)`,
+            zIndex: 0,
+            pointerEvents: "none",
+          }}
+        />
+        {visibleItems.map(({ key, label }) => (
           <button
-            onClick={onToggleCollapse}
-            title="Expand sidebar"
+            key={key}
+            ref={(el) => { itemRefs.current[key] = el; }}
+            onClick={() => setViewMode(key)}
             style={{
-              background: "none", border: "none",
-              color: "rgba(255,255,255,0.5)", fontSize: 16,
-              cursor: "pointer", padding: "4px 0",
+              position: "relative",
+              zIndex: 1,
+              padding: "5px 14px",
+              borderRadius: 999,
+              border: "none",
+              background: "transparent",
+              fontSize: 13,
+              fontWeight: viewMode === key ? 500 : 400,
+              color: viewMode === key ? (darkMode ? "rgba(255,255,255,0.95)" : OS.text) : (darkMode ? "rgba(255,255,255,0.45)" : OS.secondary),
+              cursor: "pointer",
+              fontFamily: OS.font,
+              transition: "color 0.2s ease",
+              whiteSpace: "nowrap" as const,
             }}
           >
-            <IconChevronRight size={14} />
+            {label}
           </button>
-        </div>
+        ))}
+      </div>
 
-        {/* View icons */}
-        <div style={{ flex: 1, paddingTop: 10, display: "flex", flexDirection: "column", gap: 2 }}>
-          <NavIcon icon={<IconBoard size={14} />} label="Board" active={viewMode === "board"} onClick={() => setViewMode("board")} />
-          <NavIcon icon={<IconList size={14} />} label="List" active={viewMode === "list"} onClick={() => setViewMode("list")} />
-          <NavIcon icon={<IconSun size={14} />} label="Planner" active={viewMode === "brief"} onClick={() => setViewMode("brief")} />
-          <NavIcon icon={<IconChat size={14} />} label="Chat" active={viewMode === "chat"} onClick={() => setViewMode("chat")} />
-          <NavIcon icon={<IconPeople size={14} />} label="People" active={viewMode === "people"} onClick={() => setViewMode("people")} />
-          <NavIcon icon={"M"} label="Memory" active={viewMode === "memory"} onClick={() => setViewMode("memory")} />
-          <NavIcon icon={"I"} label="Insights" active={viewMode === "insights"} onClick={() => setViewMode("insights")} />
-          <NavIcon icon={"O"} label="OKRs" active={viewMode === "okrs"} onClick={() => setViewMode("okrs")} />
-          {developerMode && (
-            <NavIcon icon={"</>"} label="Dev Log" active={viewMode === "devlog"} onClick={() => setViewMode("devlog")} />
-          )}
-        </div>
-
-        {/* Scan button */}
-        <div style={{ borderTop: "1px solid rgba(255,255,255,0.1)", padding: "8px 0", width: "100%", textAlign: "center" }}>
-            <button
-              onClick={onRescan}
-              disabled={scanning}
-              title={scanning ? "Scanning..." : scanAgo ? `Scanned ${demoMode ? "just now" : scanAgo}` : "Scan now"}
-              style={{
-                width: 36, height: 36, borderRadius: 8,
-                display: "inline-flex", alignItems: "center", justifyContent: "center",
-                background: "transparent",
-                border: "1px solid transparent",
-                color: scanning ? "rgba(255,255,255,0.25)" : "rgba(255,255,255,0.4)",
-                fontSize: 16, cursor: scanning ? "default" : "pointer",
-                transition: "all 0.1s ease",
-              }}
-            >
-              {scanning ? <IconLoader size={12} /> : <IconRefresh size={12} />}
-            </button>
-        </div>
-
-        {/* Stale warning dot — collapsed */}
-        {staleWarning && (
-          <div
-            title={staleWarning}
-            style={{
-              width: 8, height: 8, borderRadius: "50%",
-              background: "rgb(245, 158, 11)",
-              margin: "4px auto",
-              boxShadow: "0 0 4px rgba(245, 158, 11, 0.5)",
-            }}
-          />
-        )}
-
-        {/* Settings icon */}
-        <div style={{ borderTop: "1px solid rgba(255,255,255,0.1)", padding: "10px 0", width: "100%", textAlign: "center" }}>
+      {/* Right controls */}
+      <div style={{ flex: 1, display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 6 }}>
+        <button
+          onClick={onRescan}
+          disabled={scanning}
+          title={scanning ? "Scanning..." : scanAgo ? `Scanned ${demoMode ? "just now" : scanAgo}` : "Scan now"}
+          style={{
+            width: 32, height: 32, borderRadius: "50%",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            border: `0.5px solid ${darkMode ? "rgba(255,255,255,0.10)" : OS.border}`,
+            background: darkMode ? "rgba(255,255,255,0.04)" : OS.white,
+            color: scanning ? (darkMode ? "rgba(255,255,255,0.25)" : OS.muted) : (darkMode ? "rgba(255,255,255,0.45)" : OS.secondary),
+            cursor: scanning ? "default" : "pointer",
+          }}
+        >
+          {scanning ? <IconLoader size={12} /> : <IconRefresh size={12} />}
+        </button>
+        <div style={{ position: "relative" }}>
           <button
-            ref={settingsIconRef}
-            onClick={() => setShowNavSettings(!showNavSettings)}
+            ref={settingsRef}
+            onClick={() => setShowTopBarSettings(!showTopBarSettings)}
             title="Settings"
             style={{
-              width: 36, height: 36, borderRadius: 8,
-              display: "inline-flex", alignItems: "center", justifyContent: "center",
-              background: showNavSettings ? "rgba(255,255,255,0.08)" : "transparent",
-              border: "1px solid transparent",
-              color: showNavSettings ? "rgba(255,255,255,0.95)" : "rgba(255,255,255,0.4)",
-              fontSize: 16, cursor: "pointer",
-              transition: "all 0.1s ease",
+              width: 32, height: 32, borderRadius: "50%",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              border: `0.5px solid ${showTopBarSettings ? OS.blue : (darkMode ? "rgba(255,255,255,0.10)" : OS.border)}`,
+              background: showTopBarSettings ? OS.blueBg : (darkMode ? "rgba(255,255,255,0.04)" : OS.white),
+              color: showTopBarSettings ? OS.blue : (darkMode ? "rgba(255,255,255,0.45)" : OS.secondary),
+              cursor: "pointer",
             }}
           >
             <IconSettings size={14} />
           </button>
-          {showNavSettings && (
+          {showTopBarSettings && (
             <SettingsPopover
               display={displaySettings}
               onUpdateDisplay={onUpdateDisplay}
-              onClose={() => setShowNavSettings(false)}
-              onOpenFullSettings={() => { setShowNavSettings(false); onOpenFullSettings(); }}
-              anchorRef={settingsIconRef}
-              style={getPopoverStyle(settingsIconRef, "collapsed")}
+              onClose={() => setShowTopBarSettings(false)}
+              onOpenFullSettings={() => { setShowTopBarSettings(false); onOpenSettings(); }}
+              anchorRef={settingsRef}
+              style={{
+                position: "fixed",
+                top: 58,
+                right: 16,
+                left: "auto",
+                marginTop: 0,
+              }}
               privacyMode={privacyMode}
               onTogglePrivacy={onTogglePrivacy}
+              darkMode={darkMode}
+              onToggleDark={onToggleDark}
             />
           )}
         </div>
       </div>
-    );
-  }
+    </div>
+  );
+}
 
-  // ── Expanded mode ──
+// ─── Demo Mode Banner ───
+
+function DemoModeBanner() {
+  const darkMode = useDarkModeContext();
   return (
     <div style={{
-      width: 200, flexShrink: 0, height: "100vh",
-      background: OS.darkBlue, display: "flex",
-      flexDirection: "column", fontFamily: OS.font,
-      transition: "width 0.15s ease",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      padding: "7px 14px",
+      background: dk(darkMode, 'rgba(180,120,0,0.18)', OS.yellowBg),
+      border: `1px solid ${dk(darkMode, 'rgba(180,120,0,0.35)', OS.yellowBorder)}`,
+      borderRadius: 6,
+      margin: "8px 16px 0",
+      fontSize: 12,
+      color: dk(darkMode, 'rgba(255,190,80,0.85)', OS.yellowText),
+      fontFamily: OS.font,
+      fontWeight: 600,
+      gap: 8,
     }}>
-      {/* Title + collapse chevron */}
-      <div style={{
-        padding: "18px 16px 14px",
-        borderBottom: "1px solid rgba(255,255,255,0.1)",
-        display: "flex", alignItems: "center", justifyContent: "space-between",
-      }}>
-        <div style={{ fontSize: 15, fontWeight: 700, color: "rgba(255,255,255,0.9)", letterSpacing: "-0.02em" }}>
-          Clyde <span style={{ fontWeight: 400, fontSize: 11, color: "rgba(255,255,255,0.35)" }}>AI Assistant</span>
-        </div>
-        <button
-          onClick={onToggleCollapse}
-          title="Collapse sidebar"
-          style={{
-            background: "none", border: "none",
-            color: "rgba(255,255,255,0.4)", fontSize: 16,
-            cursor: "pointer", padding: "0 2px",
-            lineHeight: 1,
-          }}
-        >
-          <IconChevronLeft size={14} />
-        </button>
-      </div>
-
-      {/* Nav items */}
-      <div style={{ flex: 1, overflowY: "auto", paddingBottom: 8 }}>
-        <NavSection label="Views" />
-        <NavItem label="Board" active={viewMode === "board"} onClick={() => setViewMode("board")} />
-        <NavItem label="List" active={viewMode === "list"} onClick={() => setViewMode("list")} />
-        <NavItem label="Planner" active={viewMode === "brief"} onClick={() => setViewMode("brief")} />
-        <NavItem label="Chat" active={viewMode === "chat"} onClick={() => setViewMode("chat")} />
-        <NavItem label="People" active={viewMode === "people"} onClick={() => setViewMode("people")} />
-        <NavSection label="Intelligence" />
-        <NavItem label="Memory" active={viewMode === "memory"} onClick={() => setViewMode("memory")} />
-        <NavItem label="Insights" active={viewMode === "insights"} onClick={() => setViewMode("insights")} />
-        <NavItem label="OKRs" active={viewMode === "okrs"} onClick={() => setViewMode("okrs")} />
-        {developerMode && (
-          <NavItem label="Dev Log" active={viewMode === "devlog"} onClick={() => setViewMode("devlog")} />
-        )}
-      </div>
-
-      {/* Scan status */}
-      <div style={{
-          borderTop: "1px solid rgba(255,255,255,0.1)",
-          padding: "10px 14px",
-          display: "flex", alignItems: "center", gap: 8,
-        }}>
-          <span style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", flex: 1 }}>
-            {demoMode ? "Scanned just now" : scanAgo ? `Scanned ${scanAgo}` : "Not scanned yet"}
-          </span>
-          <button
-            onClick={onRescan}
-            disabled={scanning}
-            style={{
-              padding: "3px 8px", fontSize: 11, fontWeight: 500,
-              fontFamily: OS.font, borderRadius: 5,
-              background: "transparent",
-              border: "1px solid rgba(255,255,255,0.15)",
-              color: scanning ? "rgba(255,255,255,0.25)" : "rgba(255,255,255,0.5)",
-              cursor: scanning ? "default" : "pointer",
-            }}
-          >
-            {scanning ? <IconLoader size={12} /> : <IconRefresh size={12} />}
-          </button>
-      </div>
-
-      {/* Stale warning banner — expanded */}
-      {staleWarning && (
-        <div style={{
-          borderTop: "1px solid rgba(255,255,255,0.1)",
-          padding: "8px 14px",
-          background: "rgba(245, 158, 11, 0.12)",
-        }}>
-          <div style={{ fontSize: 11, color: "rgba(255, 200, 50, 0.9)", lineHeight: 1.4 }}>
-            ⚠ {staleWarning}
-          </div>
-          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 4, lineHeight: 1.3 }}>
-            Check{" "}
-            <span
-              onClick={onOpenFullSettings}
-              style={{ textDecoration: "underline", cursor: "pointer", color: "rgba(255, 200, 50, 0.7)" }}
-            >
-              settings
-            </span>
-            {" "}or contact brayden.parkinson@openspace.ai
-          </div>
-        </div>
-      )}
-
-      {/* Settings footer */}
-      <div style={{ borderTop: "1px solid rgba(255,255,255,0.1)", padding: "10px 14px" }}>
-        <button
-          ref={settingsBtnRef}
-          onClick={() => setShowNavSettings(!showNavSettings)}
-          style={{
-            display: "flex", alignItems: "center", gap: 8,
-            background: showNavSettings ? "rgba(255,255,255,0.08)" : "none",
-            border: "none",
-            color: showNavSettings ? "rgba(255,255,255,0.95)" : "rgba(255,255,255,0.4)",
-            fontSize: 12,
-            cursor: "pointer", fontFamily: OS.font, padding: "4px 6px",
-            borderRadius: 6,
-          }}
-        >
-          <span style={{ display: "inline-flex" }}><IconSettings size={14} /></span>
-          <span>Settings</span>
-        </button>
-        {showNavSettings && (
-          <SettingsPopover
-            display={displaySettings}
-            onUpdateDisplay={onUpdateDisplay}
-            onClose={() => setShowNavSettings(false)}
-            onOpenFullSettings={() => { setShowNavSettings(false); onOpenFullSettings(); }}
-            anchorRef={settingsBtnRef}
-            style={getPopoverStyle(settingsBtnRef, "expanded")}
-            privacyMode={privacyMode}
-            onTogglePrivacy={onTogglePrivacy}
-          />
-        )}
-      </div>
+      <span>DEMO MODE — Showing sample data · your real data is safe</span>
+      <button
+        onClick={() => chrome.storage.local.set({ demoMode: false })}
+        style={{
+          padding: "3px 10px", fontSize: 11, fontWeight: 600, fontFamily: OS.font,
+          background: "#8a6e1a", color: "#fff", border: "none",
+          borderRadius: 4, cursor: "pointer", flexShrink: 0,
+        }}
+      >
+        Exit Demo
+      </button>
     </div>
   );
 }
@@ -1837,17 +1608,11 @@ function LeftNav({
 export default function App() {
   const { commitments: realCommitments, dismissalPatterns: realDismissalPatterns, counts: realCounts } = useCommitments();
   const realActions = useActions();
-  const [boardFilter, setBoardFilter] = useState<FilterKey>("all");
   const [boardSearch, setBoardSearch] = useState("");
-  const [listFilter, setListFilter] = useState<FilterKey>("all");
-  const [listSearch, setListSearch] = useState("");
-  // People page filter: when set, list view shows only commitments involving this person
-  const [personFilter, setPersonFilter] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [toast, setToast] = useState<{ message: string; variant?: "success" | "error" | "warning" | "info" } | null>(null);
   const [hasApiKey, setHasApiKey] = useState<boolean | null>(null);
   const [isFirstRun, setIsFirstRun] = useState<boolean | null>(null);
-  const [showSettings, setShowSettings] = useState(false);
   const [showSmartTags, setShowSmartTags] = useState(false);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [isWide, setIsWide] = useState(false);
@@ -1864,18 +1629,14 @@ export default function App() {
   const [scanning, setScanning] = useState(false);
   const [proactiveMsg, setProactiveMsg] = useState<string | null>(null);
   const todoOverflowFiredRef = useRef(false);
-  const { scanAgo, staleWarning } = useScanStatus();
-  const realKanban = useKanban(boardFilter);
+  const { scanAgo } = useScanStatus();
+  const realKanban = useKanban("all");
   const { isNew: isNewCommitment, markVisible, markHidden } = useSeenCommitments();
   const { settings: displaySettings, update: updateDisplay } = useDisplaySettings();
-  const nav = useNavCollapsed();
+  const { darkMode, toggleDarkMode } = useDarkMode();
 
   const tags = useLiveQuery(() => db.tags.orderBy("name").toArray(), []) ?? [];
-  const [listSelectedTags, setListSelectedTags] = useState<number[]>([]);
   const [boardSelectedTags, setBoardSelectedTags] = useState<number[]>([]);
-  const toggleListTag = useCallback((id: number) => {
-    setListSelectedTags((prev) => prev.includes(id) ? prev.filter((t) => t !== id) : [...prev, id]);
-  }, []);
   const toggleBoardTag = useCallback((id: number) => {
     setBoardSelectedTags((prev) => prev.includes(id) ? prev.filter((t) => t !== id) : [...prev, id]);
   }, []);
@@ -1924,7 +1685,6 @@ export default function App() {
 
   // ─── Demo mode: shadow real data with fixtures ───
   const commitments = demoMode ? DEMO_ACTIVE : realCommitments;
-  const dismissalPatterns = demoMode ? DEMO_DISMISSALS : realDismissalPatterns;
   const counts = demoMode ? DEMO_COUNTS : realCounts;
   const kanban = demoMode ? DEMO_KANBAN : realKanban;
   const pendingSuggestions = demoMode ? DEMO_SUGGESTIONS : realPendingSuggestions;
@@ -2109,51 +1869,6 @@ export default function App() {
     }
   }, [demoMode, scanning, showToast]);
 
-  // ─── List view filtering and sorting ───
-
-  const filtered = commitments
-    .filter((c) => {
-      if (listFilter === "all") return true;
-      if (listFilter === "overdue") return c.deadline != null && new Date(c.deadline).getTime() < Date.now();
-      if (listFilter === "has_deadline") return c.deadline != null;
-      if (listFilter === "high") return c.urgency === "high";
-      if (listFilter === "meetings") return c.source_type === "meeting";
-      if (listFilter === "slack") return c.source_type === "slack";
-      if (listFilter === "gdoc") return c.source_type === "gdoc";
-      if (listFilter === "gmail") return c.source_type === "gmail";
-      return true;
-    })
-    .filter((c) => matchesSearch(c, listSearch))
-    .filter((c) => listSelectedTags.length === 0 || (c.tag_id != null && listSelectedTags.includes(c.tag_id)))
-    .filter((c) => {
-      if (!personFilter) return true;
-      const pLower = personFilter.toLowerCase();
-      // Match if this person appears anywhere in the conversation
-      return (
-        c.conversation_messages?.some((m) => m.sender.toLowerCase() === pLower) ||
-        c.context.toLowerCase().includes(pLower) ||
-        c.text.toLowerCase().includes(pLower)
-      );
-    })
-    .sort((a, b) => {
-      if (a.likely_completed !== b.likely_completed) {
-        return a.likely_completed ? 1 : -1;
-      }
-      const urg: Record<string, number> = { high: 0, medium: 1, low: 2 };
-      if (urg[a.urgency] !== urg[b.urgency])
-        return urg[a.urgency] - urg[b.urgency];
-      return b.confidence - a.confidence;
-    });
-
-  // ─── Section grouping ───
-
-  const urgent = filtered.filter(
-    (c) => c.urgency === "high" || (c.deadline && new Date(c.deadline).getTime() < Date.now()),
-  );
-  const urgentIds = new Set(urgent.map((c) => c.id));
-  const open = filtered.filter((c) => !urgentIds.has(c.id) && c.confidence >= 0.75);
-  const unsure = filtered.filter((c) => !urgentIds.has(c.id) && c.confidence < 0.75);
-
   // ─── Board view: apply search to kanban columns ───
 
   const matchesBoardTag = (c: Commitment) => boardSelectedTags.length === 0 || (c.tag_id != null && boardSelectedTags.includes(c.tag_id));
@@ -2161,42 +1876,8 @@ export default function App() {
   const boardInProgress = kanban.inProgress.filter((c) => matchesSearch(c, boardSearch) && matchesBoardTag(c));
   const boardDone = kanban.done.filter((c) => matchesSearch(c, boardSearch) && matchesBoardTag(c));
 
-  const renderCard = (item: Commitment) => (
-    <CommitmentCard
-      key={item.id}
-      item={item}
-      allTags={effectiveTags}
-      onMetaUpdate={onMetaUpdate}
-      tag={item.tag_id != null ? tagMap.get(item.tag_id) : undefined}
-      isExpanded={expandedId === item.id}
-      isSelected={selectedId === item.id}
-      isNarrow={!isWide}
-      isNew={isNewCommitment(item.id, item.createdAt)}
-      verboseMode={displaySettings.showConfidence}
-      displaySettings={displaySettings}
-      privacyMode={privacyMode}
-      onToggle={() =>
-        setExpandedId(expandedId === item.id ? null : (item.id ?? null))
-      }
-      onSelect={(id) => setSelectedId(selectedId === id ? null : id)}
-      onVisible={item.id != null ? () => markVisible(item.id!) : undefined}
-      onHidden={item.id != null ? () => markHidden(item.id!) : undefined}
-      onDismiss={onDismiss}
-      onClose={onClose}
-      onDone={onDone}
-      onSnooze={onSnooze}
-      onCalendar={onCalendar}
-      onSlack={onSlack}
-      onReminder={onReminder}
-      onFollowUp={onFollowUp}
-      hasFollowUpRule={item.id != null && followUpRuleIds.has(item.id)}
-    />
-  );
-
-  // Resolve selected item for the detail panel (use unfiltered kanban for board so selection persists through search)
-  const allItems = viewMode === "board"
-    ? [...kanban.todo, ...kanban.inProgress, ...kanban.done]
-    : commitments;
+  // Resolve selected item for the detail panel
+  const allItems = [...kanban.todo, ...kanban.inProgress, ...kanban.done];
   const selectedItem = selectedId != null ? allItems.find((c) => c.id === selectedId) ?? null : null;
   const showPanel = selectedItem != null && !isNarrow;
 
@@ -2209,6 +1890,7 @@ export default function App() {
   if (isFirstRun === null) return null;
 
   return (
+    <DarkModeContext.Provider value={{ darkMode, toggleDarkMode }}>
     <>
     {isFirstRun && (
       <SetupWizard
@@ -2221,191 +1903,51 @@ export default function App() {
       style={{
         height: "100vh",
         display: "flex",
+        flexDirection: "column",
         overflow: "hidden",
-        background: OS.bg,
         fontFamily: OS.font,
         color: OS.text,
+        background: darkMode ? '#111113' : OS.bg,
       }}
     >
       {showPanel && (
         <style>{`@keyframes slideInPanel { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: translateX(0); } }`}</style>
       )}
 
-      {/* Left nav sidebar — wide screens only */}
-      {isWide && (
-        <LeftNav
-          viewMode={viewMode}
-          setViewMode={setViewMode}
-          developerMode={developerMode}
-          collapsed={nav.collapsed}
-          onToggleCollapse={nav.toggle}
-          displaySettings={displaySettings}
-          onUpdateDisplay={updateDisplay}
-          onOpenFullSettings={() => setViewMode("settings")}
-          scanAgo={scanAgo}
-          scanning={scanning}
-          onRescan={onRescan}
-          demoMode={demoMode}
-          privacyMode={privacyMode}
-          onTogglePrivacy={() => setPrivacyMode((p) => !p)}
-          staleWarning={demoMode ? null : staleWarning}
-        />
-      )}
+      <TopBar
+        viewMode={viewMode}
+        setViewMode={setViewMode}
+        developerMode={developerMode}
+        onOpenSettings={() => setViewMode("settings")}
+        scanning={scanning}
+        onRescan={onRescan}
+        scanAgo={scanAgo}
+        demoMode={demoMode}
+        displaySettings={displaySettings}
+        onUpdateDisplay={updateDisplay}
+        privacyMode={privacyMode}
+        onTogglePrivacy={() => setPrivacyMode((p) => !p)}
+        darkMode={darkMode}
+        onToggleDark={toggleDarkMode}
+      />
 
-      {/* Main content column */}
-      <div
-        style={{
-          flex: 1,
-          minWidth: 0,
-          height: "100vh",
-          overflowY: isWide ? "hidden" : "auto",
-          display: isWide ? "flex" : undefined,
-          flexDirection: isWide ? "column" : undefined,
-        }}
-      >
-        {/* Warning banner */}
-        <WarningBanner onOpenSettings={() => setViewMode("settings")} demoMode={demoMode} />
+      <WarningBanner onOpenSettings={() => setViewMode("settings")} demoMode={demoMode} />
+      {demoMode && <DemoModeBanner />}
 
-        {/* Demo mode indicator banner */}
-        {demoMode && (
-          <div style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: "7px 14px",
-            background: OS.yellowBg,
-            border: `1px solid ${OS.yellowBorder}`,
-            borderRadius: 6,
-            margin: "8px 16px 0",
-            fontSize: 12,
-            color: "#8a6e1a",
-            fontFamily: OS.font,
-            fontWeight: 600,
-            gap: 8,
-          }}>
-            <span>DEMO MODE — Showing sample data · your real data is safe</span>
-            <button
-              onClick={() => chrome.storage.local.set({ demoMode: false })}
-              style={{
-                padding: "3px 10px", fontSize: 11, fontWeight: 600, fontFamily: OS.font,
-                background: "#8a6e1a", color: "#fff", border: "none",
-                borderRadius: 4, cursor: "pointer", flexShrink: 0,
-              }}
-            >
-              Exit Demo
-            </button>
-          </div>
-        )}
-
-        {/* Narrow header — includes view selector, filter, settings */}
-        {!isWide && (
-          <div
-            style={{
-              background: OS.white,
-              borderBottom: `1px solid ${OS.border}`,
-              position: "sticky",
-              top: 0,
-              zIndex: 10,
-            }}
-          >
-            <div style={{ padding: "14px 16px 0 16px" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 10 }}>
-                <h1 style={{ fontSize: 18, fontWeight: 700, color: OS.text, letterSpacing: "-0.02em", flexShrink: 0 }}>
-                  Clyde <span style={{ fontWeight: 400, fontSize: 11, color: OS.faint }}>AI Assistant</span>
-                </h1>
-                <select
-                  value={viewMode}
-                  onChange={(e) => setViewMode(e.target.value as ViewMode)}
-                  style={{
-                    fontSize: 12, fontWeight: 500, fontFamily: OS.font,
-                    color: OS.text, background: OS.white,
-                    border: `1px solid ${OS.border}`, borderRadius: 6,
-                    padding: "4px 8px", cursor: "pointer", outline: "none",
-                  }}
-                >
-                  <option value="list">List</option>
-                  <option value="board">Board</option>
-                  <option value="brief">Brief</option>
-                  {developerMode && <option value="devlog">Dev Log</option>}
-                  <option value="settings">Settings</option>
-                </select>
-                {viewMode !== "settings" && (
-                  <div style={{ marginLeft: "auto", display: "flex", gap: 6, flexShrink: 0 }}>
-                    <button
-                      onClick={onRescan}
-                      disabled={scanning}
-                      title="Re-scan now"
-                      style={{
-                        display: "inline-flex", alignItems: "center", justifyContent: "center",
-                        width: 30, height: 30, borderRadius: 6,
-                        background: OS.white, border: `1px solid ${OS.border}`,
-                        color: scanning ? OS.muted : OS.blue, fontSize: 14, cursor: scanning ? "default" : "pointer",
-                      }}
-                    >
-                      {scanning ? <IconLoader size={12} /> : <IconRefresh size={12} />}
-                    </button>
-                    <button
-                      onClick={() => setShowSettings(!showSettings)}
-                      title="Settings"
-                      style={{
-                        display: "inline-flex", alignItems: "center", justifyContent: "center",
-                        width: 30, height: 30, borderRadius: 6,
-                        background: OS.white, border: `1px solid ${OS.border}`,
-                        color: OS.muted, fontSize: 14, cursor: "pointer",
-                      }}
-                    >
-                      <IconSettings size={14} />
-                    </button>
-                    {showSettings && (
-                      <SettingsPopover
-                        display={displaySettings}
-                        onUpdateDisplay={updateDisplay}
-                        onClose={() => setShowSettings(false)}
-                        onOpenFullSettings={() => setViewMode("settings")}
-                        privacyMode={privacyMode}
-                        onTogglePrivacy={() => setPrivacyMode((p) => !p)}
-                      />
-                    )}
-                  </div>
-                )}
-              </div>
-              <div style={{ borderBottom: `1px solid ${OS.border}` }} />
-            </div>
-          </div>
-        )}
-
-        {/* Scrollable content area */}
-        <div style={{ flex: isWide ? 1 : undefined, overflowY: isWide ? "auto" : undefined }}>
-          <div style={(() => {
-            const isFullWidth = viewMode === "board" || viewMode === "devlog"
-              || viewMode === "brief" || viewMode === "chat" || viewMode === "people"
-              || viewMode === "memory" || viewMode === "insights" || viewMode === "okrs"
-              || (viewMode === "list" && isWide);
-            const needsBoardPadding = viewMode === "board" || viewMode === "devlog";
-            return {
-              maxWidth: isFullWidth ? "none" : 640,
-              margin: isFullWidth ? undefined : "0 auto",
-              padding: needsBoardPadding ? "12px 16px" : 0,
-            };
-          })()}>
-            {hasApiKey === false && (
-              <div style={{ padding: "20px 16px" }}>
-                <ApiKeySetup onSaved={() => setHasApiKey(true)} />
-              </div>
-            )}
+      <div style={{ flex: 1, overflowY: "auto", display: "flex" }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ padding: (viewMode === "board" || viewMode === "devlog") ? "12px 16px" : 0 }}>
 
             {/* Board view */}
             {hasApiKey !== false && viewMode === "board" && (
               <>
-                <ViewToolbar
-                  filter={boardFilter}
-                  onFilterChange={setBoardFilter}
+                <FilterBubbles
                   search={boardSearch}
                   onSearchChange={setBoardSearch}
                   tags={effectiveTags}
                   selectedTags={boardSelectedTags}
                   onTagToggle={toggleBoardTag}
-                  onSmartTags={() => setShowSmartTags(true)}
+                  darkMode={darkMode}
                 />
                 <KanbanBoard
                   todo={boardTodo}
@@ -2428,115 +1970,9 @@ export default function App() {
                   isNewFn={isNewCommitment}
                   onMarkVisible={markVisible}
                   onMarkHidden={markHidden}
+                  darkMode={darkMode}
                 />
               </>
-            )}
-
-            {/* List view */}
-            {hasApiKey !== false && viewMode === "list" && (
-              <div style={{ background: OS.white, paddingTop: 12 }}>
-                {/* Person filter banner — shown when navigating from People page */}
-                {personFilter && (
-                  <div style={{
-                    display: "flex", alignItems: "center", gap: 8,
-                    padding: "6px 16px 0",
-                  }}>
-                    <div style={{
-                      display: "inline-flex", alignItems: "center", gap: 6,
-                      padding: "4px 10px", borderRadius: 6,
-                      background: OS.blueBg, border: `1px solid ${OS.blue}30`,
-                      fontSize: 12, fontWeight: 500, color: OS.blue,
-                    }}>
-                      <span style={{ fontSize: 14 }}>👤</span>
-                      Commitments involving <strong>{personFilter}</strong>
-                      <button
-                        onClick={() => setPersonFilter(null)}
-                        style={{
-                          background: "none", border: "none", padding: "0 0 0 4px",
-                          color: OS.blue, cursor: "pointer", fontSize: 14, lineHeight: 1,
-                          opacity: 0.7,
-                        }}
-                        title="Clear filter"
-                      >×</button>
-                    </div>
-                  </div>
-                )}
-                <div style={{ padding: "0 16px" }}>
-                  <ViewToolbar
-                    filter={listFilter}
-                    onFilterChange={(f) => { setListFilter(f); setPersonFilter(null); }}
-                    search={listSearch}
-                    onSearchChange={(s) => { setListSearch(s); if (s) setPersonFilter(null); }}
-                    tags={effectiveTags}
-                    selectedTags={listSelectedTags}
-                    onTagToggle={toggleListTag}
-                    onSmartTags={() => setShowSmartTags(true)}
-                  />
-                </div>
-                {filtered.length === 0 ? (
-                  <div style={{ textAlign: "center", padding: "56px 16px" }}>
-                    <div style={{ marginBottom: 8, color: OS.green, display: "inline-flex" }}><IconCheck size={22} /></div>
-                    <div style={{ fontSize: 14, fontWeight: 600, color: OS.text, marginBottom: 4 }}>
-                      No commitments yet
-                    </div>
-                    <div style={{ fontSize: 13, color: OS.muted, lineHeight: 1.6, maxWidth: 280, margin: "0 auto" }}>
-                      Open Slack and Clyde will automatically detect commitments.
-                      Say "Clyde" in any message to explicitly flag something.
-                    </div>
-                  </div>
-                ) : (
-                  <>
-                    {pendingSuggestions.length > 0 && (
-                      <>
-                        <SectionHeader label="Completed?" color={OS.green} />
-                        {pendingSuggestions.map((suggestion) => {
-                          const commitment = commitments.find(c => c.id === suggestion.commitmentId);
-                          return (
-                            <CompletionSuggestionCard
-                              key={suggestion.id}
-                              suggestion={suggestion}
-                              commitment={commitment}
-                              onAccept={() => suggestion.id != null && onAcceptCompletion(suggestion.id, suggestion.commitmentId)}
-                              onDismiss={() => suggestion.id != null && onDismissCompletion(suggestion.id, suggestion.commitmentId)}
-                            />
-                          );
-                        })}
-                      </>
-                    )}
-                    {urgent.length > 0 && (
-                      <>
-                        <SectionHeader label="Needs attention" color={OS.red} />
-                        {urgent.map(renderCard)}
-                      </>
-                    )}
-                    {open.length > 0 && (
-                      <>
-                        {urgent.length > 0 && <SectionHeader label="Open" color={OS.secondary} />}
-                        {open.map(renderCard)}
-                      </>
-                    )}
-                    {unsure.length > 0 && (
-                      <>
-                        <SectionHeader label="Might be commitments" color={OS.muted} />
-                        {unsure.map(renderCard)}
-                      </>
-                    )}
-                  </>
-                )}
-              </div>
-            )}
-
-            {/* Daily Planner view */}
-            {viewMode === "brief" && (
-              <DailyPlanner commitments={commitments} demoMode={demoMode} showToast={showToast} />
-            )}
-
-            {/* Dev Log view */}
-            {viewMode === "devlog" && <DevLogView demoMode={demoMode} demoEntries={demoMode ? DEMO_DECISION_LOG : undefined} />}
-
-            {/* Chat full-view */}
-            {viewMode === "chat" && (
-              <ClydeChat fullView={true} showToast={showToast} sidePanelOpen={false} proactiveMessage={null} onProactiveHandled={() => {}} demoMode={demoMode} hasApiKey={hasApiKey === true} onNavigateToDraft={(draftId) => { setActiveDraftId(draftId); setViewMode("draft"); }} />
             )}
 
             {/* People view */}
@@ -2544,41 +1980,24 @@ export default function App() {
               <PeoplePanel
                 demoMode={demoMode}
                 showToast={showToast}
-                onViewCommitments={(name) => {
-                  setPersonFilter(name);
-                  setListFilter("all");
-                  setListSearch("");
-                  setViewMode("list");
-                }}
                 onNavigateToDraft={(draftId) => {
                   setActiveDraftId(draftId);
                   setViewMode("draft");
                 }}
+                onSelectCommitment={(id) => setSelectedId(id)}
               />
             )}
 
-            {/* Memory view */}
-            {viewMode === "memory" && (
-              <MemoryPanel demoMode={demoMode} demoMemories={demoMode ? DEMO_MEMORIES : undefined} />
-            )}
-
-            {/* Insights view */}
-            {viewMode === "insights" && (
-              <InsightsPanel demoMode={demoMode} demoPatterns={demoMode ? DEMO_PATTERNS : undefined} demoDigests={demoMode ? DEMO_DIGESTS : undefined} />
-            )}
-
-            {/* OKRs view */}
-            {viewMode === "okrs" && (
-              <OKRPanel demoMode={demoMode} demoOKRs={demoMode ? DEMO_OKRS : undefined} demoLinks={demoMode ? DEMO_OKR_LINKS : undefined} />
-            )}
+            {/* Dev Log view */}
+            {viewMode === "devlog" && <DevLogView demoMode={demoMode} demoEntries={demoMode ? DEMO_DECISION_LOG : undefined} />}
 
             {/* Draft Composer view (reachable from Chat) */}
             {viewMode === "draft" && activeDraftId !== null && (
               <DraftComposer
                 draftId={activeDraftId}
                 demoMode={demoMode}
-                onBack={() => setViewMode("chat")}
-                onSent={() => { setActiveDraftId(null); setViewMode("list"); }}
+                onBack={() => setViewMode("board")}
+                onSent={() => { setActiveDraftId(null); setViewMode("board"); }}
                 showToast={showToast}
               />
             )}
@@ -2590,39 +2009,40 @@ export default function App() {
 
           </div>
         </div>
-      </div>
 
-      {/* Transcript detail panel */}
-      {showPanel && (
-        <div style={{
-          width: 420,
-          flexShrink: 0,
-          borderLeft: `1px solid ${OS.border}`,
-          height: "100vh",
-          overflowY: "auto",
-          background: OS.white,
-          animation: "slideInPanel 0.15s ease",
-        }}>
-          <TranscriptPanel
-            commitment={selectedItem}
-            onClose={() => setSelectedId(null)}
-            onCloseCommitment={() => selectedItem.id != null && onClose(selectedItem.id)}
-            onCalendar={() => onCalendar(selectedItem)}
-            onDone={() => selectedItem.id != null && onDone(selectedItem.id)}
-            onDismiss={() => selectedItem.id != null && onDismiss(selectedItem.id)}
-            onReminder={() => selectedItem.id != null && onReminder(selectedItem.id)}
-            privacyMode={privacyMode}
-            allTags={effectiveTags}
-            onMetaUpdate={onMetaUpdate}
-          />
-        </div>
-      )}
+        {/* Transcript detail panel */}
+        {showPanel && (
+          <div style={{
+            width: 420,
+            flexShrink: 0,
+            borderLeft: `1px solid ${dk(darkMode, 'rgba(255,255,255,0.08)', OS.border)}`,
+            height: "100%",
+            overflowY: "auto",
+            background: dk(darkMode, '#161618', OS.white),
+            animation: "slideInPanel 0.15s ease",
+          }}>
+            <TranscriptPanel
+              commitment={selectedItem}
+              onClose={() => setSelectedId(null)}
+              onCloseCommitment={() => selectedItem.id != null && onClose(selectedItem.id)}
+              onCalendar={() => onCalendar(selectedItem)}
+              onDone={() => selectedItem.id != null && onDone(selectedItem.id)}
+              onDismiss={() => selectedItem.id != null && onDismiss(selectedItem.id)}
+              onReminder={() => selectedItem.id != null && onReminder(selectedItem.id)}
+              privacyMode={privacyMode}
+              allTags={effectiveTags}
+              onMetaUpdate={onMetaUpdate}
+            />
+          </div>
+        )}
+      </div>
 
       {showSmartTags && <SmartTagsModal onClose={() => setShowSmartTags(false)} demoMode={demoMode} />}
 
       {toast && <Toast message={toast.message} variant={toast.variant} onClose={() => setToast(null)} />}
-      {viewMode !== "chat" && <ClydeChat showToast={showToast} sidePanelOpen={showPanel} proactiveMessage={proactiveMsg} onProactiveHandled={() => setProactiveMsg(null)} demoMode={demoMode} hasApiKey={hasApiKey === true} />}
+      <ClydeChat showToast={showToast} sidePanelOpen={showPanel} proactiveMessage={proactiveMsg} onProactiveHandled={() => setProactiveMsg(null)} demoMode={demoMode} hasApiKey={hasApiKey === true} onNavigateToDraft={(draftId) => { setActiveDraftId(draftId); setViewMode("draft"); }} />
     </div>
     </>
+    </DarkModeContext.Provider>
   );
 }

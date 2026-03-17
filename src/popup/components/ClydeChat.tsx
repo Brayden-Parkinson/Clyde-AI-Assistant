@@ -20,6 +20,7 @@ import { computeHash } from "../../background/dedup";
 import { IconMic, IconStop, IconChat, IconX, IconSend, IconRefresh, IconCheck, IconChevronUp, IconChevronDown } from "./Icons";
 import { QuickAddModal } from "./QuickAddModal";
 import { useChatHistory } from "../hooks/useChatHistory";
+import { useDarkMode, dk } from "../DarkModeContext";
 
 // ─── Types ───
 
@@ -1054,6 +1055,7 @@ function CommitmentMiniCard({
   snapshot: CommitmentSnapshot;
   onAction: (id: number, action: "done" | "dismiss") => void;
 }) {
+  const darkMode = useDarkMode();
   const [actioned, setActioned] = useState<"done" | "dismiss" | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -1081,9 +1083,9 @@ function CommitmentMiniCard({
 
   return (
     <div style={{
-      background: OS.white,
-      border: `1px solid ${OS.border}`,
-      borderLeft: `3px solid ${isActioned ? OS.border : color}`,
+      background: dk(darkMode, 'rgba(255,255,255,0.04)', OS.white),
+      border: `1px solid ${dk(darkMode, 'rgba(255,255,255,0.08)', OS.border)}`,
+      borderLeft: `3px solid ${isActioned ? dk(darkMode, 'rgba(255,255,255,0.08)', OS.border) : color}`,
       borderRadius: 8,
       padding: "7px 10px",
       display: "flex",
@@ -1095,7 +1097,7 @@ function CommitmentMiniCard({
     }}>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{
-          fontSize: 12, fontWeight: 500, color: isActioned ? OS.muted : OS.text,
+          fontSize: 12, fontWeight: 500, color: isActioned ? dk(darkMode, 'rgba(255,255,255,0.35)', OS.muted) : dk(darkMode, 'rgba(255,255,255,0.85)', OS.text),
           display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical",
           overflow: "hidden",
           textDecoration: isDone ? "line-through" : undefined,
@@ -1105,17 +1107,17 @@ function CommitmentMiniCard({
         </div>
         <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
           <span style={{
-            fontSize: 10, fontWeight: 700, color: isActioned ? OS.faint : color,
+            fontSize: 10, fontWeight: 700, color: isActioned ? dk(darkMode, 'rgba(255,255,255,0.20)', OS.faint) : color,
             textTransform: "uppercase", letterSpacing: "0.05em",
           }}>
             {snapshot.urgency}
           </span>
           {deadline && (
-            <span style={{ fontSize: 10, color: OS.muted }}>{deadline}</span>
+            <span style={{ fontSize: 10, color: dk(darkMode, 'rgba(255,255,255,0.35)', OS.muted) }}>{deadline}</span>
           )}
           {contextLabel && (
             <span style={{
-              fontSize: 10, color: OS.faint,
+              fontSize: 10, color: dk(darkMode, 'rgba(255,255,255,0.20)', OS.faint),
               overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 80,
             }}>
               {contextLabel}
@@ -1124,7 +1126,7 @@ function CommitmentMiniCard({
         </div>
       </div>
       {isActioned ? (
-        <span style={{ fontSize: 10, color: OS.muted, flexShrink: 0, fontStyle: "italic" }}>
+        <span style={{ fontSize: 10, color: dk(darkMode, 'rgba(255,255,255,0.35)', OS.muted), flexShrink: 0, fontStyle: "italic" }}>
           {isDone ? "done" : "dismissed"}
         </span>
       ) : (
@@ -1228,6 +1230,7 @@ export function ClydeChat({ fullView, showToast, sidePanelOpen, proactiveMessage
   /** Called when Clyde drafts a message — navigates to DraftComposer */
   onNavigateToDraft?: (draftId: number) => void;
 }) {
+  const darkMode = useDarkMode();
   const [open, setOpen] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [quickAddOpen, setQuickAddOpen] = useState(false);
@@ -1500,10 +1503,10 @@ export function ClydeChat({ fullView, showToast, sidePanelOpen, proactiveMessage
     transition: "right 0.15s ease, width 0.2s ease, height 0.2s ease",
     width: expanded ? 500 : 360,
     height: expanded ? 640 : 480,
-    background: OS.white,
-    border: `1px solid ${OS.border}`,
+    background: dk(darkMode, '#1c1c1e', OS.white),
+    border: `1px solid ${dk(darkMode, 'rgba(255,255,255,0.08)', OS.border)}`,
     borderRadius: 12,
-    boxShadow: "0 8px 32px rgba(0,0,0,0.12)",
+    boxShadow: dk(darkMode, '0 8px 32px rgba(0,0,0,0.5)', '0 8px 32px rgba(0,0,0,0.12)'),
     display: "flex",
     flexDirection: "column",
     zIndex: 9999,
@@ -1562,7 +1565,7 @@ export function ClydeChat({ fullView, showToast, sidePanelOpen, proactiveMessage
             <div style={{
               alignSelf: fullView ? "center" : "flex-start", maxWidth: "88%",
               padding: "10px 14px", borderRadius: 12,
-              background: OS.bg, fontSize: 13, lineHeight: 1.5, color: OS.text,
+              background: dk(darkMode, 'rgba(255,255,255,0.06)', OS.bg), fontSize: 13, lineHeight: 1.5, color: dk(darkMode, 'rgba(255,255,255,0.85)', OS.text),
               textAlign: fullView ? "center" : "left",
             }}>
               {fullView && (
@@ -1575,7 +1578,7 @@ export function ClydeChat({ fullView, showToast, sidePanelOpen, proactiveMessage
                 </div>
               )}
               <div style={{ fontWeight: 600, marginBottom: 4 }}>Hey! I'm Clyde.</div>
-              <div style={{ color: OS.secondary }}>
+              <div style={{ color: dk(darkMode, 'rgba(255,255,255,0.55)', OS.secondary) }}>
                 Chat is available once you exit demo mode and add your Anthropic API key in Settings.
               </div>
             </div>
@@ -1583,7 +1586,7 @@ export function ClydeChat({ fullView, showToast, sidePanelOpen, proactiveMessage
             <div style={{
               alignSelf: fullView ? "center" : "flex-start", maxWidth: "88%",
               padding: "10px 14px", borderRadius: 12,
-              background: OS.bg, fontSize: 13, lineHeight: 1.5, color: OS.text,
+              background: dk(darkMode, 'rgba(255,255,255,0.06)', OS.bg), fontSize: 13, lineHeight: 1.5, color: dk(darkMode, 'rgba(255,255,255,0.85)', OS.text),
               textAlign: fullView ? "center" : "left",
             }}>
               {fullView && (
@@ -1596,7 +1599,7 @@ export function ClydeChat({ fullView, showToast, sidePanelOpen, proactiveMessage
                 </div>
               )}
               <div style={{ fontWeight: 600, marginBottom: 4 }}>Hey! I'm Clyde.</div>
-              <div style={{ color: OS.secondary }}>
+              <div style={{ color: dk(darkMode, 'rgba(255,255,255,0.55)', OS.secondary) }}>
                 To use chat, add your Anthropic API key in Settings first.
               </div>
             </div>
@@ -1614,12 +1617,12 @@ export function ClydeChat({ fullView, showToast, sidePanelOpen, proactiveMessage
               <div style={{
                 alignSelf: fullView ? "center" : "flex-start", maxWidth: "88%",
                 padding: fullView ? "12px 20px" : "10px 14px", borderRadius: 12,
-                background: OS.bg,
-                fontSize: fullView ? 14 : 13, lineHeight: 1.5, color: OS.text,
+                background: dk(darkMode, 'rgba(255,255,255,0.06)', OS.bg),
+                fontSize: fullView ? 14 : 13, lineHeight: 1.5, color: dk(darkMode, 'rgba(255,255,255,0.85)', OS.text),
                 textAlign: fullView ? "center" : "left",
               }}>
                 <div style={{ fontWeight: 600, marginBottom: 4, fontSize: fullView ? 16 : undefined }}>Hey! I'm Clyde.</div>
-                <div style={{ color: OS.secondary }}>
+                <div style={{ color: dk(darkMode, 'rgba(255,255,255,0.55)', OS.secondary) }}>
                   I keep track of your commitments so nothing slips through. Ask me anything — or try one of these:
                 </div>
               </div>
@@ -1635,10 +1638,10 @@ export function ClydeChat({ fullView, showToast, sidePanelOpen, proactiveMessage
                     onClick={() => sendMessage(prompt)}
                     style={{
                       padding: "7px 12px",
-                      border: `1px solid ${OS.blue}`,
+                      border: `1px solid ${dk(darkMode, 'rgba(255,255,255,0.10)', OS.border)}`,
                       borderRadius: 16,
-                      background: OS.white,
-                      color: OS.blue,
+                      background: dk(darkMode, 'rgba(255,255,255,0.06)', OS.bg),
+                      color: dk(darkMode, 'rgba(255,255,255,0.75)', OS.secondary),
                       fontSize: 12,
                       fontWeight: 500,
                       fontFamily: OS.font,
@@ -1662,7 +1665,7 @@ export function ClydeChat({ fullView, showToast, sidePanelOpen, proactiveMessage
               msg.content.trim() && (
                 <div style={{
                   alignSelf: "flex-start",
-                  fontSize: 11, color: OS.muted, fontWeight: 500,
+                  fontSize: 11, color: dk(darkMode, 'rgba(255,255,255,0.45)', OS.muted), fontWeight: 500,
                   paddingLeft: 2, paddingBottom: 2,
                 }}>
                   {renderMarkdown(msg.content.trim())}
@@ -1677,8 +1680,8 @@ export function ClydeChat({ fullView, showToast, sidePanelOpen, proactiveMessage
                   borderRadius: 12,
                   fontSize: 13,
                   lineHeight: 1.4,
-                  background: msg.role === "user" ? OS.blue : OS.bg,
-                  color: msg.role === "user" ? OS.white : OS.text,
+                  background: msg.role === "user" ? dk(darkMode, 'rgba(94,106,210,0.20)', OS.blue) : dk(darkMode, 'rgba(255,255,255,0.06)', OS.bg),
+                  color: msg.role === "user" ? OS.white : dk(darkMode, 'rgba(255,255,255,0.85)', OS.text),
                   wordBreak: "break-word",
                   whiteSpace: "pre-wrap",
                 }}
@@ -1702,7 +1705,7 @@ export function ClydeChat({ fullView, showToast, sidePanelOpen, proactiveMessage
               return ts ? (
                 <div style={{
                   alignSelf: msg.role === "user" ? "flex-end" : "flex-start",
-                  fontSize: 10, color: OS.faint, marginTop: -4,
+                  fontSize: 10, color: dk(darkMode, 'rgba(255,255,255,0.25)', OS.faint), marginTop: -4,
                   paddingLeft: msg.role === "user" ? 0 : 2,
                   paddingRight: msg.role === "user" ? 2 : 0,
                 }}>
@@ -1720,8 +1723,8 @@ export function ClydeChat({ fullView, showToast, sidePanelOpen, proactiveMessage
             padding: "8px 12px",
             borderRadius: 12,
             fontSize: 13,
-            background: OS.bg,
-            color: OS.muted,
+            background: dk(darkMode, 'rgba(255,255,255,0.06)', OS.bg),
+            color: dk(darkMode, 'rgba(255,255,255,0.40)', OS.muted),
             minWidth: 52,
           }}
         >
@@ -1734,14 +1737,15 @@ export function ClydeChat({ fullView, showToast, sidePanelOpen, proactiveMessage
   const renderChatInput = () => (
     <>
       {interimVoice && (
-        <div style={{ padding: "4px 16px", fontSize: 12, color: OS.muted, fontStyle: "italic" }}>
+        <div style={{ padding: "4px 16px", fontSize: 12, color: dk(darkMode, 'rgba(255,255,255,0.35)', OS.muted), fontStyle: "italic" }}>
           {interimVoice}
         </div>
       )}
       <div
         style={{
           padding: "8px 12px",
-          borderTop: `1px solid ${OS.border}`,
+          borderTop: `1px solid ${dk(darkMode, 'rgba(255,255,255,0.08)', OS.border)}`,
+          background: dk(darkMode, '#1c1c1e', OS.white),
           display: "flex",
           gap: 8,
           alignItems: "center",
@@ -1757,13 +1761,13 @@ export function ClydeChat({ fullView, showToast, sidePanelOpen, proactiveMessage
           style={{
             flex: 1,
             padding: "8px 12px",
-            border: `1px solid ${OS.border}`,
+            border: `1px solid ${dk(darkMode, 'rgba(255,255,255,0.10)', OS.border)}`,
             borderRadius: 8,
             fontSize: 13,
             fontFamily: OS.font,
             outline: "none",
-            background: OS.white,
-            color: OS.text,
+            background: dk(darkMode, 'rgba(255,255,255,0.06)', OS.bg),
+            color: dk(darkMode, 'rgba(255,255,255,0.85)', OS.text),
           }}
         />
         <button
@@ -1790,7 +1794,7 @@ export function ClydeChat({ fullView, showToast, sidePanelOpen, proactiveMessage
       <div style={{ display: "flex", height: "100%", fontFamily: OS.font }}>
         {/* Session sidebar */}
         <div style={{
-          width: 240, borderRight: `1px solid ${OS.border}`, background: OS.bg,
+          width: 240, borderRight: `1px solid ${dk(darkMode, 'rgba(255,255,255,0.08)', OS.border)}`, background: dk(darkMode, '#1c1c1e', OS.bg),
           display: "flex", flexDirection: "column", flexShrink: 0,
         }}>
           <div style={{ padding: "10px 12px" }}>
@@ -1803,8 +1807,8 @@ export function ClydeChat({ fullView, showToast, sidePanelOpen, proactiveMessage
                 }
               }}
               style={{
-                width: "100%", padding: "8px 12px", border: `1px solid ${OS.border}`,
-                borderRadius: 8, background: OS.white, color: OS.blue, fontSize: 13,
+                width: "100%", padding: "8px 12px", border: `1px solid ${dk(darkMode, 'rgba(255,255,255,0.08)', OS.border)}`,
+                borderRadius: 8, background: dk(darkMode, 'rgba(255,255,255,0.06)', OS.white), color: OS.blue, fontSize: 13,
                 fontWeight: 600, fontFamily: OS.font, cursor: "pointer",
               }}
             >
@@ -1823,19 +1827,19 @@ export function ClydeChat({ fullView, showToast, sidePanelOpen, proactiveMessage
                 style={{
                   padding: "8px 12px", cursor: "pointer", display: "flex",
                   alignItems: "center", justifyContent: "space-between",
-                  background: s.id === activeSessionId ? OS.white : s.id === hoveredSessionId ? OS.white : "transparent",
+                  background: s.id === activeSessionId ? dk(darkMode, 'rgba(255,255,255,0.05)', OS.white) : s.id === hoveredSessionId ? dk(darkMode, 'rgba(255,255,255,0.05)', OS.white) : "transparent",
                   borderLeft: s.id === activeSessionId ? `2px solid ${OS.blue}` : "2px solid transparent",
                   transition: "background 0.15s ease",
                 }}
               >
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{
-                    fontSize: 12, fontWeight: 500, color: OS.text,
+                    fontSize: 12, fontWeight: 500, color: dk(darkMode, 'rgba(255,255,255,0.90)', OS.text),
                     overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
                   }}>
                     {s.title}
                   </div>
-                  <div style={{ fontSize: 10, color: OS.muted }}>{relativeTime(s.updatedAt)}</div>
+                  <div style={{ fontSize: 10, color: dk(darkMode, 'rgba(255,255,255,0.35)', OS.muted) }}>{relativeTime(s.updatedAt)}</div>
                 </div>
                 <button
                   onClick={(e) => {
@@ -1844,7 +1848,7 @@ export function ClydeChat({ fullView, showToast, sidePanelOpen, proactiveMessage
                   }}
                   style={{
                     width: 20, height: 20, border: "none", background: "transparent",
-                    color: OS.faint, cursor: "pointer", display: "flex",
+                    color: dk(darkMode, 'rgba(255,255,255,0.20)', OS.faint), cursor: "pointer", display: "flex",
                     alignItems: "center", justifyContent: "center", flexShrink: 0,
                     borderRadius: 4, fontSize: 12,
                   }}
@@ -1863,11 +1867,11 @@ export function ClydeChat({ fullView, showToast, sidePanelOpen, proactiveMessage
           <div
             style={{
               padding: "10px 14px",
-              borderBottom: `1px solid ${OS.border}`,
+              borderBottom: `1px solid ${dk(darkMode, 'rgba(255,255,255,0.08)', OS.border)}`,
               display: "flex",
               alignItems: "center",
               justifyContent: "space-between",
-              background: OS.bg,
+              background: dk(darkMode, '#1c1c1e', OS.bg),
             }}
           >
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -1879,7 +1883,7 @@ export function ClydeChat({ fullView, showToast, sidePanelOpen, proactiveMessage
                 <span style={{ fontSize: 13, fontWeight: 700, color: OS.white, fontFamily: OS.font }}>C</span>
               </div>
               <div>
-                <div style={{ fontWeight: 700, fontSize: 13, color: OS.text, lineHeight: 1.2 }}>Clyde</div>
+                <div style={{ fontWeight: 700, fontSize: 13, color: dk(darkMode, 'rgba(255,255,255,0.90)', OS.text), lineHeight: 1.2 }}>Clyde</div>
                 <div style={{ fontSize: 10, color: OS.green, fontWeight: 600 }}>online</div>
               </div>
             </div>
@@ -1889,7 +1893,7 @@ export function ClydeChat({ fullView, showToast, sidePanelOpen, proactiveMessage
                 style={{
                   ...btnBase, width: 28, height: 28,
                   background: chatMicVoice.listening ? OS.red : "transparent",
-                  color: chatMicVoice.listening ? OS.white : OS.muted,
+                  color: chatMicVoice.listening ? OS.white : dk(darkMode, 'rgba(255,255,255,0.55)', OS.muted),
                   boxShadow: "none",
                 }}
                 title={chatMicVoice.listening ? "Stop recording" : "Voice input"}
@@ -1915,11 +1919,11 @@ export function ClydeChat({ fullView, showToast, sidePanelOpen, proactiveMessage
           <div
             style={{
               padding: "10px 14px",
-              borderBottom: `1px solid ${OS.border}`,
+              borderBottom: `1px solid ${dk(darkMode, 'rgba(255,255,255,0.08)', OS.border)}`,
               display: "flex",
               alignItems: "center",
               justifyContent: "space-between",
-              background: OS.bg,
+              background: dk(darkMode, '#1c1c1e', OS.bg),
             }}
           >
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -1931,7 +1935,7 @@ export function ClydeChat({ fullView, showToast, sidePanelOpen, proactiveMessage
                 <span style={{ fontSize: 13, fontWeight: 700, color: OS.white, fontFamily: OS.font }}>C</span>
               </div>
               <div>
-                <div style={{ fontWeight: 700, fontSize: 13, color: OS.text, lineHeight: 1.2 }}>Clyde</div>
+                <div style={{ fontWeight: 700, fontSize: 13, color: dk(darkMode, 'rgba(255,255,255,0.90)', OS.text), lineHeight: 1.2 }}>Clyde</div>
                 <div style={{ fontSize: 10, color: OS.green, fontWeight: 600 }}>online</div>
               </div>
             </div>
@@ -1942,7 +1946,7 @@ export function ClydeChat({ fullView, showToast, sidePanelOpen, proactiveMessage
                   title="Clear conversation"
                   style={{
                     ...btnBase, width: 28, height: 28,
-                    background: "transparent", color: OS.muted, boxShadow: "none",
+                    background: "transparent", color: dk(darkMode, 'rgba(255,255,255,0.55)', OS.muted), boxShadow: "none",
                   }}
                 >
                   <IconRefresh size={14} />
@@ -1953,7 +1957,7 @@ export function ClydeChat({ fullView, showToast, sidePanelOpen, proactiveMessage
                 title={expanded ? "Collapse" : "Expand"}
                 style={{
                   ...btnBase, width: 28, height: 28,
-                  background: "transparent", color: OS.muted, boxShadow: "none",
+                  background: "transparent", color: dk(darkMode, 'rgba(255,255,255,0.55)', OS.muted), boxShadow: "none",
                 }}
               >
                 {expanded ? <IconChevronDown size={14} /> : <IconChevronUp size={14} />}
@@ -1963,7 +1967,7 @@ export function ClydeChat({ fullView, showToast, sidePanelOpen, proactiveMessage
                 style={{
                   ...btnBase, width: 28, height: 28,
                   background: chatMicVoice.listening ? OS.red : "transparent",
-                  color: chatMicVoice.listening ? OS.white : OS.muted,
+                  color: chatMicVoice.listening ? OS.white : dk(darkMode, 'rgba(255,255,255,0.55)', OS.muted),
                   boxShadow: "none",
                 }}
                 title={chatMicVoice.listening ? "Stop recording" : "Voice input"}
@@ -1974,7 +1978,7 @@ export function ClydeChat({ fullView, showToast, sidePanelOpen, proactiveMessage
                 onClick={() => setOpen(false)}
                 style={{
                   ...btnBase, width: 28, height: 28,
-                  background: "transparent", color: OS.muted, boxShadow: "none",
+                  background: "transparent", color: dk(darkMode, 'rgba(255,255,255,0.55)', OS.muted), boxShadow: "none",
                 }}
               >
                 <IconX />
@@ -1996,10 +2000,11 @@ export function ClydeChat({ fullView, showToast, sidePanelOpen, proactiveMessage
           onClick={() => setQuickAddOpen(true)}
           style={{
             ...btnBase,
-            background: OS.white,
+            background: dk(darkMode, 'rgba(255,255,255,0.10)', OS.white),
             color: OS.blue,
             fontSize: 22,
             fontWeight: 300,
+            boxShadow: dk(darkMode, '0 2px 8px rgba(0,0,0,0.4)', '0 2px 8px rgba(0,0,0,0.15)'),
           }}
           title="Quick add commitment (AI)"
         >
@@ -2009,8 +2014,9 @@ export function ClydeChat({ fullView, showToast, sidePanelOpen, proactiveMessage
           onClick={() => (quickMicVoice.listening ? quickMicVoice.stop() : quickMicVoice.start())}
           style={{
             ...btnBase,
-            background: quickMicVoice.listening ? OS.red : OS.white,
-            color: quickMicVoice.listening ? OS.white : OS.muted,
+            background: quickMicVoice.listening ? OS.red : dk(darkMode, 'rgba(255,255,255,0.10)', OS.white),
+            color: quickMicVoice.listening ? OS.white : dk(darkMode, 'rgba(255,255,255,0.55)', OS.muted),
+            boxShadow: dk(darkMode, '0 2px 8px rgba(0,0,0,0.4)', '0 2px 8px rgba(0,0,0,0.15)'),
           }}
           title={quickMicVoice.listening ? "Stop recording" : "Quick voice task"}
         >
@@ -2020,8 +2026,9 @@ export function ClydeChat({ fullView, showToast, sidePanelOpen, proactiveMessage
           onClick={() => setOpen(!open)}
           style={{
             ...btnBase,
-            background: open ? OS.blue : OS.white,
+            background: open ? OS.blue : dk(darkMode, 'rgba(255,255,255,0.10)', OS.white),
             color: open ? OS.white : OS.blue,
+            boxShadow: dk(darkMode, '0 2px 8px rgba(0,0,0,0.4)', '0 2px 8px rgba(0,0,0,0.15)'),
           }}
           title={open ? "Close chat" : "Open Clyde chat"}
         >

@@ -605,6 +605,12 @@ export interface DraftMessage {
 
 // ─── Phase 2: Follow-Up Rules ───
 
+/** An entry in the channel ignore list (exact channel name or glob pattern) */
+export interface ChannelIgnoreEntry {
+  type: "exact" | "pattern";
+  value: string; // e.g. "random" or "*-alerts"
+}
+
 /** A rule that triggers proactive follow-up nudges for a commitment */
 export interface FollowUpRule {
   id?: number;

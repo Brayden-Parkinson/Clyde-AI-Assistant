@@ -8,6 +8,27 @@ import { USER_PROFILE_DEFAULTS } from "@shared/user-profile";
 import { ToastContainer, useToast } from "../popup/components/Toast";
 import { retagAll, reanalyzeSensitivity } from "../background/tag-backfill";
 
+// ─── Local dark mode hook (reads chrome.storage.local directly, works without a Provider) ───
+
+function useDarkModeSetting(): boolean {
+  const [darkMode, setDarkMode] = React.useState(false);
+  React.useEffect(() => {
+    chrome.storage.local.get("darkMode").then((r) => {
+      if (r.darkMode === true) setDarkMode(true);
+    });
+    const listener = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
+      if (area === "local" && changes.darkMode) {
+        setDarkMode(changes.darkMode.newValue === true);
+      }
+    };
+    chrome.storage.onChanged.addListener(listener);
+    return () => chrome.storage.onChanged.removeListener(listener);
+  }, []);
+  return darkMode;
+}
+
+const dk = (dark: boolean, darkVal: string, lightVal: string): string => dark ? darkVal : lightVal;
+
 interface FormState {
   anthropicApiKey: string;
   userName: string;
@@ -74,21 +95,21 @@ const TABS: { key: SettingsTab; label: string }[] = [
 
 // ─── Styles ───
 
-const sectionStyle: React.CSSProperties = {
-  background: OS.white,
+const mkSectionStyle = (dark: boolean): React.CSSProperties => ({
+  background: dk(dark, '#1c1c1e', OS.white),
   borderRadius: 12,
   padding: "24px 28px",
   marginBottom: 20,
-  border: `1px solid ${OS.border}`,
-};
+  border: `1px solid ${dk(dark, 'rgba(255,255,255,0.08)', OS.border)}`,
+});
 
-const sectionTitle: React.CSSProperties = {
-  fontSize: 15,
-  fontWeight: 700,
-  color: OS.darkBlue,
+const mkSectionTitle = (dark: boolean): React.CSSProperties => ({
+  fontSize: 14,
+  fontWeight: 500,
+  color: dk(dark, 'rgba(255,255,255,0.90)', OS.text),
   marginBottom: 18,
   letterSpacing: "-0.01em",
-};
+});
 
 const fieldRow: React.CSSProperties = {
   display: "flex",
@@ -97,39 +118,39 @@ const fieldRow: React.CSSProperties = {
   marginBottom: 16,
 };
 
-const labelStyle: React.CSSProperties = {
+const mkLabelStyle = (dark: boolean): React.CSSProperties => ({
   fontSize: 13,
-  fontWeight: 600,
-  color: OS.text,
-};
+  fontWeight: 500,
+  color: dk(dark, 'rgba(255,255,255,0.90)', OS.text),
+});
 
-const subLabel: React.CSSProperties = {
+const mkSubLabel = (dark: boolean): React.CSSProperties => ({
   fontSize: 11,
-  color: OS.muted,
+  color: dk(dark, 'rgba(255,255,255,0.35)', OS.muted),
   marginTop: 2,
-};
+});
 
-const inputStyle: React.CSSProperties = {
+const mkInputStyle = (dark: boolean): React.CSSProperties => ({
   padding: "8px 12px",
-  border: `1px solid ${OS.border}`,
+  border: `1px solid ${dk(dark, 'rgba(255,255,255,0.10)', OS.border)}`,
   borderRadius: 8,
   fontSize: 13,
   fontFamily: OS.font,
-  color: OS.text,
-  background: OS.white,
+  color: dk(dark, 'rgba(255,255,255,0.85)', OS.text),
+  background: dk(dark, 'rgba(255,255,255,0.06)', OS.white),
   outline: "none",
   width: 260,
-};
+});
 
-const selectStyle: React.CSSProperties = {
-  ...inputStyle,
+const mkSelectStyle = (dark: boolean): React.CSSProperties => ({
+  ...mkInputStyle(dark),
   width: 160,
   cursor: "pointer",
-};
+});
 
 // ─── Disclosure / Accordion ───
 
-function Disclosure({ label, children }: { label: string; children: React.ReactNode }) {
+function Disclosure({ label, children, dark = false }: { label: string; children: React.ReactNode; dark?: boolean }) {
   const [open, setOpen] = useState(false);
   return (
     <div style={{ marginTop: 14 }}>
@@ -137,7 +158,7 @@ function Disclosure({ label, children }: { label: string; children: React.ReactN
         onClick={() => setOpen(!open)}
         style={{
           background: "none", border: "none", padding: 0,
-          color: OS.blue, fontSize: 12, fontWeight: 600,
+          color: OS.blue, fontSize: 12, fontWeight: 500,
           cursor: "pointer", fontFamily: OS.font,
         }}
       >
@@ -146,8 +167,9 @@ function Disclosure({ label, children }: { label: string; children: React.ReactN
       {open && (
         <div style={{
           marginTop: 10, padding: "12px 14px", borderRadius: 8,
-          background: OS.bg, border: `1px solid ${OS.border}`,
-          fontSize: 12, color: OS.secondary, lineHeight: 1.8,
+          background: dk(dark, 'rgba(255,255,255,0.04)', OS.bg),
+          border: `1px solid ${dk(dark, 'rgba(255,255,255,0.08)', OS.border)}`,
+          fontSize: 12, color: dk(dark, 'rgba(255,255,255,0.55)', OS.secondary), lineHeight: 1.8,
         }}>
           {children}
         </div>
@@ -178,6 +200,85 @@ function Toggle({ value, onChange, color }: { value: boolean; onChange: () => vo
         boxShadow: "0 1px 3px rgba(0,0,0,0.2)",
       }} />
     </button>
+  );
+}
+
+function TabPillNav<T extends string>({
+  tabs,
+  activeTab,
+  onTabChange,
+  dark = false,
+}: {
+  tabs: Array<{ key: T; label: string }>;
+  activeTab: T;
+  onTabChange: (tab: T) => void;
+  dark?: boolean;
+}) {
+  const tabRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const [slider, setSlider] = useState({ left: 0, width: 0 });
+
+  useEffect(() => {
+    const el = tabRefs.current[activeTab];
+    if (el) setSlider({ left: el.offsetLeft, width: el.offsetWidth });
+  }, [activeTab]);
+
+  return (
+    <div
+      style={{
+        position: "relative",
+        display: "flex",
+        alignItems: "center",
+        background: dk(dark, 'rgba(255,255,255,0.06)', 'rgba(0,0,0,0.03)'),
+        borderRadius: 999,
+        padding: 4,
+        gap: 0,
+      }}
+    >
+      {/* Sliding pill indicator */}
+      <div
+        style={{
+          position: "absolute",
+          top: 4,
+          left: slider.left + 4,
+          width: slider.width,
+          height: "calc(100% - 8px)",
+          background: dk(dark, 'rgba(255,255,255,0.10)', OS.white),
+          borderRadius: 999,
+          border: dk(dark, '0.5px solid rgba(255,255,255,0.12)', '0.5px solid rgba(0,0,0,0.08)'),
+          boxShadow: "0 1px 3px rgba(0,0,0,0.06)",
+          transition:
+            "left 450ms cubic-bezier(0.34, 1.56, 0.64, 1), width 300ms cubic-bezier(0.34, 1.2, 0.64, 1)",
+          zIndex: 0,
+          pointerEvents: "none",
+        }}
+      />
+      {tabs.map(({ key, label }) => (
+        <button
+          key={key}
+          ref={(el) => { tabRefs.current[key] = el; }}
+          onClick={() => onTabChange(key)}
+          style={{
+            position: "relative",
+            zIndex: 1,
+            padding: "6px 18px",
+            borderRadius: 999,
+            border: "none",
+            background: "transparent",
+            fontSize: 13,
+            fontWeight: activeTab === key ? 500 : 400,
+            fontFamily: OS.font,
+            color: activeTab === key
+              ? dk(dark, 'rgba(255,255,255,0.90)', OS.text)
+              : dk(dark, 'rgba(255,255,255,0.45)', OS.secondary),
+            cursor: "pointer",
+            transition: "color 0.2s ease",
+            whiteSpace: "nowrap" as const,
+          }}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
   );
 }
 
@@ -250,6 +351,14 @@ async function doRestore(state: Record<string, unknown>): Promise<void> {
 }
 
 export function SettingsPanel({ onBack }: { onBack?: () => void }) {
+  const darkMode = useDarkModeSetting();
+  const sectionStyle = mkSectionStyle(darkMode);
+  const sectionTitle = mkSectionTitle(darkMode);
+  const labelStyle = mkLabelStyle(darkMode);
+  const subLabel = mkSubLabel(darkMode);
+  const inputStyle = mkInputStyle(darkMode);
+  const selectStyle = mkSelectStyle(darkMode);
+
   const [form, setForm] = useState<FormState>(DEFAULT_FORM);
   const { toasts, showToast, dismissToast } = useToast();
   const [dailyCost, setDailyCost] = useState("$0.00");
@@ -260,8 +369,10 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
   const [extensionId, setExtensionId] = useState("");
   const [copiedInstall, setCopiedInstall] = useState(false);
   const [restoring, setRestoring] = useState(false);
-  const [channelFilter, setChannelFilter] = useState<Record<string, boolean>>({});
+  const [channelIgnoreList, setChannelIgnoreList] = useState<import("@shared/types").ChannelIgnoreEntry[]>([]);
   const [discoveredChannels, setDiscoveredChannels] = useState<string[]>([]);
+  const [channelSearch, setChannelSearch] = useState("");
+  const [manualChannelInput, setManualChannelInput] = useState("");
   const [tuneInfo, setTuneInfo] = useState<{ lastChecked: string; dismissRate: number; totalSamples: number } | null>(null);
   const [deleteColConfirm, setDeleteColConfirm] = useState<{ id: string; label: string; itemCount: number } | null>(null);
   const [deleteMoveTarget, setDeleteMoveTarget] = useState<string>("todo");
@@ -349,10 +460,10 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
       },
     );
 
-    // Load channel filter + discover channels from raw messages
-    chrome.storage.local.get("slackChannelFilter").then((cfResult) => {
-      if (cfResult.slackChannelFilter) {
-        setChannelFilter(cfResult.slackChannelFilter as Record<string, boolean>);
+    // Load channel ignore list + discover channels from raw messages
+    chrome.storage.local.get("slackChannelIgnoreList").then((cfResult) => {
+      if (cfResult.slackChannelIgnoreList) {
+        setChannelIgnoreList(cfResult.slackChannelIgnoreList as import("@shared/types").ChannelIgnoreEntry[]);
       }
     });
     db.raw_messages
@@ -635,7 +746,7 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
       {/* About You */}
       <div style={sectionStyle}>
         <h2 style={sectionTitle}>About You</h2>
-        <p style={{ fontSize: 12, color: OS.muted, marginBottom: 16, lineHeight: 1.5 }}>
+        <p style={{ fontSize: 12, color: dk(darkMode, 'rgba(255,255,255,0.35)', OS.muted), marginBottom: 16, lineHeight: 1.5 }}>
           Clyde uses this to personalize AI prompts and identify which commitments are yours.
         </p>
 
@@ -707,28 +818,21 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
               How the extension opens when you click the toolbar icon
             </div>
           </div>
-          <div style={{ display: "flex", gap: 0 }}>
+          <div style={{ display: "flex", gap: 6 }}>
             {(["popup", "sidepanel"] as const).map((mode) => (
               <button
                 key={mode}
                 onClick={() => update("uiMode", mode)}
                 style={{
-                  padding: "7px 16px",
-                  fontSize: 13,
-                  fontWeight: 600,
+                  padding: "5px 12px",
+                  fontSize: 12,
+                  fontWeight: 500,
                   fontFamily: OS.font,
-                  border: `1px solid ${OS.border}`,
                   cursor: "pointer",
-                  background:
-                    form.uiMode === mode ? OS.blue : OS.white,
-                  color:
-                    form.uiMode === mode ? OS.white : OS.text,
-                  borderRadius:
-                    mode === "popup" ? "8px 0 0 8px" : "0 8px 8px 0",
-                  borderLeft:
-                    mode === "sidepanel"
-                      ? "none"
-                      : `1px solid ${OS.border}`,
+                  borderRadius: 999,
+                  background: form.uiMode === mode ? (darkMode ? 'rgba(94,106,210,0.18)' : OS.blueBg) : "transparent",
+                  color: form.uiMode === mode ? OS.blue : dk(darkMode, 'rgba(255,255,255,0.55)', OS.secondary),
+                  border: form.uiMode === mode ? `0.5px solid ${OS.blue}` : dk(darkMode, '0.5px solid rgba(255,255,255,0.10)', '0.5px solid rgba(0,0,0,0.12)'),
                 }}
               >
                 {mode === "popup" ? "Popup" : "Side Panel"}
@@ -743,9 +847,9 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
   const renderIntegrationsTab = () => (
     <>
       {/* AI Setup — required, goes first */}
-      <div style={{ ...sectionStyle, border: `1.5px solid ${OS.blue}` }}>
-        <h2 style={sectionTitle}>AI Setup <span style={{ fontSize: 11, fontWeight: 600, color: OS.red, marginLeft: 6 }}>Required</span></h2>
-        <p style={{ fontSize: 12, color: OS.muted, marginBottom: 14, lineHeight: 1.5 }}>
+      <div style={{ ...sectionStyle, border: `1.5px solid ${OS.blue}` } as React.CSSProperties}>
+        <h2 style={sectionTitle}>AI Setup <span style={{ fontSize: 11, fontWeight: 500, color: OS.red, marginLeft: 6 }}>Required</span></h2>
+        <p style={{ fontSize: 12, color: dk(darkMode, 'rgba(255,255,255,0.35)', OS.muted), marginBottom: 14, lineHeight: 1.5 }}>
           Clyde uses Claude (Anthropic) to read your messages and find commitments. You need an API key to use Clyde.
         </p>
 
@@ -795,11 +899,11 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
           </div>
         )}
 
-        <Disclosure label="How Slack monitoring works">
-          <div style={{ fontWeight: 600, color: OS.text, marginBottom: 6 }}>Browser-based — no Slack API or admin access needed</div>
+        <Disclosure label="How Slack monitoring works" dark={darkMode}>
+          <div style={{ fontWeight: 500, color: dk(darkMode, 'rgba(255,255,255,0.90)', OS.text), marginBottom: 6 }}>Browser-based — no Slack API or admin access needed</div>
           <div>Clyde reads Slack as you browse it in Chrome. It only sees the conversations you actually open — it never reads your entire Slack workspace in the background.</div>
           <div style={{ marginTop: 8 }}>
-            <span style={{ fontWeight: 600, color: OS.text }}>To use it:</span>
+            <span style={{ fontWeight: 500, color: dk(darkMode, 'rgba(255,255,255,0.90)', OS.text) }}>To use it:</span>
           </div>
           <div style={{ paddingLeft: 12, marginTop: 4, lineHeight: 1.8 }}>
             &bull; Open <strong>Slack in Chrome</strong> (slack.com) — the desktop app is not supported{"\n"}
@@ -807,7 +911,7 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
             &bull; Messages batch every ~5 minutes, then Claude scans for commitments{"\n"}
             &bull; Only commitment-like messages are extracted (not every message)
           </div>
-          <div style={{ marginTop: 8, fontSize: 11, color: OS.muted }}>
+          <div style={{ marginTop: 8, fontSize: 11, color: dk(darkMode, 'rgba(255,255,255,0.35)', OS.muted) }}>
             Tip: Keep Slack pinned as a tab in Chrome so Clyde captures messages throughout the day.
           </div>
         </Disclosure>
@@ -816,7 +920,7 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
       {/* Granola */}
       <div style={sectionStyle}>
         <h2 style={sectionTitle}>Granola Meetings</h2>
-        <p style={{ fontSize: 12, color: OS.muted, marginBottom: 14, lineHeight: 1.5 }}>
+        <p style={{ fontSize: 12, color: dk(darkMode, 'rgba(255,255,255,0.35)', OS.muted), marginBottom: 14, lineHeight: 1.5 }}>
           Reads your meeting notes from Granola and extracts commitments from transcripts.
         </p>
 
@@ -835,11 +939,11 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
           </div>
           <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
             <span style={{
-              fontSize: 12, fontWeight: 700,
+              fontSize: 12, fontWeight: 500,
               color: granolaConnected ? OS.green : OS.red,
-              background: OS.bg,
+              background: dk(darkMode, 'rgba(255,255,255,0.04)', OS.bg),
               padding: "5px 12px", borderRadius: 8,
-              border: `1px solid ${OS.border}`,
+              border: `1px solid ${dk(darkMode, 'rgba(255,255,255,0.08)', OS.border)}`,
             }}>
               {granolaConnected ? "Connected" : "Not Connected"}
             </span>
@@ -861,21 +965,27 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
               }}
               disabled={granolaTestLoading}
               style={{
-                padding: "5px 12px", fontSize: 11, fontWeight: 600,
-                fontFamily: OS.font, border: `1px solid ${OS.border}`,
-                borderRadius: 8, background: OS.white,
-                color: OS.secondary, cursor: "pointer",
+                border: dk(darkMode, '0.5px solid rgba(255,255,255,0.10)', '0.5px solid rgba(0,0,0,0.12)'),
+                borderRadius: 999,
+                background: "transparent",
+                color: dk(darkMode, 'rgba(255,255,255,0.55)', OS.secondary),
+                fontSize: 12,
+                fontWeight: 500,
+                padding: "6px 14px",
+                cursor: "pointer",
+                fontFamily: OS.font,
               }}
             >
               {granolaTestLoading ? "Testing..." : "Test Connection"}
             </button>
           </div>
         </div>
-        <Disclosure label="First-time setup">
-          <div style={{ fontWeight: 600, color: OS.text, marginBottom: 6 }}>Run this once in Terminal:</div>
+        <Disclosure label="First-time setup" dark={darkMode}>
+          <div style={{ fontWeight: 500, color: dk(darkMode, 'rgba(255,255,255,0.90)', OS.text), marginBottom: 6 }}>Run this once in Terminal:</div>
           <div style={{
             margin: "8px 0", padding: "8px 10px", borderRadius: 6,
-            background: OS.white, border: `1px solid ${OS.border}`,
+            background: dk(darkMode, 'rgba(255,255,255,0.06)', OS.white),
+            border: `1px solid ${dk(darkMode, 'rgba(255,255,255,0.08)', OS.border)}`,
             fontFamily: OS.mono, fontSize: 11, display: "flex",
             alignItems: "center", justifyContent: "space-between", gap: 8,
           }}>
@@ -889,10 +999,12 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
                 setTimeout(() => setCopiedInstall(false), 2000);
               }}
               style={{
-                padding: "3px 8px", fontSize: 10, fontWeight: 600,
-                fontFamily: OS.font, border: `1px solid ${OS.border}`,
-                borderRadius: 4, background: copiedInstall ? OS.green : OS.white,
-                color: copiedInstall ? OS.white : OS.secondary, cursor: "pointer",
+                padding: "3px 8px", fontSize: 10, fontWeight: 500,
+                fontFamily: OS.font,
+                border: dk(darkMode, '0.5px solid rgba(255,255,255,0.10)', '0.5px solid rgba(0,0,0,0.12)'),
+                borderRadius: 999, background: copiedInstall ? OS.green : "transparent",
+                color: copiedInstall ? OS.white : dk(darkMode, 'rgba(255,255,255,0.55)', OS.secondary),
+                cursor: "pointer",
                 flexShrink: 0, transition: "all 0.15s ease",
               }}
             >
@@ -912,7 +1024,7 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
         <h2 style={{ ...sectionTitle, display: "flex", alignItems: "center", gap: 8 }}>
           Google Docs
           <span style={{
-            fontSize: 10, fontWeight: 700, color: "#7c3aed",
+            fontSize: 10, fontWeight: 500, color: "#7c3aed",
             background: "#ede9fe", padding: "2px 7px", borderRadius: 4,
             letterSpacing: "0.03em",
           }}>BETA</span>
@@ -929,18 +1041,18 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
           />
         </div>
 
-        <Disclosure label="How it works">
-          <div style={{ fontWeight: 600, color: OS.text, marginBottom: 4 }}>How it works</div>
+        <Disclosure label="How it works" dark={darkMode}>
+          <div style={{ fontWeight: 500, color: dk(darkMode, 'rgba(255,255,255,0.90)', OS.text), marginBottom: 4 }}>How it works</div>
           <div>Clyde automatically scans any Google Doc you have open. It reads both the document body and comment threads to find commitments and action items.</div>
           <div style={{ marginTop: 8 }}>
-            <span style={{ fontWeight: 600, color: OS.text }}>What gets scanned:</span>
+            <span style={{ fontWeight: 500, color: dk(darkMode, 'rgba(255,255,255,0.90)', OS.text) }}>What gets scanned:</span>
           </div>
           <div style={{ paddingLeft: 12 }}>
             &bull; Document text (re-scanned every 30s for changes){"\n"}
             &bull; Comments and reply threads{"\n"}
             &bull; Flushed to the extractor every 3 minutes
           </div>
-          <div style={{ marginTop: 8, fontSize: 11, color: OS.muted }}>
+          <div style={{ marginTop: 8, fontSize: 11, color: dk(darkMode, 'rgba(255,255,255,0.35)', OS.muted) }}>
             No setup required. Just open a Google Doc and Clyde will pick it up. Commitments from docs show the document title as the source context.
           </div>
           <div style={{ marginTop: 6, fontSize: 11, color: "#b08d33" }}>
@@ -954,7 +1066,7 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
         <h2 style={{ ...sectionTitle, display: "flex", alignItems: "center", gap: 8 }}>
           Gmail
           <span style={{
-            fontSize: 10, fontWeight: 700, color: OS.blue,
+            fontSize: 10, fontWeight: 500, color: OS.blue,
             background: OS.blueBg, padding: "2px 7px", borderRadius: 4,
             letterSpacing: "0.03em",
           }}>BETA</span>
@@ -971,11 +1083,11 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
           />
         </div>
 
-        <Disclosure label="How it works">
-          <div style={{ fontWeight: 600, color: OS.text, marginBottom: 4 }}>How it works</div>
+        <Disclosure label="How it works" dark={darkMode}>
+          <div style={{ fontWeight: 500, color: dk(darkMode, 'rgba(255,255,255,0.90)', OS.text), marginBottom: 4 }}>How it works</div>
           <div>When you open an email thread in Gmail, Clyde reads the message body and looks for commitments. Quoted replies and forwarded history are stripped before analysis.</div>
           <div style={{ marginTop: 8 }}>
-            <span style={{ fontWeight: 600, color: OS.text }}>What's scanned:</span>
+            <span style={{ fontWeight: 500, color: dk(darkMode, 'rgba(255,255,255,0.90)', OS.text) }}>What's scanned:</span>
           </div>
           <div style={{ paddingLeft: 12 }}>
             <div>&bull; Emails you open in the main inbox view</div>
@@ -983,7 +1095,7 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
             <div>&bull; Flushed to the extractor every 3 minutes</div>
           </div>
           <div style={{ marginTop: 8 }}>
-            <span style={{ fontWeight: 600, color: OS.text }}>What's skipped:</span>
+            <span style={{ fontWeight: 500, color: dk(darkMode, 'rgba(255,255,255,0.90)', OS.text) }}>What's skipped:</span>
           </div>
           <div style={{ paddingLeft: 12 }}>
             <div>&bull; Promotions, Social, Spam, and Trash tabs</div>
@@ -1038,7 +1150,7 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
                   <>
                     <span style={{
                       fontSize: 12,
-                      fontWeight: 600,
+                      fontWeight: 500,
                       color: OS.green,
                       display: "flex",
                       alignItems: "center",
@@ -1059,9 +1171,10 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
                         padding: "6px 14px",
                         background: "transparent",
                         color: OS.red,
-                        border: `1px solid ${OS.red}`,
-                        borderRadius: 6,
+                        border: `0.5px solid ${OS.red}`,
+                        borderRadius: 999,
                         fontSize: 12,
+                        fontWeight: 500,
                         fontFamily: OS.font,
                         cursor: "pointer",
                       }}
@@ -1092,12 +1205,13 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
                     }}
                     disabled={googleOAuthLoading || !googleClientId.trim()}
                     style={{
-                      padding: "7px 16px",
-                      background: googleClientId.trim() ? OS.blue : OS.faint,
-                      color: OS.white,
-                      border: "none",
-                      borderRadius: 6,
-                      fontSize: 13,
+                      padding: "6px 14px",
+                      background: googleClientId.trim() ? OS.blueBg : OS.faint,
+                      color: googleClientId.trim() ? OS.blue : OS.secondary,
+                      border: googleClientId.trim() ? `0.5px solid ${OS.blue}` : "0.5px solid rgba(0,0,0,0.12)",
+                      borderRadius: 999,
+                      fontSize: 12,
+                      fontWeight: 500,
                       fontFamily: OS.font,
                       cursor: googleClientId.trim() ? "pointer" : "default",
                     }}
@@ -1111,7 +1225,7 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
             {/* ICS Feed URL (legacy fallback) */}
             <div style={{ ...fieldRow, marginBottom: 0, alignItems: "flex-start" }}>
               <div style={{ flex: 1, marginRight: 16 }}>
-                <div style={labelStyle}>ICS Feed URL <span style={{ fontSize: 11, color: OS.muted, fontWeight: 400 }}>(legacy fallback)</span></div>
+                <div style={labelStyle}>ICS Feed URL <span style={{ fontSize: 11, color: dk(darkMode, 'rgba(255,255,255,0.35)', OS.muted), fontWeight: 400 }}>(legacy fallback)</span></div>
                 <div style={subLabel}>
                   Calendar &rarr; Settings &rarr; [your calendar] &rarr; Integrate calendar &rarr; "Secret address in iCal format"
                 </div>
@@ -1133,7 +1247,7 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
         <h2 style={{ ...sectionTitle, display: "flex", alignItems: "center", gap: 8 }}>
           Voice Inbox
           <span style={{
-            fontSize: 10, fontWeight: 700, color: "#7c3aed",
+            fontSize: 10, fontWeight: 500, color: "#7c3aed",
             background: "#ede9fe", padding: "2px 7px", borderRadius: 4,
             letterSpacing: "0.03em",
           }}>BETA</span>
@@ -1150,11 +1264,11 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
           />
         </div>
 
-        <Disclosure label="How it works">
-          <div style={{ fontWeight: 600, color: OS.text, marginBottom: 6 }}>How it works</div>
+        <Disclosure label="How it works" dark={darkMode}>
+          <div style={{ fontWeight: 500, color: dk(darkMode, 'rgba(255,255,255,0.90)', OS.text), marginBottom: 6 }}>How it works</div>
           <div>Say <strong>&quot;Hey Siri, Clyde task&quot;</strong> from anywhere on your Mac. Dictate your task, and Clyde will pick it up within 2 minutes and extract the commitment (deadline, urgency, etc).</div>
 
-          <div style={{ fontWeight: 600, color: OS.text, marginTop: 12, marginBottom: 6 }}>One-time setup: Create an Apple Shortcut</div>
+          <div style={{ fontWeight: 500, color: dk(darkMode, 'rgba(255,255,255,0.90)', OS.text), marginTop: 12, marginBottom: 6 }}>One-time setup: Create an Apple Shortcut</div>
           <div>1. Open the <strong>Shortcuts</strong> app on your Mac</div>
           <div>2. Click <strong>+</strong> to create a new Shortcut</div>
           <div>3. Name it <strong>&quot;Clyde Task&quot;</strong> (this becomes the Siri trigger)</div>
@@ -1164,82 +1278,210 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
             <div><strong>b.</strong> <em>Append to File</em> &mdash; set file path to:</div>
             <div style={{
               margin: "6px 0", padding: "6px 10px", borderRadius: 6,
-              background: OS.white, border: `1px solid ${OS.border}`,
+              background: dk(darkMode, 'rgba(255,255,255,0.06)', OS.white),
+              border: `1px solid ${dk(darkMode, 'rgba(255,255,255,0.08)', OS.border)}`,
               fontFamily: OS.mono, fontSize: 11,
             }}>
               ~/Documents/clyde-inbox.txt
             </div>
-            <div style={{ fontSize: 11, color: OS.muted, marginBottom: 4 }}>
+            <div style={{ fontSize: 11, color: dk(darkMode, 'rgba(255,255,255,0.35)', OS.muted), marginBottom: 4 }}>
               Set &quot;Make New Line&quot; to On. Pass &quot;Dictated Text&quot; as input.
             </div>
             <div><strong>c.</strong> <em>Show Notification</em> &mdash; &quot;Task added to Clyde&quot; (optional)</div>
           </div>
           <div style={{ marginTop: 8 }}>5. Done! Say <strong>&quot;Hey Siri, Clyde task&quot;</strong> to test it.</div>
 
-          <div style={{ fontWeight: 600, color: OS.text, marginTop: 12, marginBottom: 4 }}>Also works with</div>
+          <div style={{ fontWeight: 500, color: dk(darkMode, 'rgba(255,255,255,0.90)', OS.text), marginTop: 12, marginBottom: 4 }}>Also works with</div>
           <div style={{ paddingLeft: 12 }}>
             &bull; <strong>Wispr Flow</strong> or any dictation tool &mdash; just focus a text field and dictate{"\n"}
             &bull; <strong>Keyboard shortcut</strong> &mdash; assign one in Shortcuts &gt; right-click &gt; &quot;Add Keyboard Shortcut&quot;{"\n"}
             &bull; <strong>Manual typing</strong> &mdash; add a line to ~/Documents/clyde-inbox.txt
           </div>
 
-          <div style={{ marginTop: 10, fontSize: 11, color: OS.muted }}>
+          <div style={{ marginTop: 10, fontSize: 11, color: dk(darkMode, 'rgba(255,255,255,0.35)', OS.muted) }}>
             Clyde checks the inbox file every 2 minutes via native messaging. Tasks are processed through Claude to extract deadlines, urgency, and direction, then cleared from the file.
           </div>
         </Disclosure>
       </div>
 
-      {/* Channel Filters */}
-      {discoveredChannels.length > 0 && (
-        <div style={sectionStyle}>
-          <h2 style={sectionTitle}>Slack: Filter by Channel</h2>
-          <p style={{ fontSize: 12, color: OS.muted, marginBottom: 16, lineHeight: 1.5 }}>
-            Turn off channels you don't want Clyde to scan. New channels default to on.
-          </p>
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            {discoveredChannels.map((ch) => {
-              const enabled = channelFilter[ch] ?? true;
-              return (
-                <div key={ch} style={{
-                  display: "flex", alignItems: "center", justifyContent: "space-between",
-                  padding: "8px 10px", background: OS.bg, borderRadius: 6,
-                  border: `1px solid ${OS.border}`,
-                }}>
-                  <span style={{ fontSize: 13, fontWeight: 500, color: OS.text }}>
-                    #{ch}
+      {/* Channel Ignore List */}
+      <div style={sectionStyle}>
+        <h2 style={sectionTitle}>Slack: Ignored Channels</h2>
+        <p style={{ fontSize: 12, color: dk(darkMode, 'rgba(255,255,255,0.35)', OS.muted), marginBottom: 16, lineHeight: 1.5 }}>
+          All channels are tracked by default. Add channels here to ignore them. Use <code>*</code> for patterns (e.g. <code>*-alerts</code>).
+        </p>
+
+        {/* A. Current Ignore List — pills */}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 16 }}>
+          {channelIgnoreList.length === 0 && (
+            <span style={{ fontSize: 12, color: dk(darkMode, 'rgba(255,255,255,0.35)', OS.muted), fontStyle: "italic" }}>
+              No channels ignored — all channels are tracked.
+            </span>
+          )}
+          {channelIgnoreList.map((entry, i) => {
+            const matchCount = entry.type === "pattern"
+              ? (() => { try { const re = new RegExp(`^${entry.value.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*")}$`, "i"); return discoveredChannels.filter((ch) => re.test(ch)).length; } catch { return 0; } })()
+              : null;
+            return (
+              <span key={`${entry.type}-${entry.value}-${i}`} style={{
+                display: "inline-flex", alignItems: "center", gap: 4,
+                padding: "4px 10px", borderRadius: 12,
+                background: dk(darkMode, 'rgba(255,255,255,0.08)', OS.faint),
+                border: `1px solid ${dk(darkMode, 'rgba(255,255,255,0.12)', OS.border)}`,
+                fontSize: 12, color: dk(darkMode, 'rgba(255,255,255,0.85)', OS.text),
+                fontFamily: entry.type === "pattern" ? "monospace" : "inherit",
+              }}>
+                {entry.type === "exact" ? `#${entry.value}` : entry.value}
+                {matchCount !== null && matchCount > 0 && (
+                  <span style={{ fontSize: 10, color: dk(darkMode, 'rgba(255,255,255,0.4)', OS.muted), marginLeft: 2 }}>
+                    ({matchCount})
                   </span>
-                  <button
-                    onClick={() => {
-                      const updated = { ...channelFilter, [ch]: !enabled };
-                      setChannelFilter(updated);
-                      chrome.storage.local.set({ slackChannelFilter: updated });
-                    }}
-                    style={{
-                      width: 48, height: 26, borderRadius: 13, border: "none",
-                      background: enabled ? OS.blue : OS.faint,
-                      cursor: "pointer", position: "relative", transition: "background 0.2s",
-                      flexShrink: 0,
-                    }}
-                  >
-                    <div style={{
-                      width: 20, height: 20, borderRadius: 10, background: OS.white,
-                      position: "absolute", top: 3,
-                      left: enabled ? 25 : 3,
-                      transition: "left 0.2s ease",
-                      boxShadow: "0 1px 3px rgba(0,0,0,0.2)",
-                    }} />
-                  </button>
+                )}
+                <button
+                  onClick={() => {
+                    const updated = channelIgnoreList.filter((_, idx) => idx !== i);
+                    setChannelIgnoreList(updated);
+                    chrome.storage.local.set({ slackChannelIgnoreList: updated });
+                  }}
+                  style={{
+                    background: "none", border: "none", cursor: "pointer",
+                    color: dk(darkMode, 'rgba(255,255,255,0.4)', OS.muted),
+                    fontSize: 14, lineHeight: 1, padding: 0, marginLeft: 2,
+                  }}
+                  title="Remove"
+                >
+                  ×
+                </button>
+              </span>
+            );
+          })}
+        </div>
+
+        {/* B. Search Discovered Channels */}
+        {discoveredChannels.length > 0 && (
+          <div style={{ marginBottom: 14 }}>
+            <label style={{ fontSize: 12, fontWeight: 500, color: dk(darkMode, 'rgba(255,255,255,0.6)', OS.text), marginBottom: 4, display: "block" }}>
+              Search discovered channels
+            </label>
+            <input
+              type="text"
+              value={channelSearch}
+              onChange={(e) => setChannelSearch(e.target.value)}
+              placeholder="Type to filter channels..."
+              style={{
+                ...selectStyle,
+                width: "100%",
+                boxSizing: "border-box" as const,
+                marginBottom: 6,
+              }}
+            />
+            {channelSearch.trim() && (() => {
+              const query = channelSearch.trim().toLowerCase();
+              const alreadyIgnored = new Set(channelIgnoreList.filter((e) => e.type === "exact").map((e) => e.value.toLowerCase()));
+              const matches = discoveredChannels.filter(
+                (ch) => ch.toLowerCase().includes(query) && !alreadyIgnored.has(ch.toLowerCase()),
+              );
+              if (matches.length === 0) return (
+                <div style={{ fontSize: 12, color: dk(darkMode, 'rgba(255,255,255,0.35)', OS.muted), padding: "4px 0" }}>
+                  No matching channels found.
                 </div>
               );
-            })}
+              return (
+                <div style={{
+                  maxHeight: 160, overflowY: "auto",
+                  border: `1px solid ${dk(darkMode, 'rgba(255,255,255,0.08)', OS.border)}`,
+                  borderRadius: 6,
+                }}>
+                  {matches.slice(0, 20).map((ch) => (
+                    <button
+                      key={ch}
+                      onClick={() => {
+                        const updated = [...channelIgnoreList, { type: "exact" as const, value: ch }];
+                        setChannelIgnoreList(updated);
+                        chrome.storage.local.set({ slackChannelIgnoreList: updated });
+                        setChannelSearch("");
+                      }}
+                      style={{
+                        display: "block", width: "100%", textAlign: "left",
+                        padding: "6px 10px", border: "none",
+                        background: "transparent", cursor: "pointer",
+                        fontSize: 13, color: dk(darkMode, 'rgba(255,255,255,0.85)', OS.text),
+                      }}
+                      onMouseEnter={(e) => { (e.target as HTMLElement).style.background = dk(darkMode, 'rgba(255,255,255,0.06)', OS.faint); }}
+                      onMouseLeave={(e) => { (e.target as HTMLElement).style.background = "transparent"; }}
+                    >
+                      #{ch}
+                    </button>
+                  ))}
+                </div>
+              );
+            })()}
           </div>
+        )}
+
+        {/* C. Add Manually */}
+        <div>
+          <label style={{ fontSize: 12, fontWeight: 500, color: dk(darkMode, 'rgba(255,255,255,0.6)', OS.text), marginBottom: 4, display: "block" }}>
+            Add channel or pattern
+          </label>
+          <div style={{ display: "flex", gap: 6 }}>
+            <input
+              type="text"
+              value={manualChannelInput}
+              onChange={(e) => setManualChannelInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  const val = manualChannelInput.replace(/^#/, "").trim().toLowerCase();
+                  if (!val || val === "*") return;
+                  const entryType = val.includes("*") ? "pattern" as const : "exact" as const;
+                  const isDup = channelIgnoreList.some((e) => e.type === entryType && e.value.toLowerCase() === val);
+                  if (isDup) return;
+                  const updated = [...channelIgnoreList, { type: entryType, value: val }];
+                  setChannelIgnoreList(updated);
+                  chrome.storage.local.set({ slackChannelIgnoreList: updated });
+                  setManualChannelInput("");
+                }
+              }}
+              placeholder="e.g. random or *-alerts"
+              style={{
+                ...selectStyle,
+                flex: 1,
+              }}
+            />
+            <button
+              onClick={() => {
+                const val = manualChannelInput.replace(/^#/, "").trim().toLowerCase();
+                if (!val || val === "*") return;
+                const entryType = val.includes("*") ? "pattern" as const : "exact" as const;
+                const isDup = channelIgnoreList.some((e) => e.type === entryType && e.value.toLowerCase() === val);
+                if (isDup) return;
+                const updated = [...channelIgnoreList, { type: entryType, value: val }];
+                setChannelIgnoreList(updated);
+                chrome.storage.local.set({ slackChannelIgnoreList: updated });
+                setManualChannelInput("");
+              }}
+              style={{
+                padding: "6px 14px", borderRadius: 6, border: "none",
+                background: OS.blue, color: OS.white, fontSize: 13,
+                cursor: "pointer", fontWeight: 500, flexShrink: 0,
+              }}
+            >
+              Add
+            </button>
+          </div>
+          {manualChannelInput.trim() === "*" && (
+            <div style={{ fontSize: 11, color: OS.red, marginTop: 4 }}>
+              A sole <code>*</code> would ignore everything — be more specific.
+            </div>
+          )}
         </div>
-      )}
+      </div>
 
       {/* Phase 2: Slack Bot Token — for sending messages */}
       <div style={sectionStyle}>
         <h2 style={sectionTitle}>Slack — Send Messages</h2>
-        <p style={{ fontSize: 12, color: OS.muted, marginBottom: 14, lineHeight: 1.5 }}>
+        <p style={{ fontSize: 12, color: dk(darkMode, 'rgba(255,255,255,0.35)', OS.muted), marginBottom: 14, lineHeight: 1.5 }}>
           To send Slack messages from Clyde (via the Actions queue), add a Slack Bot Token.
           Requires a Slack app with <code>chat:write</code> scope.
           Token is stored locally and never sent to Anthropic.
@@ -1262,7 +1504,7 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
       {/* Phase 2: Follow-Up Nudges */}
       <div style={sectionStyle}>
         <h2 style={sectionTitle}>Follow-Up Nudges</h2>
-        <p style={{ fontSize: 12, color: OS.muted, marginBottom: 14, lineHeight: 1.5 }}>
+        <p style={{ fontSize: 12, color: dk(darkMode, 'rgba(255,255,255,0.35)', OS.muted), marginBottom: 14, lineHeight: 1.5 }}>
           Clyde will proactively suggest follow-ups when commitments go stale.
         </p>
         <div style={{ ...fieldRow, marginBottom: 0, alignItems: "flex-start" }}>
@@ -1281,7 +1523,7 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
       {/* Inbox Sensitivity */}
       <div style={sectionStyle}>
         <h2 style={sectionTitle}>Inbox Sensitivity</h2>
-        <p style={{ fontSize: 12, color: OS.muted, marginBottom: 16, lineHeight: 1.5 }}>
+        <p style={{ fontSize: 12, color: dk(darkMode, 'rgba(255,255,255,0.35)', OS.muted), marginBottom: 16, lineHeight: 1.5 }}>
           Controls how confident Claude needs to be before showing something in your inbox. Lower = more items, higher = fewer but more accurate.
         </p>
 
@@ -1291,7 +1533,7 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
             <div style={subLabel}>
               Currently showing items at {form.confidenceThreshold}% confidence or above
               {form.confidenceAutoTune && (
-                <span style={{ color: OS.blue, marginLeft: 8, fontSize: 11, fontWeight: 600 }}>AUTO</span>
+                <span style={{ color: OS.blue, marginLeft: 8, fontSize: 11, fontWeight: 500 }}>AUTO</span>
               )}
             </div>
           </div>
@@ -1315,7 +1557,7 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
             <div style={subLabel}>
               Clyde learns from what you dismiss and tunes the threshold daily
               {tuneInfo && (
-                <span style={{ display: "block", marginTop: 2, color: OS.secondary, fontSize: 11 }}>
+                <span style={{ display: "block", marginTop: 2, color: dk(darkMode, 'rgba(255,255,255,0.55)', OS.secondary), fontSize: 11 }}>
                   Last check: {tuneInfo.dismissRate}% dismissed ({tuneInfo.totalSamples} actions)
                 </span>
               )}
@@ -1344,7 +1586,7 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
       {/* Smart Tags */}
       <div style={sectionStyle}>
         <h2 style={sectionTitle}>Smart Tags</h2>
-        <p style={{ fontSize: 12, color: OS.muted, marginBottom: 16, lineHeight: 1.5 }}>
+        <p style={{ fontSize: 12, color: dk(darkMode, 'rgba(255,255,255,0.35)', OS.muted), marginBottom: 16, lineHeight: 1.5 }}>
           Claude auto-assigns tags to every commitment. Add or rename tags here, then use "Re-tag all" to apply changes across your inbox.
           The "General" tag is the default catch-all and cannot be deleted.
         </p>
@@ -1358,7 +1600,9 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
               <div key={tag.id} style={{
                 display: "flex", alignItems: "center", gap: 8,
                 padding: "8px 10px",
-                background: OS.bg, border: `1px solid ${OS.border}`, borderRadius: 8,
+                background: dk(darkMode, 'rgba(255,255,255,0.04)', OS.bg),
+                border: `1px solid ${dk(darkMode, 'rgba(255,255,255,0.08)', OS.border)}`,
+                borderRadius: 8,
               }}>
                 {/* Color swatch */}
                 <span style={{
@@ -1385,12 +1629,12 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
                   />
                 ) : (
                   <span
-                    style={{ flex: 1, fontSize: 13, fontWeight: 500, color: OS.text }}
+                    style={{ flex: 1, fontSize: 13, fontWeight: 500, color: dk(darkMode, 'rgba(255,255,255,0.90)', OS.text) }}
                     onDoubleClick={() => { if (!isGeneral) { setEditingTagId(tag.id!); setEditingTagLabel(tag.name); } }}
                     title={isGeneral ? undefined : "Double-click to rename"}
                   >
                     {tag.name}
-                    {isGeneral && <span style={{ fontSize: 10, color: OS.faint, marginLeft: 6 }}>(built-in)</span>}
+                    {isGeneral && <span style={{ fontSize: 10, color: dk(darkMode, 'rgba(255,255,255,0.20)', OS.faint), marginLeft: 6 }}>(built-in)</span>}
                   </span>
                 )}
 
@@ -1400,8 +1644,11 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
                     onClick={() => { setEditingTagId(tag.id!); setEditingTagLabel(tag.name); }}
                     style={{
                       padding: "2px 8px", fontSize: 11, fontFamily: OS.font,
-                      border: `1px solid ${OS.border}`, borderRadius: 4,
-                      background: OS.white, color: OS.secondary, cursor: "pointer",
+                      border: dk(darkMode, '0.5px solid rgba(255,255,255,0.10)', '0.5px solid rgba(0,0,0,0.12)'),
+                      borderRadius: 999,
+                      background: "transparent",
+                      color: dk(darkMode, 'rgba(255,255,255,0.55)', OS.secondary),
+                      cursor: "pointer",
                     }}
                   >
                     Rename
@@ -1414,8 +1661,8 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
                     onClick={() => handleTagDelete(tag.id!)}
                     style={{
                       padding: "2px 8px", fontSize: 11, fontFamily: OS.font,
-                      border: "1px solid #fca5a5", borderRadius: 4,
-                      background: OS.white, color: OS.red, cursor: "pointer",
+                      border: "1px solid #fca5a5", borderRadius: 999,
+                      background: "transparent", color: OS.red, cursor: "pointer",
                     }}
                   >
                     Delete
@@ -1438,17 +1685,23 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
             placeholder="New tag name..."
             style={{
               flex: 1, padding: "7px 10px",
-              border: `1px solid ${OS.border}`, borderRadius: 6,
+              border: `1px solid ${dk(darkMode, 'rgba(255,255,255,0.10)', OS.border)}`,
+              borderRadius: 8,
               fontSize: 13, fontFamily: OS.font, outline: "none",
+              background: dk(darkMode, 'rgba(255,255,255,0.06)', OS.white),
+              color: dk(darkMode, 'rgba(255,255,255,0.85)', OS.text),
             }}
           />
           <button
             onClick={() => handleTagAdd(newTagLabel)}
             disabled={!newTagLabel.trim()}
             style={{
-              padding: "7px 16px", background: newTagLabel.trim() ? OS.blue : OS.faint,
-              color: OS.white, border: "none", borderRadius: 6,
-              fontSize: 13, fontFamily: OS.font, cursor: newTagLabel.trim() ? "pointer" : "default",
+              padding: "6px 14px",
+              background: newTagLabel.trim() ? (darkMode ? 'rgba(94,106,210,0.18)' : OS.blueBg) : (darkMode ? 'rgba(255,255,255,0.06)' : OS.faint),
+              color: newTagLabel.trim() ? OS.blue : dk(darkMode, 'rgba(255,255,255,0.35)', OS.secondary),
+              border: newTagLabel.trim() ? `0.5px solid ${OS.blue}` : dk(darkMode, '0.5px solid rgba(255,255,255,0.10)', '0.5px solid rgba(0,0,0,0.12)'),
+              borderRadius: 999,
+              fontSize: 12, fontWeight: 500, fontFamily: OS.font, cursor: newTagLabel.trim() ? "pointer" : "default",
             }}
           >
             Add
@@ -1458,13 +1711,13 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
         {/* Re-tag all */}
         <div style={{
           padding: "14px 16px",
-          background: OS.bg,
-          border: `1px solid ${OS.border}`,
+          background: dk(darkMode, 'rgba(255,255,255,0.04)', OS.bg),
+          border: `1px solid ${dk(darkMode, 'rgba(255,255,255,0.08)', OS.border)}`,
           borderRadius: 8,
           marginBottom: 10,
         }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: OS.text, marginBottom: 4 }}>Re-tag all commitments</div>
-          <div style={{ fontSize: 12, color: OS.secondary, marginBottom: 12, lineHeight: 1.5 }}>
+          <div style={{ fontSize: 13, fontWeight: 500, color: dk(darkMode, 'rgba(255,255,255,0.90)', OS.text), marginBottom: 4 }}>Re-tag all commitments</div>
+          <div style={{ fontSize: 12, color: dk(darkMode, 'rgba(255,255,255,0.55)', OS.secondary), marginBottom: 12, lineHeight: 1.5 }}>
             Uses Claude to re-assign tags across all your commitments based on the current tag list.
             Useful after adding or renaming tags.
           </div>
@@ -1473,10 +1726,16 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
               onClick={handleRetagAll}
               disabled={retagging}
               style={{
-                padding: "8px 18px", fontSize: 13, fontWeight: 600,
-                background: retagging ? OS.faint : OS.blue,
-                color: OS.white, border: "none", borderRadius: 6,
-                fontFamily: OS.font, cursor: retagging ? "default" : "pointer",
+                border: dk(darkMode, '0.5px solid rgba(255,255,255,0.10)', '0.5px solid rgba(0,0,0,0.12)'),
+                borderRadius: 999,
+                background: "transparent",
+                color: dk(darkMode, 'rgba(255,255,255,0.55)', OS.secondary),
+                fontSize: 12,
+                fontWeight: 500,
+                padding: "6px 14px",
+                cursor: retagging ? "default" : "pointer",
+                fontFamily: OS.font,
+                opacity: retagging ? 0.6 : 1,
               }}
             >
               {retagging ? "✦ Re-tagging…" : "✦ Re-tag all commitments"}
@@ -1492,12 +1751,12 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
         {/* Re-check sensitivity */}
         <div style={{
           padding: "14px 16px",
-          background: OS.bg,
-          border: `1px solid ${OS.border}`,
+          background: dk(darkMode, 'rgba(255,255,255,0.04)', OS.bg),
+          border: `1px solid ${dk(darkMode, 'rgba(255,255,255,0.08)', OS.border)}`,
           borderRadius: 8,
         }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: OS.text, marginBottom: 4 }}>Re-check sensitivity</div>
-          <div style={{ fontSize: 12, color: OS.secondary, marginBottom: 12, lineHeight: 1.5 }}>
+          <div style={{ fontSize: 13, fontWeight: 500, color: dk(darkMode, 'rgba(255,255,255,0.90)', OS.text), marginBottom: 4 }}>Re-check sensitivity</div>
+          <div style={{ fontSize: 12, color: dk(darkMode, 'rgba(255,255,255,0.55)', OS.secondary), marginBottom: 12, lineHeight: 1.5 }}>
             Re-evaluates all existing commitments against the current privacy rules, including your role and title.
             Run this after updating your profile or if you want stricter privacy detection applied retroactively.
           </div>
@@ -1506,10 +1765,16 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
               onClick={handleRecheckSensitivity}
               disabled={recheckingSensitivity}
               style={{
-                padding: "8px 18px", fontSize: 13, fontWeight: 600,
-                background: recheckingSensitivity ? OS.faint : "#7c3aed",
-                color: OS.white, border: "none", borderRadius: 6,
-                fontFamily: OS.font, cursor: recheckingSensitivity ? "default" : "pointer",
+                border: dk(darkMode, '0.5px solid rgba(255,255,255,0.10)', '0.5px solid rgba(0,0,0,0.12)'),
+                borderRadius: 999,
+                background: "transparent",
+                color: dk(darkMode, 'rgba(255,255,255,0.55)', OS.secondary),
+                fontSize: 12,
+                fontWeight: 500,
+                padding: "6px 14px",
+                cursor: recheckingSensitivity ? "default" : "pointer",
+                fontFamily: OS.font,
+                opacity: recheckingSensitivity ? 0.6 : 1,
               }}
             >
               {recheckingSensitivity ? "✦ Checking…" : "✦ Re-check sensitivity"}
@@ -1526,7 +1791,7 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
       {/* Kanban Board */}
       <div style={sectionStyle}>
         <h2 style={sectionTitle}>Kanban Board Columns</h2>
-        <p style={{ fontSize: 12, color: OS.muted, marginBottom: 16, lineHeight: 1.5 }}>
+        <p style={{ fontSize: 12, color: dk(darkMode, 'rgba(255,255,255,0.35)', OS.muted), marginBottom: 16, lineHeight: 1.5 }}>
           Customize the columns in your board view. Drag &#x2807; to reorder, double-click to rename. "In Progress" is built-in and can be renamed but not deleted.
         </p>
 
@@ -1554,8 +1819,10 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
                   alignItems: "center",
                   gap: 8,
                   padding: "8px 10px",
-                  background: isDragOver ? "#eef4ff" : OS.bg,
-                  border: `1px solid ${isDragOver ? OS.blue : OS.border}`,
+                  background: isDragOver
+                    ? dk(darkMode, 'rgba(94,106,210,0.18)', '#eef4ff')
+                    : dk(darkMode, 'rgba(255,255,255,0.04)', OS.bg),
+                  border: `1px solid ${isDragOver ? OS.blue : dk(darkMode, 'rgba(255,255,255,0.08)', OS.border)}`,
                   borderRadius: 8,
                   opacity: isDragging ? 0.4 : 1,
                   transition: "all 0.12s ease",
@@ -1570,7 +1837,7 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
                     e.dataTransfer.setData("application/x-column-id", col.id);
                   }}
                   onDragEnd={() => { setColDragId(null); setColDragOverId(null); }}
-                  style={{ cursor: "grab", color: OS.faint, fontSize: 14, userSelect: "none", flexShrink: 0 }}
+                  style={{ cursor: "grab", color: dk(darkMode, 'rgba(255,255,255,0.20)', OS.faint), fontSize: 14, userSelect: "none", flexShrink: 0 }}
                   title="Drag to reorder"
                 >
                   &#x2807;
@@ -1591,17 +1858,19 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
                       flex: 1, fontSize: 13, padding: "2px 6px",
                       border: `1px solid ${OS.blue}`, borderRadius: 4,
                       fontFamily: OS.font, outline: "none",
+                      background: dk(darkMode, 'rgba(255,255,255,0.06)', OS.white),
+                      color: dk(darkMode, 'rgba(255,255,255,0.85)', OS.text),
                     }}
                   />
                 ) : (
                   <span
-                    style={{ flex: 1, fontSize: 13, fontWeight: 500, color: OS.text }}
+                    style={{ flex: 1, fontSize: 13, fontWeight: 500, color: dk(darkMode, 'rgba(255,255,255,0.90)', OS.text) }}
                     onDoubleClick={() => { setEditingColId(col.id); setEditingColLabel(col.label); }}
                     title="Double-click to rename"
                   >
                     {col.label}
                     {isIP && (
-                      <span style={{ fontSize: 10, color: OS.faint, marginLeft: 6 }}>(built-in)</span>
+                      <span style={{ fontSize: 10, color: dk(darkMode, 'rgba(255,255,255,0.20)', OS.faint), marginLeft: 6 }}>(built-in)</span>
                     )}
                   </span>
                 )}
@@ -1612,8 +1881,11 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
                     onClick={() => { setEditingColId(col.id); setEditingColLabel(col.label); }}
                     style={{
                       padding: "2px 8px", fontSize: 11, fontFamily: OS.font,
-                      border: `1px solid ${OS.border}`, borderRadius: 4,
-                      background: OS.white, color: OS.secondary, cursor: "pointer",
+                      border: dk(darkMode, '0.5px solid rgba(255,255,255,0.10)', '0.5px solid rgba(0,0,0,0.12)'),
+                      borderRadius: 999,
+                      background: "transparent",
+                      color: dk(darkMode, 'rgba(255,255,255,0.55)', OS.secondary),
+                      cursor: "pointer",
                     }}
                   >
                     Rename
@@ -1626,8 +1898,8 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
                     onClick={() => handleColDeleteRequest(col.id)}
                     style={{
                       padding: "2px 8px", fontSize: 11, fontFamily: OS.font,
-                      border: "1px solid #fca5a5", borderRadius: 4,
-                      background: OS.white, color: OS.red, cursor: "pointer",
+                      border: "1px solid #fca5a5", borderRadius: 999,
+                      background: "transparent", color: OS.red, cursor: "pointer",
                     }}
                   >
                     Delete
@@ -1643,14 +1915,14 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
           <div style={{
             marginBottom: 14,
             padding: "14px 16px",
-            background: "#fff8f8",
+            background: dk(darkMode, 'rgba(209,67,67,0.08)', '#fff8f8'),
             border: `1px solid #fca5a5`,
             borderRadius: 8,
           }}>
-            <div style={{ fontSize: 13, fontWeight: 600, color: OS.red, marginBottom: 6 }}>
+            <div style={{ fontSize: 13, fontWeight: 500, color: OS.red, marginBottom: 6 }}>
               Delete "{deleteColConfirm.label}"?
             </div>
-            <div style={{ fontSize: 12, color: OS.secondary, marginBottom: 12, lineHeight: 1.5 }}>
+            <div style={{ fontSize: 12, color: dk(darkMode, 'rgba(255,255,255,0.55)', OS.secondary), marginBottom: 12, lineHeight: 1.5 }}>
               {deleteColConfirm.itemCount > 0
                 ? `${deleteColConfirm.itemCount} card${deleteColConfirm.itemCount === 1 ? "" : "s"} will be moved. Choose where:`
                 : "This column is empty. It will be permanently removed."}
@@ -1663,8 +1935,11 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
                   onChange={(e) => setDeleteMoveTarget(e.target.value)}
                   style={{
                     width: "100%", padding: "6px 10px", fontSize: 13,
-                    border: `1px solid ${OS.border}`, borderRadius: 6,
-                    fontFamily: OS.font, background: OS.white, color: OS.text,
+                    border: `1px solid ${dk(darkMode, 'rgba(255,255,255,0.10)', OS.border)}`,
+                    borderRadius: 8,
+                    fontFamily: OS.font,
+                    background: dk(darkMode, '#1c1c1e', OS.white),
+                    color: dk(darkMode, 'rgba(255,255,255,0.85)', OS.text),
                     cursor: "pointer",
                   }}
                 >
@@ -1682,9 +1957,9 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
               <button
                 onClick={handleColDeleteConfirm}
                 style={{
-                  padding: "6px 14px", fontSize: 12, fontWeight: 600,
-                  background: OS.red, color: OS.white,
-                  border: "none", borderRadius: 6,
+                  padding: "6px 14px", fontSize: 12, fontWeight: 500,
+                  background: "transparent", color: OS.red,
+                  border: "1px solid #fca5a5", borderRadius: 999,
                   fontFamily: OS.font, cursor: "pointer",
                 }}
               >
@@ -1693,9 +1968,10 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
               <button
                 onClick={() => setDeleteColConfirm(null)}
                 style={{
-                  padding: "6px 14px", fontSize: 12,
-                  background: OS.white, color: OS.secondary,
-                  border: `1px solid ${OS.border}`, borderRadius: 6,
+                  padding: "6px 14px", fontSize: 12, fontWeight: 500,
+                  background: "transparent", color: dk(darkMode, 'rgba(255,255,255,0.55)', OS.secondary),
+                  border: dk(darkMode, '0.5px solid rgba(255,255,255,0.10)', '0.5px solid rgba(0,0,0,0.12)'),
+                  borderRadius: 999,
                   fontFamily: OS.font, cursor: "pointer",
                 }}
               >
@@ -1719,16 +1995,20 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
               placeholder="Column name..."
               style={{
                 flex: 1, padding: "7px 10px",
-                border: `1px solid ${OS.blue}`, borderRadius: 6,
+                border: `1px solid ${OS.blue}`, borderRadius: 8,
                 fontSize: 13, fontFamily: OS.font, outline: "none",
+                background: dk(darkMode, 'rgba(255,255,255,0.06)', OS.white),
+                color: dk(darkMode, 'rgba(255,255,255,0.85)', OS.text),
               }}
             />
             <button
               onClick={() => handleColAdd(newColLabel)}
               style={{
-                padding: "7px 16px", background: OS.blue, color: OS.white,
-                border: "none", borderRadius: 6, fontSize: 13,
-                fontWeight: 600, cursor: "pointer", fontFamily: OS.font,
+                padding: "6px 14px",
+                background: darkMode ? 'rgba(94,106,210,0.18)' : OS.blueBg,
+                color: OS.blue,
+                border: `0.5px solid ${OS.blue}`, borderRadius: 999, fontSize: 12,
+                fontWeight: 500, cursor: "pointer", fontFamily: OS.font,
               }}
             >
               Add
@@ -1736,9 +2016,11 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
             <button
               onClick={() => { setAddingCol(false); setNewColLabel(""); }}
               style={{
-                padding: "7px 12px", background: OS.bg, color: OS.muted,
-                border: `1px solid ${OS.border}`, borderRadius: 6,
-                fontSize: 13, cursor: "pointer", fontFamily: OS.font,
+                padding: "6px 14px", background: "transparent",
+                color: dk(darkMode, 'rgba(255,255,255,0.55)', OS.secondary),
+                border: dk(darkMode, '0.5px solid rgba(255,255,255,0.10)', '0.5px solid rgba(0,0,0,0.12)'),
+                borderRadius: 999,
+                fontSize: 12, fontWeight: 500, cursor: "pointer", fontFamily: OS.font,
               }}
             >
               Cancel
@@ -1749,12 +2031,16 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
             onClick={() => setAddingCol(true)}
             style={{
               width: "100%", padding: "8px 0",
-              background: "transparent", color: OS.secondary,
-              border: `1px dashed ${OS.border}`, borderRadius: 6,
-              fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: OS.font,
+              background: "transparent", color: dk(darkMode, 'rgba(255,255,255,0.55)', OS.secondary),
+              border: `1px dashed ${dk(darkMode, 'rgba(255,255,255,0.15)', OS.border)}`,
+              borderRadius: 999,
+              fontSize: 12, fontWeight: 500, cursor: "pointer", fontFamily: OS.font,
             }}
             onMouseEnter={(e) => { e.currentTarget.style.borderColor = OS.blue; e.currentTarget.style.color = OS.blue; }}
-            onMouseLeave={(e) => { e.currentTarget.style.borderColor = OS.border; e.currentTarget.style.color = OS.secondary; }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.borderColor = dk(darkMode, 'rgba(255,255,255,0.15)', OS.border);
+              e.currentTarget.style.color = dk(darkMode, 'rgba(255,255,255,0.55)', OS.secondary);
+            }}
           >
             + Add column
           </button>
@@ -1808,11 +2094,11 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
           <div
             style={{
               padding: "7px 16px",
-              background: OS.bg,
+              background: dk(darkMode, 'rgba(255,255,255,0.06)', OS.bg),
               borderRadius: 8,
               fontSize: 14,
-              fontWeight: 700,
-              color: OS.darkBlue,
+              fontWeight: 500,
+              color: dk(darkMode, 'rgba(255,255,255,0.90)', OS.darkBlue),
               fontFamily: "monospace",
             }}
           >
@@ -1830,15 +2116,15 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
           <button
             onClick={exportData}
             style={{
-              padding: "8px 20px",
-              fontSize: 13,
-              fontWeight: 600,
-              fontFamily: OS.font,
-              border: `1px solid ${OS.border}`,
-              borderRadius: 8,
-              background: OS.white,
-              color: OS.blue,
+              border: dk(darkMode, '0.5px solid rgba(255,255,255,0.10)', '0.5px solid rgba(0,0,0,0.12)'),
+              borderRadius: 999,
+              background: "transparent",
+              color: dk(darkMode, 'rgba(255,255,255,0.55)', OS.secondary),
+              fontSize: 12,
+              fontWeight: 500,
+              padding: "6px 14px",
               cursor: "pointer",
+              fontFamily: OS.font,
             }}
           >
             Export JSON
@@ -1910,15 +2196,15 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
             }}
             disabled={restoring}
             style={{
-              padding: "8px 20px",
-              fontSize: 13,
-              fontWeight: 600,
-              fontFamily: OS.font,
-              border: `1px solid ${OS.border}`,
-              borderRadius: 8,
-              background: OS.white,
-              color: OS.green,
+              border: dk(darkMode, '0.5px solid rgba(255,255,255,0.10)', '0.5px solid rgba(0,0,0,0.12)'),
+              borderRadius: 999,
+              background: "transparent",
+              color: dk(darkMode, 'rgba(255,255,255,0.55)', OS.secondary),
+              fontSize: 12,
+              fontWeight: 500,
+              padding: "6px 14px",
               cursor: restoring ? "wait" : "pointer",
+              fontFamily: OS.font,
               opacity: restoring ? 0.6 : 1,
             }}
           >
@@ -1959,11 +2245,11 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
         <div
           style={{
             padding: "10px 14px",
-            background: "#fffbeb",
-            border: `1px solid #fde68a`,
+            background: dk(darkMode, 'rgba(192,122,0,0.12)', '#fffbeb'),
+            border: `1px solid ${dk(darkMode, 'rgba(232,209,116,0.30)', '#fde68a')}`,
             borderRadius: 8,
             fontSize: 12,
-            color: "#92400e",
+            color: dk(darkMode, '#e8d174', '#92400e'),
             lineHeight: 1.5,
           }}
         >
@@ -1976,7 +2262,7 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
       <div style={{
         ...sectionStyle,
         border: "1px solid #fca5a5",
-        background: "#fef2f2",
+        background: dk(darkMode, 'rgba(209,67,67,0.08)', '#fef2f2'),
       }}>
         <h2 style={{ ...sectionTitle, color: OS.red }}>Danger Zone</h2>
 
@@ -1992,15 +2278,15 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
           <button
             onClick={clearAllData}
             style={{
-              padding: "8px 20px",
-              fontSize: 13,
-              fontWeight: 600,
-              fontFamily: OS.font,
-              border: "1px solid #fca5a5",
-              borderRadius: 8,
-              background: OS.white,
+              border: "0.5px solid #fca5a5",
+              borderRadius: 999,
+              background: "transparent",
               color: OS.red,
+              fontSize: 12,
+              fontWeight: 500,
+              padding: "6px 14px",
               cursor: "pointer",
+              fontFamily: OS.font,
             }}
           >
             Clear All Data
@@ -2031,7 +2317,7 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
             border: "none",
             color: OS.blue,
             fontSize: 12,
-            fontWeight: 600,
+            fontWeight: 500,
             cursor: "pointer",
             padding: 0,
             marginBottom: 16,
@@ -2061,7 +2347,7 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
               justifyContent: "center",
               color: OS.white,
               fontSize: 18,
-              fontWeight: 900,
+              fontWeight: 500,
               boxShadow: "0 2px 8px rgba(43,103,219,0.25)",
             }}
           >
@@ -2071,50 +2357,27 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
             <h1
               style={{
                 fontSize: 20,
-                fontWeight: 900,
-                color: OS.darkBlue,
+                fontWeight: 500,
+                color: dk(darkMode, 'rgba(255,255,255,0.90)', OS.darkBlue),
                 letterSpacing: "-0.01em",
               }}
             >
               Settings
             </h1>
-            <span style={{ fontSize: 12, color: OS.muted }}>
+            <span style={{ fontSize: 12, color: dk(darkMode, 'rgba(255,255,255,0.35)', OS.muted) }}>
               Clyde
             </span>
           </div>
         </div>
 
         {/* Tab Bar */}
-        <div style={{
-          display: "flex",
-          gap: 0,
-          marginBottom: 24,
-          borderBottom: `2px solid ${OS.border}`,
-        }}>
-          {TABS.map((tab) => {
-            const isActive = activeTab === tab.key;
-            return (
-              <button
-                key={tab.key}
-                onClick={() => setActiveTab(tab.key)}
-                style={{
-                  padding: "10px 18px",
-                  fontSize: 13,
-                  fontWeight: isActive ? 700 : 500,
-                  fontFamily: OS.font,
-                  color: isActive ? OS.blue : OS.muted,
-                  background: "none",
-                  border: "none",
-                  borderBottom: isActive ? `2px solid ${OS.blue}` : "2px solid transparent",
-                  marginBottom: -2,
-                  cursor: "pointer",
-                  transition: "all 0.15s ease",
-                }}
-              >
-                {tab.label}
-              </button>
-            );
-          })}
+        <div style={{ marginBottom: 24, display: "flex" }}>
+          <TabPillNav
+            tabs={TABS}
+            activeTab={activeTab}
+            onTabChange={setActiveTab}
+            dark={darkMode}
+          />
         </div>
 
         {/* Tab Content */}
@@ -2130,7 +2393,7 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
             textAlign: "center",
             marginTop: 20,
             fontSize: 11,
-            color: OS.muted,
+            color: dk(darkMode, 'rgba(255,255,255,0.35)', OS.muted),
           }}
         >
           Settings are stored locally in Chrome
@@ -2142,13 +2405,14 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
 }
 
 export default function Options() {
+  const darkMode = useDarkModeSetting();
   return (
     <div
       style={{
         minHeight: "100vh",
-        background: OS.bg,
+        background: dk(darkMode, '#111113', OS.bg),
         fontFamily: OS.font,
-        color: OS.text,
+        color: dk(darkMode, 'rgba(255,255,255,0.90)', OS.text),
         padding: "32px 0",
       }}
     >

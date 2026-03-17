@@ -31,7 +31,7 @@ const BACKED_UP_STORAGE_KEYS = [
   "morningBriefEnabled",
   "confidenceThreshold",
   "calendarIcsUrl",
-  "slackChannelFilter",
+  "slackChannelIgnoreList",
   "voiceInboxEnabled",
   "googleDocsEnabled",
   "slackEnabled",
