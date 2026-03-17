@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { OS } from "@shared/tokens";
 import type { Commitment, ConversationMessage, Tag, Urgency, CommitmentDirection } from "@shared/types";
 import { IconMic, IconDocument, IconChat, IconMail, IconX, IconChevronRight, IconCalendar, IconBell, IconCheck } from "./Icons";
+import { useDarkMode, dk } from "../DarkModeContext";
 
 interface TranscriptPanelProps {
   commitment: Commitment;
@@ -21,10 +22,9 @@ function SectionLabel({ children, color }: { children: React.ReactNode; color: s
     <div
       style={{
         fontSize: 10,
-        fontWeight: 700,
+        fontWeight: 500,
         color,
-        textTransform: "uppercase",
-        letterSpacing: "0.06em",
+        letterSpacing: "0.04em",
         marginBottom: 6,
       }}
     >
@@ -55,6 +55,7 @@ export function TranscriptPanel({
   allTags,
   onMetaUpdate,
 }: TranscriptPanelProps) {
+  const darkMode = useDarkMode();
   const [transcriptOpen, setTranscriptOpen] = useState(false);
   const [editText, setEditText] = useState(commitment.text);
   useEffect(() => { setEditText(commitment.text); }, [commitment.id]);
@@ -76,8 +77,8 @@ export function TranscriptPanel({
   return (
     <div
       style={{
-        background: OS.white,
-        borderLeft: `1px solid ${OS.border}`,
+        background: dk(darkMode, '#161618', OS.white),
+        borderLeft: `1px solid ${dk(darkMode, 'rgba(255,255,255,0.08)', OS.border)}`,
         display: "flex",
         flexDirection: "column",
         overflow: "hidden",
@@ -91,15 +92,15 @@ export function TranscriptPanel({
           alignItems: "flex-start",
           justifyContent: "space-between",
           padding: "14px 16px 12px",
-          borderBottom: `1px solid ${OS.border}`,
+          borderBottom: `1px solid ${dk(darkMode, 'rgba(255,255,255,0.08)', OS.border)}`,
         }}
       >
         <div style={{ minWidth: 0, flex: 1 }}>
           <div
             style={{
               fontSize: 14,
-              fontWeight: 600,
-              color: OS.text,
+              fontWeight: 500,
+              color: dk(darkMode, 'rgba(255,255,255,0.90)', OS.text),
               overflow: "hidden",
               textOverflow: "ellipsis",
               whiteSpace: "nowrap",
@@ -107,7 +108,7 @@ export function TranscriptPanel({
           >
             {commitment.context}
           </div>
-          <div style={{ fontSize: 12, color: OS.muted, marginTop: 2, display: "flex", alignItems: "center", gap: 4 }}>
+          <div style={{ fontSize: 12, color: dk(darkMode, 'rgba(255,255,255,0.35)', OS.muted), marginTop: 2, display: "flex", alignItems: "center", gap: 4 }}>
             <span style={{ display: "inline-flex" }}>{sourceIcon}</span> {sourceLabel} · {deadlineLabel}
           </div>
         </div>
@@ -116,10 +117,10 @@ export function TranscriptPanel({
           style={{
             width: 28,
             height: 28,
-            borderRadius: 6,
-            border: `1px solid ${OS.border}`,
-            background: OS.white,
-            color: OS.muted,
+            borderRadius: "50%",
+            border: `0.5px solid ${dk(darkMode, 'rgba(255,255,255,0.10)', 'rgba(0,0,0,0.08)')}`,
+            background: dk(darkMode, 'rgba(255,255,255,0.06)', OS.white),
+            color: dk(darkMode, 'rgba(255,255,255,0.55)', OS.muted),
             fontSize: 14,
             cursor: "pointer",
             display: "flex",
@@ -150,16 +151,16 @@ export function TranscriptPanel({
       >
         {/* 1. COMMITMENT */}
         <div>
-          <SectionLabel color={OS.text}>Commitment</SectionLabel>
+          <SectionLabel color={dk(darkMode, 'rgba(255,255,255,0.90)', OS.text)}>Commitment</SectionLabel>
           <div
             style={{
-              background: OS.yellowBg,
+              background: "transparent",
               borderLeft: `3px solid ${OS.yellowBorder}`,
-              borderRadius: 8,
-              padding: "12px 14px",
+              borderRadius: 12,
+              padding: "10px 14px",
             }}
           >
-            <div style={{ fontSize: 15, fontWeight: 600, color: OS.text, wordWrap: "break-word" }}>
+            <div style={{ fontSize: 13, fontWeight: 400, color: dk(darkMode, 'rgba(255,255,255,0.90)', OS.text), wordWrap: "break-word" }}>
               {commitment.text}
             </div>
           </div>
@@ -171,16 +172,16 @@ export function TranscriptPanel({
             <SectionLabel color={OS.blue}>Context</SectionLabel>
             <div
               style={{
-                background: OS.bg,
+                background: dk(darkMode, 'rgba(255,255,255,0.04)', OS.bg),
                 borderLeft: `3px solid ${OS.blue}`,
-                borderRadius: 8,
+                borderRadius: 12,
                 padding: "12px 14px",
               }}
             >
               <div
                 style={{
-                  fontSize: 13.5,
-                  color: OS.text,
+                  fontSize: 13,
+                  color: dk(darkMode, 'rgba(255,255,255,0.90)', OS.text),
                   lineHeight: 1.6,
                   wordWrap: "break-word",
                 }}
@@ -194,20 +195,20 @@ export function TranscriptPanel({
         {/* 3. WHAT YOU SAID */}
         {commitment.original_quote && (
           <div>
-            <SectionLabel color={OS.muted}>What you said</SectionLabel>
+            <SectionLabel color={dk(darkMode, 'rgba(255,255,255,0.35)', OS.muted)}>What you said</SectionLabel>
             <div
               style={{
-                background: OS.bg,
-                border: `1px solid ${OS.border}`,
-                borderRadius: 8,
-                padding: "12px 14px",
+                background: "transparent",
+                borderLeft: `2px solid ${dk(darkMode, 'rgba(255,255,255,0.12)', 'rgba(0,0,0,0.08)')}`,
+                borderRadius: 0,
+                padding: "8px 14px",
               }}
             >
               <div
                 style={{
                   fontSize: 13,
                   fontStyle: "italic",
-                  color: OS.secondary,
+                  color: dk(darkMode, 'rgba(255,255,255,0.55)', OS.secondary),
                   wordWrap: "break-word",
                 }}
               >
@@ -225,7 +226,7 @@ export function TranscriptPanel({
               style={{
                 fontSize: 12,
                 fontWeight: 600,
-                color: OS.muted,
+                color: dk(darkMode, 'rgba(255,255,255,0.35)', OS.muted),
                 background: "none",
                 border: "none",
                 cursor: "pointer",
@@ -251,9 +252,9 @@ export function TranscriptPanel({
               <div
                 style={{
                   marginTop: 8,
-                  background: OS.bg,
-                  border: `1px solid ${OS.border}`,
-                  borderRadius: 8,
+                  background: dk(darkMode, 'rgba(255,255,255,0.04)', OS.bg),
+                  border: `0.5px solid ${dk(darkMode, 'rgba(255,255,255,0.08)', 'rgba(0,0,0,0.08)')}`,
+                  borderRadius: 12,
                   padding: "12px 14px",
                 }}
               >
@@ -263,7 +264,7 @@ export function TranscriptPanel({
                       style={{
                         fontSize: 11,
                         fontWeight: 600,
-                        color: OS.muted,
+                        color: dk(darkMode, 'rgba(255,255,255,0.35)', OS.muted),
                       }}
                     >
                       {msg.sender}
@@ -281,7 +282,7 @@ export function TranscriptPanel({
                     <div
                       style={{
                         fontSize: 13,
-                        color: OS.secondary,
+                        color: dk(darkMode, 'rgba(255,255,255,0.55)', OS.secondary),
                         lineHeight: 1.65,
                         wordWrap: "break-word",
                         marginTop: 1,
@@ -301,7 +302,7 @@ export function TranscriptPanel({
             style={{
               padding: "24px 0",
               textAlign: "center",
-              color: OS.muted,
+              color: dk(darkMode, 'rgba(255,255,255,0.35)', OS.muted),
               fontSize: 13,
             }}
           >
@@ -312,11 +313,11 @@ export function TranscriptPanel({
         {/* Details — editable fields */}
         {onMetaUpdate && commitment.id != null && (
           <div>
-            <SectionLabel color={OS.secondary}>Details</SectionLabel>
+            <SectionLabel color={dk(darkMode, 'rgba(255,255,255,0.55)', OS.secondary)}>Details</SectionLabel>
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               {/* Description */}
               <div>
-                <div style={{ fontSize: 11, color: OS.muted, fontWeight: 500, marginBottom: 3 }}>Description</div>
+                <div style={{ fontSize: 11, color: dk(darkMode, 'rgba(255,255,255,0.35)', OS.muted), fontWeight: 500, marginBottom: 3 }}>Description</div>
                 <textarea
                   value={editText}
                   onChange={(e) => setEditText(e.target.value)}
@@ -327,11 +328,11 @@ export function TranscriptPanel({
                   }}
                   rows={2}
                   style={{
-                    fontSize: 13, fontFamily: OS.font, color: OS.text,
-                    border: `1px solid ${OS.border}`, borderRadius: 5,
+                    fontSize: 13, fontFamily: OS.font, color: dk(darkMode, 'rgba(255,255,255,0.85)', OS.text),
+                    border: `0.5px solid ${dk(darkMode, 'rgba(255,255,255,0.10)', 'rgba(0,0,0,0.12)')}`, borderRadius: 8,
                     padding: "6px 8px", resize: "vertical",
                     width: "100%", boxSizing: "border-box" as const,
-                    outline: "none", background: OS.white, lineHeight: 1.4,
+                    outline: "none", background: dk(darkMode, 'rgba(255,255,255,0.06)', OS.white), lineHeight: 1.4,
                   }}
                 />
               </div>
@@ -339,7 +340,7 @@ export function TranscriptPanel({
               {/* Tag */}
               {allTags && allTags.length > 0 && (
                 <div>
-                  <div style={{ fontSize: 11, color: OS.muted, fontWeight: 500, marginBottom: 3 }}>Tag</div>
+                  <div style={{ fontSize: 11, color: dk(darkMode, 'rgba(255,255,255,0.35)', OS.muted), fontWeight: 500, marginBottom: 3 }}>Tag</div>
                   <select
                     value={commitment.tag_id ?? ""}
                     onChange={(e) => {
@@ -347,9 +348,9 @@ export function TranscriptPanel({
                       onMetaUpdate(commitment.id!, { tag_id: val });
                     }}
                     style={{
-                      fontSize: 12, fontFamily: OS.font, color: OS.text,
-                      border: `1px solid ${OS.border}`, borderRadius: 5,
-                      padding: "5px 7px", background: OS.white, outline: "none",
+                      fontSize: 12, fontFamily: OS.font, color: dk(darkMode, 'rgba(255,255,255,0.85)', OS.text),
+                      border: `0.5px solid ${dk(darkMode, 'rgba(255,255,255,0.10)', 'rgba(0,0,0,0.12)')}`, borderRadius: 8,
+                      padding: "5px 7px", background: dk(darkMode, 'rgba(255,255,255,0.06)', OS.white), outline: "none",
                       width: "100%", boxSizing: "border-box" as const,
                     }}
                   >
@@ -363,22 +364,25 @@ export function TranscriptPanel({
 
               {/* Urgency */}
               <div>
-                <div style={{ fontSize: 11, color: OS.muted, fontWeight: 500, marginBottom: 3 }}>Urgency</div>
+                <div style={{ fontSize: 11, color: dk(darkMode, 'rgba(255,255,255,0.35)', OS.muted), fontWeight: 500, marginBottom: 3 }}>Urgency</div>
                 <div style={{ display: "flex", gap: 6 }}>
                   {(["high", "medium", "low"] as Urgency[]).map((u) => {
                     const active = commitment.urgency === u;
-                    const accent = u === "high" ? OS.red : u === "medium" ? "#b08d33" : OS.faint;
                     return (
                       <button
                         key={u}
                         onClick={() => onMetaUpdate(commitment.id!, { urgency: u })}
                         style={{
-                          flex: 1, padding: "5px 0", fontSize: 11, fontFamily: OS.font,
-                          fontWeight: active ? 700 : 400,
-                          color: active ? accent : OS.muted,
-                          background: active ? `${accent}18` : "transparent",
-                          border: `1px solid ${active ? accent : OS.border}`,
-                          borderRadius: 5, cursor: "pointer",
+                          background: active ? dk(darkMode, 'rgba(94,106,210,0.18)', OS.blueBg) : "transparent",
+                          color: active ? OS.blue : dk(darkMode, 'rgba(255,255,255,0.45)', OS.secondary),
+                          border: active ? `0.5px solid ${OS.blue}` : `0.5px solid ${dk(darkMode, 'rgba(255,255,255,0.10)', 'rgba(0,0,0,0.12)')}`,
+                          borderRadius: 999,
+                          padding: "5px 0",
+                          fontSize: 11,
+                          fontWeight: active ? 500 : 400,
+                          fontFamily: OS.font,
+                          flex: 1,
+                          cursor: "pointer",
                         }}
                       >
                         {u}
@@ -390,7 +394,7 @@ export function TranscriptPanel({
 
               {/* Deadline */}
               <div>
-                <div style={{ fontSize: 11, color: OS.muted, fontWeight: 500, marginBottom: 3 }}>Deadline</div>
+                <div style={{ fontSize: 11, color: dk(darkMode, 'rgba(255,255,255,0.35)', OS.muted), fontWeight: 500, marginBottom: 3 }}>Deadline</div>
                 <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                   <input
                     type="datetime-local"
@@ -400,9 +404,9 @@ export function TranscriptPanel({
                       onMetaUpdate(commitment.id!, { deadline: iso });
                     }}
                     style={{
-                      fontSize: 12, fontFamily: OS.font, color: OS.text,
-                      border: `1px solid ${OS.border}`, borderRadius: 5,
-                      padding: "5px 7px", background: OS.white, outline: "none",
+                      fontSize: 12, fontFamily: OS.font, color: dk(darkMode, 'rgba(255,255,255,0.85)', OS.text),
+                      border: `0.5px solid ${dk(darkMode, 'rgba(255,255,255,0.10)', 'rgba(0,0,0,0.12)')}`, borderRadius: 8,
+                      padding: "5px 7px", background: dk(darkMode, 'rgba(255,255,255,0.06)', OS.white), outline: "none",
                       flex: 1, minWidth: 0, boxSizing: "border-box" as const,
                     }}
                   />
@@ -411,9 +415,9 @@ export function TranscriptPanel({
                       onClick={() => onMetaUpdate(commitment.id!, { deadline: null })}
                       style={{
                         padding: "5px 8px", fontSize: 11, fontFamily: OS.font,
-                        color: OS.muted, border: `1px solid ${OS.border}`,
-                        borderRadius: 5, background: OS.white, cursor: "pointer",
-                        whiteSpace: "nowrap" as const, flexShrink: 0,
+                        color: dk(darkMode, 'rgba(255,255,255,0.35)', OS.muted), border: `0.5px solid ${dk(darkMode, 'rgba(255,255,255,0.10)', 'rgba(0,0,0,0.12)')}`,
+                        borderRadius: 999, background: dk(darkMode, 'rgba(255,255,255,0.06)', OS.white), cursor: "pointer",
+                        whiteSpace: "nowrap" as const, flexShrink: 0, fontWeight: 500,
                       }}
                     >
                       Clear
@@ -425,7 +429,7 @@ export function TranscriptPanel({
               {/* Direction + Sensitive */}
               <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
                 <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 11, color: OS.muted, fontWeight: 500, marginBottom: 3 }}>Direction</div>
+                  <div style={{ fontSize: 11, color: dk(darkMode, 'rgba(255,255,255,0.35)', OS.muted), fontWeight: 500, marginBottom: 3 }}>Direction</div>
                   <div style={{ display: "flex", gap: 6 }}>
                     {(["by_me", "assigned_to_me"] as CommitmentDirection[]).map((d) => {
                       const active = commitment.direction === d;
@@ -435,11 +439,11 @@ export function TranscriptPanel({
                           onClick={() => onMetaUpdate(commitment.id!, { direction: d })}
                           style={{
                             flex: 1, padding: "5px 0", fontSize: 11, fontFamily: OS.font,
-                            fontWeight: active ? 700 : 400,
-                            color: active ? OS.blue : OS.muted,
-                            background: active ? `${OS.blue}14` : "transparent",
-                            border: `1px solid ${active ? OS.blue : OS.border}`,
-                            borderRadius: 5, cursor: "pointer",
+                            fontWeight: active ? 500 : 400,
+                            color: active ? OS.blue : dk(darkMode, 'rgba(255,255,255,0.45)', OS.secondary),
+                            background: active ? dk(darkMode, 'rgba(94,106,210,0.18)', OS.blueBg) : "transparent",
+                            border: active ? `0.5px solid ${OS.blue}` : `0.5px solid ${dk(darkMode, 'rgba(255,255,255,0.10)', 'rgba(0,0,0,0.12)')}`,
+                            borderRadius: 999, cursor: "pointer",
                           }}
                         >
                           {d === "by_me" ? "Mine" : "Assigned"}
@@ -449,7 +453,7 @@ export function TranscriptPanel({
                   </div>
                 </div>
                 <div>
-                  <div style={{ fontSize: 11, color: OS.muted, fontWeight: 500, marginBottom: 3 }}>Sensitive</div>
+                  <div style={{ fontSize: 11, color: dk(darkMode, 'rgba(255,255,255,0.35)', OS.muted), fontWeight: 500, marginBottom: 3 }}>Sensitive</div>
                   <label style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer", marginTop: 4 }}>
                     <input
                       type="checkbox"
@@ -457,7 +461,7 @@ export function TranscriptPanel({
                       onChange={(e) => onMetaUpdate(commitment.id!, { sensitive: e.target.checked })}
                       style={{ cursor: "pointer", width: 14, height: 14 }}
                     />
-                    <span style={{ fontSize: 11, color: OS.muted, whiteSpace: "nowrap" as const }}>Hide</span>
+                    <span style={{ fontSize: 11, color: dk(darkMode, 'rgba(255,255,255,0.35)', OS.muted), whiteSpace: "nowrap" as const }}>Hide</span>
                   </label>
                 </div>
               </div>
@@ -469,7 +473,7 @@ export function TranscriptPanel({
       {/* Bottom actions — pinned */}
       <div
         style={{
-          borderTop: `1px solid ${OS.border}`,
+          borderTop: `1px solid ${dk(darkMode, 'rgba(255,255,255,0.08)', OS.border)}`,
           padding: "12px 16px",
           display: "flex",
           flexDirection: "column",
@@ -481,13 +485,13 @@ export function TranscriptPanel({
             onClick={onCalendar}
             style={{
               flex: 1,
-              border: `1px solid ${OS.border}`,
-              background: OS.white,
-              borderRadius: 6,
+              border: `0.5px solid ${dk(darkMode, 'rgba(255,255,255,0.10)', 'rgba(0,0,0,0.12)')}`,
+              background: "transparent",
+              borderRadius: 999,
               padding: "7px 14px",
               fontSize: 12,
-              fontWeight: 600,
-              color: OS.secondary,
+              fontWeight: 500,
+              color: dk(darkMode, 'rgba(255,255,255,0.55)', OS.secondary),
               cursor: "pointer",
               fontFamily: OS.font,
             }}
@@ -498,13 +502,13 @@ export function TranscriptPanel({
             onClick={onReminder}
             style={{
               flex: 1,
-              border: `1px solid ${OS.border}`,
-              background: OS.white,
-              borderRadius: 6,
+              border: `0.5px solid ${dk(darkMode, 'rgba(255,255,255,0.10)', 'rgba(0,0,0,0.12)')}`,
+              background: "transparent",
+              borderRadius: 999,
               padding: "7px 14px",
               fontSize: 12,
-              fontWeight: 600,
-              color: OS.secondary,
+              fontWeight: 500,
+              color: dk(darkMode, 'rgba(255,255,255,0.55)', OS.secondary),
               cursor: "pointer",
               fontFamily: OS.font,
             }}
@@ -515,13 +519,13 @@ export function TranscriptPanel({
             onClick={onDone}
             style={{
               flex: 1,
-              border: `1px solid ${OS.border}`,
-              background: OS.white,
-              borderRadius: 6,
+              border: `0.5px solid ${OS.blue}`,
+              background: dk(darkMode, 'rgba(94,106,210,0.18)', OS.blueBg),
+              borderRadius: 999,
               padding: "7px 14px",
               fontSize: 12,
-              fontWeight: 600,
-              color: OS.green,
+              fontWeight: 500,
+              color: OS.blue,
               cursor: "pointer",
               fontFamily: OS.font,
             }}
@@ -532,13 +536,13 @@ export function TranscriptPanel({
             onClick={onCloseCommitment}
             style={{
               flex: 1,
-              border: `1px solid ${OS.border}`,
-              background: OS.white,
-              borderRadius: 6,
+              border: `0.5px solid ${dk(darkMode, 'rgba(255,255,255,0.10)', 'rgba(0,0,0,0.12)')}`,
+              background: "transparent",
+              borderRadius: 999,
               padding: "7px 14px",
               fontSize: 12,
-              fontWeight: 600,
-              color: OS.muted,
+              fontWeight: 500,
+              color: dk(darkMode, 'rgba(255,255,255,0.55)', OS.secondary),
               cursor: "pointer",
               fontFamily: OS.font,
             }}
@@ -549,13 +553,13 @@ export function TranscriptPanel({
             onClick={onDismiss}
             title="Remove and train Clyde to stop showing similar items"
             style={{
-              border: `1px solid ${OS.border}`,
-              background: OS.white,
-              borderRadius: 6,
+              border: `0.5px solid ${dk(darkMode, 'rgba(255,255,255,0.10)', 'rgba(0,0,0,0.12)')}`,
+              background: "transparent",
+              borderRadius: 999,
               padding: "7px 10px",
               fontSize: 12,
-              fontWeight: 600,
-              color: OS.red,
+              fontWeight: 500,
+              color: dk(darkMode, 'rgba(255,255,255,0.55)', OS.secondary),
               cursor: "pointer",
               fontFamily: OS.font,
             }}

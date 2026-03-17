@@ -1,7 +1,8 @@
 import { db } from "@shared/db";
-import { COMMITMENT_REGEX, CHANNEL_FILTER_DEFAULT_ALLOW } from "@shared/constants";
-import type { SlackMessagePayload, SlackWatermarks, GmailMessagePayload } from "@shared/types";
+import { COMMITMENT_REGEX } from "@shared/constants";
+import type { SlackMessagePayload, SlackWatermarks, GmailMessagePayload, ChannelIgnoreEntry } from "@shared/types";
 import { logStatus, updateStatus, getStatus } from "@shared/status";
+import { isChannelIgnored, migrateChannelFilter } from "@shared/channel-filter";
 import { extractCommitments, detectCompletions } from "./extractor";
 
 type BufferedMessage = SlackMessagePayload["messages"][number];
@@ -15,17 +16,19 @@ export async function addMessages(
   const slackSettings = await chrome.storage.local.get("slackEnabled");
   if (slackSettings.slackEnabled === false) return { matched: 0, total: messages.length };
 
+  // Migrate old channel filter format on first call
+  await migrateChannelFilter();
+
   // Filter out messages older than channel watermarks
-  const wmResult = await chrome.storage.local.get(["slackChannelWatermarks", "slackChannelFilter"]);
+  const wmResult = await chrome.storage.local.get(["slackChannelWatermarks", "slackChannelIgnoreList"]);
   const watermarks = (wmResult.slackChannelWatermarks as SlackWatermarks) ?? {};
-  const channelFilter = (wmResult.slackChannelFilter as Record<string, boolean>) ?? {};
+  const ignoreList = (wmResult.slackChannelIgnoreList as ChannelIgnoreEntry[]) ?? [];
   let skippedCount = 0;
   let channelFilteredCount = 0;
 
   const filtered = messages.filter((m) => {
-    // Channel filter: check allow/deny list
-    const channelAllowed = channelFilter[m.channel] ?? CHANNEL_FILTER_DEFAULT_ALLOW;
-    if (!channelAllowed) {
+    // Channel filter: check ignore list
+    if (isChannelIgnored(m.channel, ignoreList)) {
       channelFilteredCount++;
       return false;
     }

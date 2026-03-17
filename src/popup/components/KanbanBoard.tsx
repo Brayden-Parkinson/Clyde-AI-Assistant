@@ -38,6 +38,17 @@ const CUSTOM_PALETTE = ["#6b5fbd", "#3d8a8a", "#a15586", "#3b8c5f", "#c55252", "
 
 const CARD_CAP = 6;
 
+function lightenHex(hex: string, t: number): string {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return `#${Math.round(r + (255 - r) * t).toString(16).padStart(2, "0")}${Math.round(g + (255 - g) * t).toString(16).padStart(2, "0")}${Math.round(b + (255 - b) * t).toString(16).padStart(2, "0")}`;
+}
+
+function dk(dark: boolean | undefined, darkVal: string, lightVal: string): string {
+  return dark ? darkVal : lightVal;
+}
+
 // ─── Ensure "inProgress" row exists in kanban_columns ───
 
 async function ensureInProgressColumn() {
@@ -159,6 +170,7 @@ function KanbanCard({
   onDismissCompletion,
   displaySettings,
   privacyMode,
+  darkMode,
 }: {
   item: Commitment;
   tag?: Tag;
@@ -176,6 +188,7 @@ function KanbanCard({
   onDismissCompletion?: (suggestionId: number, commitmentId: number) => void;
   displaySettings?: CardDisplaySettings;
   privacyMode?: boolean;
+  darkMode?: boolean;
 }) {
   const [hovered, setHovered] = useState(false);
   const cardRef = useRef<HTMLDivElement>(null);
@@ -196,6 +209,7 @@ function KanbanCard({
     ? new Date(item.deadline).toLocaleDateString("en-US", { month: "short", day: "numeric" })
     : null;
   const isUrgent = item.urgency === "high";
+  const isOverdue = !!(item.deadline && new Date(item.deadline).getTime() < Date.now() && item.status !== "done");
   const blurred = !!(privacyMode && item.sensitive);
 
   return (
@@ -207,14 +221,14 @@ function KanbanCard({
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       style={{
-        background: OS.white,
-        border: `1px solid ${completionSuggestion ? OS.green : isSelected ? OS.blue : OS.border}`,
-        borderRadius: 6,
+        background: dk(darkMode, 'rgba(255,255,255,0.06)', OS.white),
+        border: `0.5px solid ${completionSuggestion ? OS.green : isSelected ? OS.blue : hovered ? dk(darkMode, 'rgba(255,255,255,0.18)', OS.secondary) : dk(darkMode, 'rgba(255,255,255,0.10)', OS.border)}`,
+        borderRadius: 12,
+        borderLeft: (isOverdue && !isSelected && !completionSuggestion) ? `2px solid ${OS.red}` : undefined,
         padding: "10px 12px",
         cursor: "grab",
-        transition: "all 0.12s ease",
+        transition: "border 0.12s ease",
         position: "relative",
-        boxShadow: hovered ? "0 1px 4px rgba(0,0,0,0.04)" : "none",
       }}
     >
       {isNew && (
@@ -225,13 +239,13 @@ function KanbanCard({
         }} />
       )}
       <div style={{
-        fontSize: 13, fontWeight: 500, color: OS.text, lineHeight: 1.4,
+        fontSize: 13, fontWeight: 400, color: dk(darkMode, 'rgba(255,255,255,0.90)', OS.text), lineHeight: 1.4,
         filter: blurred ? "blur(5px)" : undefined,
         userSelect: blurred ? "none" : undefined,
       }}>
         {blurred ? "Sensitive commitment" : item.text}
       </div>
-      <div style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 6, fontSize: 11.5, color: OS.muted, flexWrap: "wrap", rowGap: 2 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 6, fontSize: 11.5, color: dk(darkMode, 'rgba(255,255,255,0.45)', OS.muted), flexWrap: "wrap", rowGap: 2 }}>
         {(displaySettings?.showSourceBadges !== false) && (
           <span style={{ display: "inline-flex", alignItems: "center", flexShrink: 0 }}>
             {item.source_type === "slack" ? <IconChat size={12} /> : item.source_type === "gdoc" ? <IconDocument size={12} /> : item.source_type === "gmail" ? <IconMail size={12} /> : <IconMic size={12} />}
@@ -243,18 +257,21 @@ function KanbanCard({
         }}>{item.context}</span>
         {tag && tag.name !== "General" && (
           <span style={{
-            fontSize: 10, fontWeight: 600, padding: "1px 5px",
-            borderRadius: 3, background: tag.color + "18",
-            color: tag.color, lineHeight: 1.5, whiteSpace: "nowrap",
+            fontSize: 10, fontWeight: 500, padding: "1px 6px",
+            borderRadius: 999,
+            background: darkMode ? tag.color + "28" : tag.color + "15",
+            color: darkMode ? lightenHex(tag.color, 0.55) : tag.color,
+            lineHeight: 1.6, whiteSpace: "nowrap",
             flexShrink: 0,
+            border: `0.5px solid ${darkMode ? tag.color + "50" : tag.color + "30"}`,
           }}>
             {tag.name}
           </span>
         )}
         {(displaySettings?.showDeadlines !== false) && deadlineStr && (
           <>
-            <span style={{ color: OS.faint, flexShrink: 0 }}>&middot;</span>
-            <span style={{ color: isUrgent ? OS.red : OS.muted, fontWeight: isUrgent ? 600 : 400, whiteSpace: "nowrap", flexShrink: 0 }}>
+            <span style={{ color: dk(darkMode, 'rgba(255,255,255,0.20)', OS.faint), flexShrink: 0 }}>&middot;</span>
+            <span style={{ color: (isUrgent || isOverdue) ? dk(darkMode, '#F09595', OS.red) : dk(darkMode, 'rgba(255,255,255,0.45)', OS.muted), fontWeight: isUrgent ? 500 : 400, whiteSpace: "nowrap", flexShrink: 0 }}>
               {deadlineStr}
             </span>
           </>
@@ -269,12 +286,12 @@ function KanbanCard({
           style={{
             marginTop: 8,
             padding: "8px 10px",
-            background: OS.bg,
+            background: dk(darkMode, 'rgba(255,255,255,0.04)', OS.bg),
             borderRadius: 5,
-            border: `1px solid ${OS.border}`,
+            border: `1px solid ${dk(darkMode, 'rgba(255,255,255,0.08)', OS.border)}`,
           }}
         >
-          <div style={{ fontSize: 11, fontWeight: 600, color: OS.green, marginBottom: 4 }}>
+          <div style={{ fontSize: 11, fontWeight: 500, color: OS.green, marginBottom: 4 }}>
             Done?
           </div>
           <div style={{ fontSize: 11, color: OS.secondary, fontStyle: "italic", marginBottom: 6, lineHeight: 1.4 }}>
@@ -287,7 +304,7 @@ function KanbanCard({
                 onAcceptCompletion?.(completionSuggestion.id!, completionSuggestion.commitmentId);
               }}
               style={{
-                padding: "3px 10px", fontSize: 11, fontWeight: 600, fontFamily: OS.font,
+                padding: "3px 10px", fontSize: 11, fontWeight: 500, fontFamily: OS.font,
                 background: OS.green, color: "#fff", border: "none", borderRadius: 4,
                 cursor: "pointer",
               }}
@@ -301,7 +318,9 @@ function KanbanCard({
               }}
               style={{
                 padding: "3px 10px", fontSize: 11, fontWeight: 500, fontFamily: OS.font,
-                background: OS.white, color: OS.muted, border: `1px solid ${OS.border}`,
+                background: dk(darkMode, 'rgba(255,255,255,0.06)', OS.white),
+                color: dk(darkMode, 'rgba(255,255,255,0.45)', OS.muted),
+                border: `1px solid ${dk(darkMode, 'rgba(255,255,255,0.10)', OS.border)}`,
                 borderRadius: 4, cursor: "pointer",
               }}
             >
@@ -318,9 +337,10 @@ function KanbanCard({
               onClick={(e) => { e.stopPropagation(); onDone(item.id!); }}
               title="Mark done"
               style={{
-                width: 22, height: 22, borderRadius: 4,
-                border: `1px solid ${OS.border}`, background: OS.white,
-                color: OS.muted, fontSize: 12, cursor: "pointer",
+                width: 22, height: 22, borderRadius: 8,
+                border: `1px solid ${dk(darkMode, 'rgba(255,255,255,0.12)', OS.border)}`,
+                background: dk(darkMode, 'rgba(255,255,255,0.08)', OS.white),
+                color: dk(darkMode, 'rgba(255,255,255,0.55)', OS.muted), fontSize: 12, cursor: "pointer",
                 display: "flex", alignItems: "center", justifyContent: "center",
               }}
             >
@@ -332,9 +352,10 @@ function KanbanCard({
               onClick={(e) => { e.stopPropagation(); onStartWorking(item.id!); }}
               title="Start working"
               style={{
-                width: 22, height: 22, borderRadius: 4,
-                border: `1px solid ${OS.border}`, background: OS.white,
-                color: OS.muted, cursor: "pointer",
+                width: 22, height: 22, borderRadius: 8,
+                border: `1px solid ${dk(darkMode, 'rgba(255,255,255,0.12)', OS.border)}`,
+                background: dk(darkMode, 'rgba(255,255,255,0.08)', OS.white),
+                color: dk(darkMode, 'rgba(255,255,255,0.55)', OS.muted), cursor: "pointer",
                 display: "flex", alignItems: "center", justifyContent: "center",
               }}
             >
@@ -349,7 +370,7 @@ function KanbanCard({
 
 // ─── Sort dropdown ───
 
-function SortDropdown({ sortKey, onSort }: { sortKey: SortKey; onSort: (key: SortKey) => void }) {
+function SortDropdown({ sortKey, onSort, darkMode }: { sortKey: SortKey; onSort: (key: SortKey) => void; darkMode?: boolean }) {
   const [open, setOpen] = useState(false);
   return (
     <div style={{ position: "relative" }}>
@@ -358,10 +379,10 @@ function SortDropdown({ sortKey, onSort }: { sortKey: SortKey; onSort: (key: Sor
         title="Sort column"
         style={{
           display: "inline-flex", alignItems: "center", gap: 3,
-          padding: "2px 6px", fontSize: 10, fontWeight: 600, fontFamily: OS.font,
-          color: sortKey !== "default" ? OS.blue : OS.muted,
-          background: "transparent",
-          border: `1px solid ${OS.border}`,
+          padding: "2px 6px", fontSize: 10, fontWeight: 500, fontFamily: OS.font,
+          color: sortKey !== "default" ? dk(darkMode, '#AFA9EC', OS.blue) : dk(darkMode, 'rgba(255,255,255,0.4)', OS.muted),
+          background: darkMode && sortKey !== "default" ? 'rgba(175,169,236,0.08)' : 'transparent',
+          border: sortKey !== "default" ? `0.5px solid ${dk(darkMode, 'rgba(175,169,236,0.25)', 'rgba(0,0,0,0.12)')}` : `0.5px solid ${dk(darkMode, 'rgba(255,255,255,0.10)', 'rgba(0,0,0,0.12)')}`,
           borderRadius: 4, cursor: "pointer", lineHeight: 1.6,
         }}
       >
@@ -370,8 +391,9 @@ function SortDropdown({ sortKey, onSort }: { sortKey: SortKey; onSort: (key: Sor
       {open && (
         <div style={{
           position: "absolute", top: "100%", right: 0, marginTop: 4,
-          background: OS.white, border: `1px solid ${OS.border}`, borderRadius: 6,
-          boxShadow: "0 4px 12px rgba(0,0,0,0.1)", zIndex: 30, minWidth: 110, overflow: "hidden",
+          background: dk(darkMode, '#1e1e20', OS.white),
+          border: `1px solid ${dk(darkMode, 'rgba(255,255,255,0.10)', OS.border)}`, borderRadius: 6,
+          boxShadow: dk(darkMode, '0 4px 12px rgba(0,0,0,0.4)', '0 4px 12px rgba(0,0,0,0.1)'), zIndex: 30, minWidth: 110, overflow: "hidden",
         }}>
           {sortOptions.map((opt) => (
             <div
@@ -379,13 +401,13 @@ function SortDropdown({ sortKey, onSort }: { sortKey: SortKey; onSort: (key: Sor
               onClick={(e) => { e.stopPropagation(); onSort(opt.key); setOpen(false); }}
               style={{
                 padding: "6px 12px", fontSize: 11,
-                fontWeight: sortKey === opt.key ? 700 : 500,
-                color: sortKey === opt.key ? OS.blue : OS.text,
-                background: sortKey === opt.key ? `${OS.blue}14` : OS.white,
+                fontWeight: sortKey === opt.key ? 500 : 500,
+                color: sortKey === opt.key ? dk(darkMode, '#AFA9EC', OS.blue) : dk(darkMode, 'rgba(255,255,255,0.75)', OS.text),
+                background: sortKey === opt.key ? dk(darkMode, 'rgba(175,169,236,0.12)', `${OS.blue}14`) : dk(darkMode, 'transparent', OS.white),
                 cursor: "pointer", fontFamily: OS.font,
               }}
-              onMouseEnter={(e) => { if (sortKey !== opt.key) e.currentTarget.style.background = OS.bg; }}
-              onMouseLeave={(e) => { if (sortKey !== opt.key) e.currentTarget.style.background = OS.white; }}
+              onMouseEnter={(e) => { if (sortKey !== opt.key) e.currentTarget.style.background = dk(darkMode, 'rgba(255,255,255,0.06)', OS.bg); }}
+              onMouseLeave={(e) => { if (sortKey !== opt.key) e.currentTarget.style.background = dk(darkMode, 'transparent', OS.white); }}
             >
               {opt.label}
             </div>
@@ -430,6 +452,7 @@ function KanbanColumn({
   isNewFn,
   onMarkVisible,
   onMarkHidden,
+  darkMode,
 }: {
   column: KanbanColumnData;
   selectedId: number | null;
@@ -462,11 +485,13 @@ function KanbanColumn({
   isNewFn?: (id: number | undefined, createdAt: string) => boolean;
   onMarkVisible?: (id: number) => void;
   onMarkHidden?: (id: number) => void;
+  darkMode?: boolean;
 }) {
   const [cardDragOver, setCardDragOver] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [editingLabel, setEditingLabel] = useState(false);
   const [labelDraft, setLabelDraft] = useState(column.label);
+  const isOverdueColumn = column.label.toLowerCase() === "overdue" || column.key === "overdue";
 
   const { color } = column;
   const sorted = useMemo(() => sortItems(column.items, sortKey), [column.items, sortKey]);
@@ -502,13 +527,11 @@ function KanbanColumn({
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
       style={{
-        background: cardDragOver ? `${OS.blue}08` : OS.bg,
-        borderRadius: 8,
-        border: isColumnDragOver
-          ? `2px solid ${OS.blue}`
-          : `1px solid ${OS.border}`,
-        padding: 12,
-        minHeight: isNarrow ? undefined : "calc(100vh - 180px)",
+        background: cardDragOver ? dk(darkMode, 'rgba(94,106,210,0.12)', `${OS.blue}08`) : dk(darkMode, 'rgba(255,255,255,0.04)', OS.bg),
+        borderRadius: 12,
+        border: isColumnDragOver ? `1.5px solid ${OS.blue}` : `0.5px solid ${dk(darkMode, 'rgba(255,255,255,0.08)', 'rgba(0,0,0,0.08)')}`,
+        padding: "12px 10px",
+        minHeight: isNarrow ? undefined : "calc(100vh - 140px)",
         display: "flex",
         flexDirection: "column" as const,
         opacity: isBeingDragged ? 0.45 : 1,
@@ -542,7 +565,7 @@ function KanbanColumn({
               title="Drag to reorder"
               style={{
                 cursor: "grab",
-                color: OS.faint,
+                color: dk(darkMode, 'rgba(255,255,255,0.20)', OS.faint),
                 fontSize: 14,
                 lineHeight: 1,
                 userSelect: "none",
@@ -568,18 +591,18 @@ function KanbanColumn({
               }}
               onClick={(e) => e.stopPropagation()}
               style={{
-                fontSize: 13, fontWeight: 700,
-                border: `1px solid ${OS.blue}`, borderRadius: 4,
-                padding: "1px 6px", background: OS.white,
-                outline: "none", fontFamily: OS.font, width: 90, color: OS.text,
+                fontSize: 13, fontWeight: 500,
+                border: `1px solid ${OS.blue}`, borderRadius: 8,
+                padding: "1px 6px", background: dk(darkMode, '#2a2a2c', OS.white),
+                outline: "none", fontFamily: OS.font, width: 90, color: dk(darkMode, 'rgba(255,255,255,0.85)', OS.text),
               }}
             />
           ) : (
             <span
               style={{
-                fontSize: 13,
-                fontWeight: 700,
-                color: OS.text,
+                fontSize: 12,
+                fontWeight: 500,
+                color: isOverdueColumn ? dk(darkMode, '#F09595', OS.red) : dk(darkMode, 'rgba(255,255,255,0.55)', OS.secondary),
                 cursor: isReorderable ? "text" : "default",
               }}
               onDoubleClick={isReorderable ? () => { setEditingLabel(true); setLabelDraft(column.label); } : undefined}
@@ -590,10 +613,10 @@ function KanbanColumn({
           )}
 
           <span style={{
-            fontSize: 11, fontWeight: 500, fontFamily: OS.mono,
-            color: OS.muted,
-            padding: "1px 6px", borderRadius: 4,
-            background: `${color}0c`,
+            fontSize: 10, fontWeight: 500, fontFamily: OS.mono,
+            color: isOverdueColumn ? dk(darkMode, '#F7C1C1', OS.red) : dk(darkMode, 'rgba(255,255,255,0.5)', OS.muted),
+            padding: "1px 6px", borderRadius: 999,
+            background: isOverdueColumn ? dk(darkMode, '#501313', `${OS.red}10`) : dk(darkMode, 'rgba(255,255,255,0.08)', OS.border),
             display: "inline-flex", alignItems: "center", justifyContent: "center",
           }}>
             {column.items.length}
@@ -602,11 +625,11 @@ function KanbanColumn({
 
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           {!isNarrow && column.items.length > 1 && (
-            <SortDropdown sortKey={sortKey} onSort={onSortChange} />
+            <SortDropdown sortKey={sortKey} onSort={onSortChange} darkMode={darkMode} />
           )}
           {isNarrow && (
             <span style={{
-              color: OS.muted, display: "inline-flex",
+              color: dk(darkMode, 'rgba(255,255,255,0.35)', OS.muted), display: "inline-flex",
               transform: collapsed ? "rotate(-90deg)" : "rotate(0deg)",
               transition: "transform 0.15s ease",
             }}>
@@ -627,7 +650,7 @@ function KanbanColumn({
           {sorted.length === 0 && (
             <div style={{
               textAlign: "center", padding: "24px 8px",
-              fontSize: 12, color: OS.muted, fontStyle: "italic",
+              fontSize: 12, color: dk(darkMode, 'rgba(255,255,255,0.25)', OS.muted), fontStyle: "italic",
             }}>
               {column.key === "todo" ? "Nothing here yet."
                 : column.key === "done" ? "Nothing completed yet."
@@ -653,14 +676,15 @@ function KanbanColumn({
               onDismissCompletion={onDismissCompletion}
               displaySettings={displaySettings}
               privacyMode={privacyMode}
+              darkMode={darkMode}
             />
           ))}
           {hiddenCount > 0 && (
             <button
               onClick={() => setExpanded(true)}
               style={{
-                border: `1px dashed ${OS.border}`, background: "transparent",
-                color: OS.muted, borderRadius: 8, padding: 10,
+                border: `1px dashed ${dk(darkMode, 'rgba(255,255,255,0.12)', OS.border)}`, background: "transparent",
+                color: dk(darkMode, 'rgba(255,255,255,0.4)', OS.muted), borderRadius: 8, padding: 10,
                 textAlign: "center", fontSize: 12, fontWeight: 500,
                 fontFamily: OS.font, cursor: "pointer",
               }}
@@ -699,6 +723,7 @@ interface KanbanBoardProps {
   isNewFn?: (id: number | undefined, createdAt: string) => boolean;
   onMarkVisible?: (id: number) => void;
   onMarkHidden?: (id: number) => void;
+  darkMode?: boolean;
 }
 
 export function KanbanBoard({
@@ -722,6 +747,7 @@ export function KanbanBoard({
   isNewFn,
   onMarkVisible,
   onMarkHidden,
+  darkMode,
 }: KanbanBoardProps) {
   const [draggedId, setDraggedId] = useState<number | null>(null);
   const [collapsedCols, setCollapsedCols] = useState<Set<string>>(new Set());
@@ -977,6 +1003,7 @@ export function KanbanBoard({
     isNewFn,
     onMarkVisible,
     onMarkHidden,
+    darkMode,
   };
 
   return (
