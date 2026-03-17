@@ -1939,8 +1939,34 @@ export default function App() {
           <div style={{ padding: (viewMode === "board" || viewMode === "devlog") ? "12px 16px" : 0 }}>
 
             {/* Board view */}
-            {hasApiKey !== false && viewMode === "board" && (
+            {viewMode === "board" && (
               <>
+                {hasApiKey === false && (
+                  <div style={{
+                    margin: "0 0 10px 0", padding: "10px 14px",
+                    background: darkMode ? "rgba(255,200,0,0.08)" : OS.yellowBg,
+                    border: `1px solid ${darkMode ? "rgba(255,200,0,0.2)" : OS.yellowBorder}`,
+                    borderRadius: 8, display: "flex", alignItems: "center",
+                    justifyContent: "space-between", gap: 10,
+                  }}>
+                    <span style={{ fontSize: 12, color: darkMode ? "#e8c84a" : OS.yellowText, fontFamily: OS.font }}>
+                      No API key — new items won't be extracted.
+                    </span>
+                    <button
+                      onClick={() => setViewMode("settings")}
+                      style={{
+                        fontSize: 11, fontWeight: 600, fontFamily: OS.font,
+                        padding: "4px 10px", borderRadius: 6, cursor: "pointer",
+                        background: "transparent",
+                        border: `1px solid ${darkMode ? "rgba(255,200,0,0.3)" : OS.yellowBorder}`,
+                        color: darkMode ? "#e8c84a" : OS.yellowText,
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      Add key →
+                    </button>
+                  </div>
+                )}
                 <FilterBubbles
                   search={boardSearch}
                   onSearchChange={setBoardSearch}
