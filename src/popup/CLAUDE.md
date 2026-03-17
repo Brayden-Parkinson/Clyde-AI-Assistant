@@ -1,26 +1,28 @@
-# src/popup/ — React Triage Inbox
+# src/popup/ — React 18 UI
 
-React 18 app rendered in Chrome popup (400px wide) and side panel (wider).
+React 18 app rendered in Chrome popup and side panel. Wide-screen mode adds a left sidebar nav.
 
-## Files
-- `App.tsx` — Main layout: sticky header, filters, card list, empty state, toast
-- `components/` — CommitmentCard, ActionButton, FilterBar, LearnedPatterns, StatBar, Toast
-- `hooks/useCommitments.ts` — Dexie `useLiveQuery` for reactive data
-- `hooks/useActions.ts` — Action handlers (calendar, dismiss, done, snooze, reminder, slack)
-- `hooks/useSettings.ts` — Settings read/write
+## Key Files
+- `App.tsx` — Main layout, view routing, all state, LeftNav, renderCard
+- `components/CommitmentCard.tsx` — Expandable card with actions, meta-edit, Phase 2 buttons
+- `components/ActionQueue.tsx` — Pending action proposals with approve/dismiss flow
+- `components/DraftComposer.tsx` — Message editor with tone selector, regenerate, send bar
+- `components/PeoplePanel.tsx` — Contact list with open-commitment counts, follow-up drafting
+- `components/ClydeChat.tsx` — AI chat with tool use (create, search, draft, follow-up, Linear)
+- `components/DailyPlanner.tsx` — Morning brief + daily planning view
+- `hooks/useActions.ts` — Commitment action handlers (done, snooze, calendar, slack, etc.)
+
+## ViewMode
+`"list" | "board" | "brief" | "devlog" | "settings" | "chat" | "people" | "memory" | "insights" | "okrs" | "queue" | "draft"`
 
 ## Rules
-- **Inline styles only** — use `OS` tokens from `@shared/tokens`, no CSS files
+- **Inline styles only** — `OS` tokens from `@shared/tokens`, no CSS files, no hardcoded hex
 - **Match UI_REFERENCE.jsx** — that file is the pixel-perfect design spec
-- Cards sorted: urgency (high→low), then confidence (desc)
-- `useLiveQuery` from `dexie-react-hooks` for reactive IndexedDB reads
-- Side panel (`src/sidepanel/`) imports and renders this same App component
-- Changes here **hot-reload automatically** — no manual reload needed
+- `useLiveQuery` from `dexie-react-hooks` for all reactive IndexedDB reads
+- Changes hot-reload automatically in dev mode
 
-## Demo Mode Rules
-- `demoMode` boolean is read from `chrome.storage.local` and stored in App.tsx state
-- All data sources switch: `demoMode ? DEMO_X : realX` — new features MUST follow this
-- New `useLiveQuery` calls that feed UI must be gated: `demoMode ? DEMO_X : liveData`
-- Any action that writes to DB or storage must check `if (demoMode) return` (show a toast instead)
-- Add demo fixtures to `src/shared/demo-data.ts` if a new data type is added
-- `SetupWizard.tsx` is shown in demo mode — it skips all storage via `if (demoMode) return`
+## Demo Mode
+- `demoMode` boolean from `chrome.storage.local`, held in App.tsx state
+- All data sources: `demoMode ? DEMO_X : liveData` — new features MUST follow this
+- Writes to DB/storage: `if (demoMode) return` (show a toast instead)
+- Add `DEMO_*` fixtures to `src/shared/demo-data.ts` for any new data type

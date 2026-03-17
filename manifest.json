@@ -10,13 +10,20 @@
     "sidePanel",
     "tabs",
     "nativeMessaging",
-    "scripting"
+    "scripting",
+    "identity"
   ],
   "host_permissions": [
     "https://app.slack.com/*",
     "https://*.slack.com/*",
     "https://docs.google.com/*",
-    "https://api.anthropic.com/*"
+    "https://mail.google.com/*",
+    "https://api.anthropic.com/*",
+    "https://www.googleapis.com/*",
+    "https://accounts.google.com/*",
+    "https://slack.com/api/*",
+    "https://gmail.googleapis.com/*",
+    "https://api.linear.app/*"
   ],
   "background": {
     "service_worker": "src/background/service-worker.ts",
@@ -31,6 +38,11 @@
     {
       "matches": ["https://docs.google.com/document/*"],
       "js": ["src/content/google-docs.ts"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://mail.google.com/*"],
+      "js": ["src/content/gmail.ts"],
       "run_at": "document_idle"
     }
   ],

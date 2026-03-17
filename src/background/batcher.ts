@@ -1,6 +1,6 @@
 import { db } from "@shared/db";
 import { COMMITMENT_REGEX, CHANNEL_FILTER_DEFAULT_ALLOW } from "@shared/constants";
-import type { SlackMessagePayload, SlackWatermarks } from "@shared/types";
+import type { SlackMessagePayload, SlackWatermarks, GmailMessagePayload } from "@shared/types";
 import { logStatus, updateStatus, getStatus } from "@shared/status";
 import { extractCommitments, detectCompletions } from "./extractor";
 
@@ -69,7 +69,7 @@ export async function addMessages(
   // Still store raw messages for audit trail
   for (const msg of filtered) {
     const isGdoc = !msg.channel_id && msg.slack_link?.includes("docs.google.com");
-    db.raw_messages.add({
+    await db.raw_messages.add({
       source_type: isGdoc ? "gdoc" : "slack",
       sourceId: `${msg.channel}-${msg.timestamp}`,
       text: msg.text,
@@ -77,7 +77,7 @@ export async function addMessages(
       context: msg.channel,
       timestamp: msg.timestamp,
       capturedAt: new Date().toISOString(),
-    });
+    }).catch(() => {}); // Ignore duplicate sourceId constraint violations
   }
 
   // Schedule flush
@@ -138,4 +138,101 @@ export async function getBufferSize(): Promise<number> {
 async function getPersistedBuffer(): Promise<BufferedMessage[]> {
   const result = await chrome.storage.session.get(BUFFER_KEY);
   return (result[BUFFER_KEY] as BufferedMessage[]) ?? [];
+}
+
+// ─── Gmail Buffer ───
+
+const GMAIL_BUFFER_KEY = "gmailBatcherBuffer";
+const GMAIL_BATCH_ALARM = "gmail-batcher-flush";
+const MAX_GMAIL_BUFFER = 500;
+
+type GmailRawMessage = GmailMessagePayload["messages"][number];
+
+export async function addGmailMessages(msgs: GmailMessagePayload["messages"]): Promise<void> {
+  // Layer 7: gmailEnabled gate
+  const { gmailEnabled } = await chrome.storage.local.get("gmailEnabled");
+  if (!gmailEnabled) return;
+
+  if (msgs.length === 0) return;
+
+  // Map Gmail messages to the shared BufferedMessage format
+  const mapped: BufferedMessage[] = msgs.map((m: GmailRawMessage) => ({
+    text: m.text,
+    sender: m.sender,
+    channel: m.subject || m.threadId, // subject acts as "channel" context
+    timestamp: m.timestamp,
+    isMine: m.isMine,
+    mentionsMe: m.mentionsMe,
+    reactions: m.reactions,
+    channel_id: m.threadId || null,
+    message_ts: m.messageId || null,
+    slack_link: m.gmail_link,
+    thread_ts: m.threadId || null,
+    is_thread_reply: false,
+  }));
+
+  const existing = await getGmailBuffer();
+  existing.push(...mapped);
+  // Cap buffer to prevent session storage overflow
+  const capped = existing.length > MAX_GMAIL_BUFFER
+    ? existing.slice(existing.length - MAX_GMAIL_BUFFER)
+    : existing;
+  await chrome.storage.session.set({ [GMAIL_BUFFER_KEY]: capped });
+
+  // Update pipeline status counters so the status dashboard reflects Gmail activity
+  const status = await getStatus();
+  await updateStatus({
+    totalMessagesReceived: status.totalMessagesReceived + mapped.length,
+    bufferedMessages: capped.length,
+  });
+
+  // Store raw messages for audit trail
+  for (const m of mapped) {
+    await db.raw_messages.add({
+      source_type: "gmail",
+      sourceId: `${m.channel_id}-${m.message_ts}`,
+      text: m.text,
+      sender: m.sender,
+      context: m.channel,
+      timestamp: m.timestamp,
+      capturedAt: new Date().toISOString(),
+    }).catch(() => {}); // Ignore constraint errors (duplicate sourceId)
+  }
+
+  await logStatus("info", "batcher", `Buffered ${mapped.length} Gmail messages`);
+
+  // Schedule flush
+  const existingAlarm = await chrome.alarms.get(GMAIL_BATCH_ALARM);
+  if (!existingAlarm) {
+    chrome.alarms.create(GMAIL_BATCH_ALARM, { delayInMinutes: 2 });
+  }
+}
+
+export async function flushGmail(): Promise<void> {
+  const buffer = await getGmailBuffer();
+
+  if (buffer.length === 0) {
+    await logStatus("info", "batcher", "Gmail flush called but buffer is empty");
+    return;
+  }
+
+  const candidates = buffer.filter((m) => COMMITMENT_REGEX.test(m.text));
+  const contextMessages = buffer.filter((m) => !COMMITMENT_REGEX.test(m.text));
+
+  await logStatus("info", "batcher", `Gmail flush: ${candidates.length} candidates, ${contextMessages.length} context`);
+
+  await chrome.storage.session.remove(GMAIL_BUFFER_KEY);
+  await chrome.alarms.clear(GMAIL_BATCH_ALARM);
+
+  if (candidates.length === 0) {
+    await logStatus("info", "batcher", "No Gmail commitment candidates — skipping extraction");
+    return;
+  }
+
+  await extractCommitments(candidates, contextMessages, "gmail");
+}
+
+async function getGmailBuffer(): Promise<BufferedMessage[]> {
+  const result = await chrome.storage.session.get(GMAIL_BUFFER_KEY);
+  return (result[GMAIL_BUFFER_KEY] as BufferedMessage[]) ?? [];
 }

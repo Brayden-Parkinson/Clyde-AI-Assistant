@@ -29,6 +29,7 @@ function applyFilter(items: Commitment[], filter: FilterKey): Commitment[] {
     if (filter === "meetings") return c.source_type === "meeting";
     if (filter === "slack") return c.source_type === "slack";
     if (filter === "gdoc") return c.source_type === "gdoc";
+    if (filter === "gmail") return c.source_type === "gmail";
     return true;
   });
 }

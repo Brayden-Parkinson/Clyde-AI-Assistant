@@ -1,10 +1,10 @@
-import React, { useState, useCallback, useMemo, useEffect } from "react";
+import React, { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { OS } from "@shared/tokens";
 import type { Commitment, CompletionSuggestion, Tag } from "@shared/types";
 import type { Actions } from "../hooks/useActions";
 import { db } from "@shared/db";
-import { IconChat, IconDocument, IconMic, IconCheck, IconPlay, IconSort, IconChevronDown } from "./Icons";
+import { IconChat, IconDocument, IconMic, IconMail, IconCheck, IconPlay, IconSort, IconChevronDown } from "./Icons";
 
 // ─── Column types ───
 
@@ -146,11 +146,14 @@ function KanbanCard({
   item,
   tag,
   isSelected,
+  isNew,
   verboseMode,
   onSelect,
   onDone,
   onStartWorking,
   onDragStart,
+  onVisible,
+  onHidden,
   completionSuggestion,
   onAcceptCompletion,
   onDismissCompletion,
@@ -160,11 +163,14 @@ function KanbanCard({
   item: Commitment;
   tag?: Tag;
   isSelected: boolean;
+  isNew?: boolean;
   verboseMode: boolean;
   onSelect: (id: number) => void;
   onDone: (id: number) => void;
   onStartWorking: (id: number) => void;
   onDragStart: (e: React.DragEvent, id: number) => void;
+  onVisible?: () => void;
+  onHidden?: () => void;
   completionSuggestion?: CompletionSuggestion;
   onAcceptCompletion?: (suggestionId: number, commitmentId: number) => void;
   onDismissCompletion?: (suggestionId: number, commitmentId: number) => void;
@@ -172,6 +178,19 @@ function KanbanCard({
   privacyMode?: boolean;
 }) {
   const [hovered, setHovered] = useState(false);
+  const cardRef = useRef<HTMLDivElement>(null);
+
+  // Intersection observer for visibility tracking (new indicator)
+  useEffect(() => {
+    if (!isNew || !onVisible || !onHidden || !cardRef.current) return;
+    const el = cardRef.current;
+    const observer = new IntersectionObserver(
+      ([entry]) => { entry.isIntersecting ? onVisible() : onHidden(); },
+      { threshold: 0.5 },
+    );
+    observer.observe(el);
+    return () => { observer.disconnect(); onHidden(); };
+  }, [isNew, onVisible, onHidden]);
 
   const deadlineStr = item.deadline
     ? new Date(item.deadline).toLocaleDateString("en-US", { month: "short", day: "numeric" })
@@ -181,6 +200,7 @@ function KanbanCard({
 
   return (
     <div
+      ref={cardRef}
       draggable
       onDragStart={(e) => item.id != null && onDragStart(e, item.id)}
       onClick={() => item.id != null && onSelect(item.id)}
@@ -197,6 +217,13 @@ function KanbanCard({
         boxShadow: hovered ? "0 1px 4px rgba(0,0,0,0.04)" : "none",
       }}
     >
+      {isNew && (
+        <div style={{
+          position: "absolute", top: 6, right: 6,
+          width: 7, height: 7, borderRadius: "50%",
+          background: OS.blue,
+        }} />
+      )}
       <div style={{
         fontSize: 13, fontWeight: 500, color: OS.text, lineHeight: 1.4,
         filter: blurred ? "blur(5px)" : undefined,
@@ -207,7 +234,7 @@ function KanbanCard({
       <div style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 6, fontSize: 11.5, color: OS.muted, flexWrap: "wrap", rowGap: 2 }}>
         {(displaySettings?.showSourceBadges !== false) && (
           <span style={{ display: "inline-flex", alignItems: "center", flexShrink: 0 }}>
-            {item.source_type === "slack" ? <IconChat size={12} /> : item.source_type === "gdoc" ? <IconDocument size={12} /> : <IconMic size={12} />}
+            {item.source_type === "slack" ? <IconChat size={12} /> : item.source_type === "gdoc" ? <IconDocument size={12} /> : item.source_type === "gmail" ? <IconMail size={12} /> : <IconMic size={12} />}
           </span>
         )}
         <span style={{
@@ -400,6 +427,9 @@ function KanbanColumn({
   displaySettings,
   privacyMode,
   tagMap,
+  isNewFn,
+  onMarkVisible,
+  onMarkHidden,
 }: {
   column: KanbanColumnData;
   selectedId: number | null;
@@ -429,6 +459,9 @@ function KanbanColumn({
   displaySettings?: CardDisplaySettings;
   privacyMode?: boolean;
   tagMap?: Map<number, Tag>;
+  isNewFn?: (id: number | undefined, createdAt: string) => boolean;
+  onMarkVisible?: (id: number) => void;
+  onMarkHidden?: (id: number) => void;
 }) {
   const [cardDragOver, setCardDragOver] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -607,11 +640,14 @@ function KanbanColumn({
               item={item}
               tag={item.tag_id != null ? tagMap?.get(item.tag_id) : undefined}
               isSelected={selectedId === item.id}
+              isNew={isNewFn?.(item.id, item.createdAt)}
               verboseMode={verboseMode}
               onSelect={onSelect}
               onDone={onDone}
               onStartWorking={onStartWorking}
               onDragStart={onDragStart}
+              onVisible={item.id != null ? () => onMarkVisible?.(item.id!) : undefined}
+              onHidden={item.id != null ? () => onMarkHidden?.(item.id!) : undefined}
               completionSuggestion={item.id != null ? suggestionByCommitmentId?.get(item.id) : undefined}
               onAcceptCompletion={onAcceptCompletion}
               onDismissCompletion={onDismissCompletion}
@@ -660,6 +696,9 @@ interface KanbanBoardProps {
   privacyMode?: boolean;
   onTodoOverflow?: (count: number) => void;
   tagMap?: Map<number, Tag>;
+  isNewFn?: (id: number | undefined, createdAt: string) => boolean;
+  onMarkVisible?: (id: number) => void;
+  onMarkHidden?: (id: number) => void;
 }
 
 export function KanbanBoard({
@@ -680,6 +719,9 @@ export function KanbanBoard({
   privacyMode,
   onTodoOverflow,
   tagMap,
+  isNewFn,
+  onMarkVisible,
+  onMarkHidden,
 }: KanbanBoardProps) {
   const [draggedId, setDraggedId] = useState<number | null>(null);
   const [collapsedCols, setCollapsedCols] = useState<Set<string>>(new Set());
@@ -879,14 +921,16 @@ export function KanbanBoard({
   }, []);
 
   const handleRenameColumn = useCallback(async (id: string, label: string) => {
+    if (demoMode) return;
     if (label.trim()) await db.kanban_columns.update(id, { label: label.trim() });
-  }, []);
+  }, [demoMode]);
 
   const handleDeleteColumn = useCallback(async (id: string) => {
+    if (demoMode) return;
     if (id === "inProgress") return;
     await db.kanban_assignments.where("column_id").equals(id).delete();
     await db.kanban_columns.delete(id);
-  }, []);
+  }, [demoMode]);
 
   // ─── Shared column props ───
 
@@ -930,6 +974,9 @@ export function KanbanBoard({
     displaySettings,
     privacyMode,
     tagMap,
+    isNewFn,
+    onMarkVisible,
+    onMarkHidden,
   };
 
   return (

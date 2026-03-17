@@ -5,7 +5,7 @@ export type Urgency = "high" | "medium" | "low";
 export type CommitmentStatus = "new" | "snoozed" | "actioned" | "done" | "dismissed";
 
 /** Where the commitment was captured from */
-export type SourceType = "meeting" | "slack" | "gdoc" | "voice";
+export type SourceType = "meeting" | "slack" | "gdoc" | "voice" | "gmail";
 
 /** A smart tag for grouping commitments by theme */
 export interface Tag {
@@ -105,7 +105,7 @@ export interface Dismissal {
 export interface ActionLogEntry {
   id?: number;
   commitmentId: number;
-  action: "calendar" | "reminder" | "slack" | "snooze" | "done" | "dismissed" | "started";
+  action: "calendar" | "reminder" | "slack" | "snooze" | "done" | "dismissed" | "started" | "send_message" | "block_time" | "create_meeting";
   createdAt: string;
 }
 
@@ -133,6 +133,23 @@ export interface SlackMessagePayload {
     thread_ts: string | null;
     /** True if this message is a reply in a thread */
     is_thread_reply: boolean;
+  }>;
+}
+
+/** Message payload sent from Gmail content script to background */
+export interface GmailMessagePayload {
+  type: "GMAIL_MESSAGES";
+  messages: Array<{
+    text: string;
+    sender: string;
+    subject: string;
+    timestamp: string;
+    isMine: boolean;
+    mentionsMe: boolean;
+    reactions: string[];
+    threadId: string;
+    messageId: string;
+    gmail_link: string | null;
   }>;
 }
 
@@ -313,5 +330,292 @@ export interface MorningBrief {
   suggestedMoves: BriefSuggestedMove[];
   dismissed: boolean;
   snoozedUntil: string | null;
+  /** People context for attendees in today's meetings */
+  peopleContext?: BriefPersonContext[];
+  /** Planning state: user's intention for the day */
+  planningState?: "pending" | "planned" | "reviewed";
+  /** User's stated intention for the day */
+  dayIntention?: string | null;
+  /** Reference to the EOD review for this day */
+  eodReview?: number | null;
   createdAt: string;
 }
+
+// ─── Phase 1: PA Smart Assistant ───
+
+/** Person context included in a morning brief */
+export interface BriefPersonContext {
+  name: string;
+  relationship: string | null;
+  meetingTitle: string | null;
+  openCommitments: number;
+}
+
+/** Cached Google Calendar event */
+export interface CalendarEvent {
+  id?: number;
+  /** Google Calendar event ID for dedup */
+  googleEventId: string;
+  title: string;
+  startTime: string;
+  endTime: string;
+  attendees: string[];
+  isAllDay: boolean;
+  status: "confirmed" | "tentative" | "cancelled";
+  fetchedAt: string;
+}
+
+/** Contact graph node — a person the user interacts with */
+export interface Person {
+  id?: number;
+  name: string;
+  email: string | null;
+  relationship: "manager" | "report" | "peer" | "stakeholder" | "external" | null;
+  notes: string | null;
+  commitmentCount: number;
+  lastSeenAt: string;
+  channels: string[];
+  createdAt: string;
+}
+
+/** Chat conversation metadata */
+export interface ChatSession {
+  id?: number;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Persisted chat message */
+export interface ChatMessageRecord {
+  id?: number;
+  sessionId: number;
+  role: "user" | "assistant";
+  content: string;
+  /** Serialized JSON string of snapshot data (tool results, etc.) */
+  snapshots: string | null;
+  createdAt: string;
+}
+
+/** EOD daily review */
+export interface DailyReview {
+  id?: number;
+  /** YYYY-MM-DD */
+  date: string;
+  completedItems: number[];
+  reflection: string;
+  userNotes: string | null;
+  createdAt: string;
+}
+
+/** Stored Google OAuth tokens */
+export interface GoogleAuthTokens {
+  accessToken: string;
+  refreshToken: string;
+  expiresAt: number;
+  scope: string;
+}
+
+// ─── Phase 3: Long-Term Memory ───
+
+/** Categories for long-term memory entries */
+export type MemoryCategory =
+  | "preference"
+  | "fact"
+  | "pattern"
+  | "project"
+  | "relationship"
+  | "lesson"
+  | "context";
+
+/** How a memory was created */
+export type MemorySource = "ai_extraction" | "user_manual" | "pattern_detection";
+
+/** A long-term memory entry distilled from commitment history */
+export interface MemoryEntry {
+  id?: number;
+  content: string;
+  category: MemoryCategory;
+  importance: number;
+  source: MemorySource;
+  evidenceIds: number[];
+  lastReinforced: string;
+  reinforceCount: number;
+  confirmed: boolean;
+  expiresAt: string | null;
+  createdAt: string;
+}
+
+// ─── Phase 3: Work Patterns ───
+
+export type WorkPatternType =
+  | "time_allocation"
+  | "completion_rate"
+  | "deadline_adherence"
+  | "procrastination"
+  | "overcommitment"
+  | "bottleneck"
+  | "priority_mismatch";
+
+export interface WorkPattern {
+  id?: number;
+  description: string;
+  type: WorkPatternType;
+  evidenceIds: number[];
+  confidence: number;
+  sentiment: "positive" | "neutral" | "concerning";
+  suggestion: string | null;
+  acknowledged: boolean;
+  detectedWeek: string;
+  createdAt: string;
+}
+
+export interface WeeklyDigest {
+  id?: number;
+  weekStart: string;
+  completed: number;
+  added: number;
+  overdue: number;
+  patterns: WorkPattern[];
+  summary: string;
+  suggestedFocus: string[];
+  createdAt: string;
+}
+
+// ─── Phase 3: OKRs ───
+
+export interface KeyResult {
+  text: string;
+  progress: number;
+}
+
+export interface OKR {
+  id?: number;
+  objective: string;
+  keyResults: KeyResult[];
+  period: string;
+  rank: number;
+  alignedCount: number;
+  source: "user" | "ai_suggested";
+  active: boolean;
+  createdAt: string;
+}
+
+export type OKRAlignment = "directly_supports" | "indirectly_supports" | "blocks" | "unrelated";
+
+export interface CommitmentOKRLink {
+  id?: number;
+  commitmentId: number;
+  okrId: number;
+  alignment: OKRAlignment;
+  source: "ai" | "user";
+  createdAt: string;
+}
+
+// ─── Phase 3: Sync Foundation ───
+
+export interface SyncConfig {
+  enabled: boolean;
+  deviceId: string;
+  serverUrl: string;
+  authToken: string;
+  lastSyncAt: string | null;
+  syncScope: SyncScope;
+}
+
+export interface SyncScope {
+  commitments: boolean;
+  memories: boolean;
+  okrs: boolean;
+  contacts: boolean;
+  settings: boolean;
+}
+
+export interface SyncEnvelope {
+  id?: number;
+  op: "put" | "delete";
+  table: string;
+  payload: Record<string, unknown>;
+  timestamp: string;
+  deviceId: string;
+}
+
+// ─── Phase 2: Action Execution Framework ───
+
+/** The type of external action a proposal represents */
+export type ActionType =
+  | "send_message"        // Draft + send via Slack or Gmail
+  | "block_time"          // Create a Google Calendar time block
+  | "create_meeting";     // Create a Google Calendar event with attendees
+
+/** Lifecycle state of an ActionProposal */
+export type ActionProposalStatus =
+  | "pending"    // Awaiting user approval — NOTHING has been sent
+  | "approved"   // User approved, execution queued
+  | "executing"  // Service worker is running it
+  | "completed"  // Successfully executed
+  | "failed"     // Execution error (see errorMessage)
+  | "dismissed"; // User rejected it
+
+/** A proposed external action awaiting user approval before execution */
+export interface ActionProposal {
+  id?: number;
+  /** FK to commitments.id */
+  commitmentId: number;
+  type: ActionType;
+  status: ActionProposalStatus;
+  /** Human-readable description: "Send follow-up to Sarah in #engineering" */
+  description: string;
+  /** Serialized JSON payload — shape depends on ActionType */
+  payload: string;
+  /** Result message after successful execution */
+  resultMessage: string | null;
+  /** Error message if status === "failed" */
+  errorMessage: string | null;
+  /** What triggered this proposal */
+  source: "follow_up_engine" | "clyde_chat" | "manual";
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ─── Phase 2: Message Drafting ───
+
+export type DraftPlatform = "slack" | "gmail";
+export type DraftTone = "professional" | "casual" | "brief" | "apologetic";
+
+/** A Claude-generated draft message stored before sending */
+export interface DraftMessage {
+  id?: number;
+  /** FK to commitments.id */
+  commitmentId: number;
+  /** FK to action_proposals.id — null if standalone draft */
+  proposalId: number | null;
+  platform: DraftPlatform;
+  /** Slack channel (e.g. #engineering) or email address */
+  recipient: string;
+  /** Email subject — null for Slack */
+  subject: string | null;
+  body: string;
+  tone: DraftTone;
+  /** "pending" = not sent, "sent" = executed, "discarded" = thrown away */
+  status: "pending" | "sent" | "discarded";
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ─── Phase 2: Follow-Up Rules ───
+
+/** A rule that triggers proactive follow-up nudges for a commitment */
+export interface FollowUpRule {
+  id?: number;
+  /** FK to commitments.id */
+  commitmentId: number;
+  /** ISO datetime — when the follow-up engine should next check this */
+  checkAt: string;
+  /** How many times this rule has already fired */
+  fireCount: number;
+  /** "active" = monitoring, "paused" = suppressed, "completed" = commitment done */
+  status: "active" | "paused" | "completed";
+  createdAt: string;
+}
+

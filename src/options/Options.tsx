@@ -27,9 +27,13 @@ interface FormState {
   calendarIcsUrl: string;
   voiceInboxEnabled: boolean;
   googleDocsEnabled: boolean;
+  gmailEnabled: boolean;
   slackEnabled: boolean;
   granolaEnabled: boolean;
   calendarEnabled: boolean;
+  // Phase 2: external integration tokens (stored like anthropicApiKey)
+  slackBotToken: string;
+  nudgeEnabled: boolean;
 }
 
 const DEFAULT_FORM: FormState = {
@@ -51,9 +55,12 @@ const DEFAULT_FORM: FormState = {
   calendarIcsUrl: "",
   voiceInboxEnabled: false,
   googleDocsEnabled: false,
+  gmailEnabled: false,
   slackEnabled: true,
   granolaEnabled: true,
   calendarEnabled: true,
+  slackBotToken: "",
+  nudgeEnabled: true,
 };
 
 type SettingsTab = "profile" | "integrations" | "detection" | "advanced";
@@ -265,6 +272,9 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
   const [newTagLabel, setNewTagLabel] = useState("");
   const [editingTagId, setEditingTagId] = useState<number | null>(null);
   const [editingTagLabel, setEditingTagLabel] = useState("");
+  const [googleClientId, setGoogleClientId] = useState("");
+  const [googleConnected, setGoogleConnected] = useState(false);
+  const [googleOAuthLoading, setGoogleOAuthLoading] = useState(false);
 
   // ─── Load settings from chrome.storage.local ───
 
@@ -290,6 +300,7 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
         "calendarIcsUrl",
         "voiceInboxEnabled",
         "googleDocsEnabled",
+        "gmailEnabled",
         "slackEnabled",
         "granolaEnabled",
         "calendarEnabled",
@@ -324,9 +335,12 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
           calendarIcsUrl: result.calendarIcsUrl ?? "",
           voiceInboxEnabled: result.voiceInboxEnabled === true,
           googleDocsEnabled: result.googleDocsEnabled === true,
+          gmailEnabled: result.gmailEnabled === true,
           slackEnabled: result.slackEnabled !== false,
           granolaEnabled: result.granolaEnabled !== false,
           calendarEnabled: result.calendarEnabled !== false,
+          slackBotToken: result.slackBotToken ?? "",
+          nudgeEnabled: result.nudgeEnabled !== false,
         }));
         if (result.confidenceTuneInfo) {
           setTuneInfo(result.confidenceTuneInfo as { lastChecked: string; dismissRate: number; totalSamples: number });
@@ -358,6 +372,13 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
     chrome.runtime.sendMessage({ type: "GRANOLA_STATUS" }).then((res) => {
       if (res?.connected) setGranolaConnected(true);
     }).catch(() => {});
+
+    // Load Google OAuth state
+    chrome.storage.local.get(["googleClientId", "googleAuthTokens"]).then((res) => {
+      if (res.googleClientId) setGoogleClientId(res.googleClientId as string);
+      const tokens = res.googleAuthTokens as { accessToken?: string; refreshToken?: string } | undefined;
+      setGoogleConnected(!!(tokens?.accessToken && tokens?.refreshToken));
+    });
   }, []);
 
   // ─── Estimate daily API cost from action_log count ───
@@ -403,9 +424,12 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
         calendarIcsUrl: formData.calendarIcsUrl,
         voiceInboxEnabled: formData.voiceInboxEnabled,
         googleDocsEnabled: formData.googleDocsEnabled,
+        gmailEnabled: formData.gmailEnabled,
         slackEnabled: formData.slackEnabled,
         granolaEnabled: formData.granolaEnabled,
         calendarEnabled: formData.calendarEnabled,
+        slackBotToken: formData.slackBotToken,
+        nudgeEnabled: formData.nudgeEnabled,
       },
       () => {
         showToast("Settings saved", "success");
@@ -925,6 +949,54 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
         </Disclosure>
       </div>
 
+      {/* Gmail */}
+      <div style={sectionStyle}>
+        <h2 style={{ ...sectionTitle, display: "flex", alignItems: "center", gap: 8 }}>
+          Gmail
+          <span style={{
+            fontSize: 10, fontWeight: 700, color: OS.blue,
+            background: OS.blueBg, padding: "2px 7px", borderRadius: 4,
+            letterSpacing: "0.03em",
+          }}>BETA</span>
+        </h2>
+
+        <div style={{ ...fieldRow, marginBottom: 0, alignItems: "flex-start" }}>
+          <div style={{ flex: 1 }}>
+            <div style={labelStyle}>Scan Gmail for Commitments</div>
+            <div style={subLabel}>Reads emails you open and extracts commitments</div>
+          </div>
+          <Toggle
+            value={form.gmailEnabled}
+            onChange={() => update("gmailEnabled", !form.gmailEnabled)}
+          />
+        </div>
+
+        <Disclosure label="How it works">
+          <div style={{ fontWeight: 600, color: OS.text, marginBottom: 4 }}>How it works</div>
+          <div>When you open an email thread in Gmail, Clyde reads the message body and looks for commitments. Quoted replies and forwarded history are stripped before analysis.</div>
+          <div style={{ marginTop: 8 }}>
+            <span style={{ fontWeight: 600, color: OS.text }}>What's scanned:</span>
+          </div>
+          <div style={{ paddingLeft: 12 }}>
+            <div>&bull; Emails you open in the main inbox view</div>
+            <div>&bull; New messages in threads (not previously seen)</div>
+            <div>&bull; Flushed to the extractor every 3 minutes</div>
+          </div>
+          <div style={{ marginTop: 8 }}>
+            <span style={{ fontWeight: 600, color: OS.text }}>What's skipped:</span>
+          </div>
+          <div style={{ paddingLeft: 12 }}>
+            <div>&bull; Promotions, Social, Spam, and Trash tabs</div>
+            <div>&bull; Quoted/forwarded history in replies</div>
+            <div>&bull; Compose windows (your drafts)</div>
+            <div>&bull; Emails without commitment-like language</div>
+          </div>
+          <div style={{ marginTop: 8, fontSize: 11, color: OS.yellowText }}>
+            First-time setup: Gmail requires a new host permission. Remove and re-add the extension as unpacked once — after that, toggling this setting takes effect immediately.
+          </div>
+        </Disclosure>
+      </div>
+
       {/* Google Calendar */}
       <div style={sectionStyle}>
         <h2 style={sectionTitle}>Google Calendar</h2>
@@ -938,21 +1010,121 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
         </div>
 
         {form.calendarEnabled && (
-          <div style={{ ...fieldRow, marginBottom: 0, alignItems: "flex-start" }}>
-            <div style={{ flex: 1, marginRight: 16 }}>
-              <div style={labelStyle}>ICS Feed URL</div>
-              <div style={subLabel}>
-                Calendar &rarr; Settings &rarr; [your calendar] &rarr; Integrate calendar &rarr; "Secret address in iCal format"
+          <>
+            {/* Google Calendar OAuth */}
+            <div style={{ marginBottom: 16 }}>
+              <div style={labelStyle}>Google Calendar OAuth</div>
+              <div style={subLabel}>Connect directly to Google Calendar for automatic event syncing</div>
+
+              <div style={{ ...fieldRow, marginTop: 10, marginBottom: 8 }}>
+                <div style={{ flex: 1, marginRight: 16 }}>
+                  <div style={subLabel}>OAuth Client ID</div>
+                </div>
+                <input
+                  type="text"
+                  style={{ ...inputStyle, width: 260 }}
+                  value={googleClientId}
+                  placeholder="xxxx.apps.googleusercontent.com"
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setGoogleClientId(val);
+                    chrome.storage.local.set({ googleClientId: val });
+                  }}
+                />
+              </div>
+
+              <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 8 }}>
+                {googleConnected ? (
+                  <>
+                    <span style={{
+                      fontSize: 12,
+                      fontWeight: 600,
+                      color: OS.green,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 4,
+                    }}>
+                      Connected
+                    </span>
+                    <button
+                      onClick={() => {
+                        chrome.runtime.sendMessage({ type: "GOOGLE_DISCONNECT" }).then(() => {
+                          setGoogleConnected(false);
+                          showToast("Google Calendar disconnected", "info");
+                        }).catch((err: unknown) => {
+                          showToast(`Disconnect failed: ${err instanceof Error ? err.message : String(err)}`, "error");
+                        });
+                      }}
+                      style={{
+                        padding: "6px 14px",
+                        background: "transparent",
+                        color: OS.red,
+                        border: `1px solid ${OS.red}`,
+                        borderRadius: 6,
+                        fontSize: 12,
+                        fontFamily: OS.font,
+                        cursor: "pointer",
+                      }}
+                    >
+                      Disconnect
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    onClick={() => {
+                      if (!googleClientId.trim()) {
+                        showToast("Enter a Google OAuth Client ID first", "error");
+                        return;
+                      }
+                      setGoogleOAuthLoading(true);
+                      chrome.runtime.sendMessage({ type: "GOOGLE_OAUTH_START" }).then((res: { ok: boolean; error?: string }) => {
+                        setGoogleOAuthLoading(false);
+                        if (res?.ok) {
+                          setGoogleConnected(true);
+                          showToast("Google Calendar connected", "success");
+                        } else {
+                          showToast(res?.error ?? "OAuth failed", "error");
+                        }
+                      }).catch((err: unknown) => {
+                        setGoogleOAuthLoading(false);
+                        showToast(`OAuth failed: ${err instanceof Error ? err.message : String(err)}`, "error");
+                      });
+                    }}
+                    disabled={googleOAuthLoading || !googleClientId.trim()}
+                    style={{
+                      padding: "7px 16px",
+                      background: googleClientId.trim() ? OS.blue : OS.faint,
+                      color: OS.white,
+                      border: "none",
+                      borderRadius: 6,
+                      fontSize: 13,
+                      fontFamily: OS.font,
+                      cursor: googleClientId.trim() ? "pointer" : "default",
+                    }}
+                  >
+                    {googleOAuthLoading ? "Connecting..." : "Connect Google Calendar"}
+                  </button>
+                )}
               </div>
             </div>
-            <input
-              type="password"
-              style={{ ...inputStyle, width: 260 }}
-              value={form.calendarIcsUrl}
-              placeholder="https://calendar.google.com/calendar/ical/..."
-              onChange={(e) => update("calendarIcsUrl", e.target.value)}
-            />
-          </div>
+
+            {/* ICS Feed URL (legacy fallback) */}
+            <div style={{ ...fieldRow, marginBottom: 0, alignItems: "flex-start" }}>
+              <div style={{ flex: 1, marginRight: 16 }}>
+                <div style={labelStyle}>ICS Feed URL <span style={{ fontSize: 11, color: OS.muted, fontWeight: 400 }}>(legacy fallback)</span></div>
+                <div style={subLabel}>
+                  Calendar &rarr; Settings &rarr; [your calendar] &rarr; Integrate calendar &rarr; "Secret address in iCal format"
+                </div>
+              </div>
+              <input
+                type="password"
+                style={{ ...inputStyle, width: 260 }}
+                value={form.calendarIcsUrl}
+                placeholder="https://calendar.google.com/calendar/ical/..."
+                onChange={(e) => update("calendarIcsUrl", e.target.value)}
+              />
+            </div>
+          </>
         )}
       </div>
 
@@ -1063,6 +1235,44 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
           </div>
         </div>
       )}
+
+      {/* Phase 2: Slack Bot Token — for sending messages */}
+      <div style={sectionStyle}>
+        <h2 style={sectionTitle}>Slack — Send Messages</h2>
+        <p style={{ fontSize: 12, color: OS.muted, marginBottom: 14, lineHeight: 1.5 }}>
+          To send Slack messages from Clyde (via the Actions queue), add a Slack Bot Token.
+          Requires a Slack app with <code>chat:write</code> scope.
+          Token is stored locally and never sent to Anthropic.
+        </p>
+        <div style={{ ...fieldRow, marginBottom: 8 }}>
+          <div>
+            <div style={labelStyle}>Slack Bot Token</div>
+            <div style={subLabel}>xoxb-... — from your Slack app's OAuth &amp; Permissions page</div>
+          </div>
+          <input
+            type="password"
+            style={inputStyle}
+            value={form.slackBotToken}
+            placeholder="xoxb-..."
+            onChange={(e) => update("slackBotToken", e.target.value)}
+          />
+        </div>
+      </div>
+
+      {/* Phase 2: Follow-Up Nudges */}
+      <div style={sectionStyle}>
+        <h2 style={sectionTitle}>Follow-Up Nudges</h2>
+        <p style={{ fontSize: 12, color: OS.muted, marginBottom: 14, lineHeight: 1.5 }}>
+          Clyde will proactively suggest follow-ups when commitments go stale.
+        </p>
+        <div style={{ ...fieldRow, marginBottom: 0, alignItems: "flex-start" }}>
+          <div style={{ flex: 1 }}>
+            <div style={labelStyle}>Enable Follow-Up Nudges</div>
+            <div style={subLabel}>Clyde checks every 2 hours and surfaces commitments that need attention</div>
+          </div>
+          <Toggle value={form.nudgeEnabled} onChange={() => update("nudgeEnabled", !form.nudgeEnabled)} />
+        </div>
+      </div>
     </>
   );
 
@@ -1714,6 +1924,51 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
           >
             {restoring ? "Restoring..." : "Restore"}
           </button>
+        </div>
+      </div>
+
+      {/* Cloud Sync (Foundation) */}
+      <div style={sectionStyle}>
+        <h2 style={sectionTitle}>Cloud Sync</h2>
+
+        <div style={{ ...fieldRow, alignItems: "flex-start" }}>
+          <div style={{ flex: 1 }}>
+            <div style={labelStyle}>Enable Cloud Sync</div>
+            <div style={subLabel}>
+              Sync commitments, memories, and OKRs across devices
+            </div>
+          </div>
+          <Toggle value={false} onChange={() => {}} />
+        </div>
+
+        <div style={{ ...fieldRow, alignItems: "flex-start" }}>
+          <div style={{ flex: 1 }}>
+            <div style={labelStyle}>Encryption Passphrase</div>
+            <div style={subLabel}>
+              All synced data is encrypted end-to-end with this passphrase
+            </div>
+          </div>
+          <input
+            type="password"
+            style={{ ...inputStyle, opacity: 0.5 }}
+            placeholder="Set a passphrase..."
+            disabled
+          />
+        </div>
+
+        <div
+          style={{
+            padding: "10px 14px",
+            background: "#fffbeb",
+            border: `1px solid #fde68a`,
+            borderRadius: 8,
+            fontSize: 12,
+            color: "#92400e",
+            lineHeight: 1.5,
+          }}
+        >
+          <strong>Foundation</strong> — Sync server not yet deployed. Encryption and change tracking are
+          ready; cloud connectivity coming in a future update.
         </div>
       </div>
 

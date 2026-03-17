@@ -12,6 +12,20 @@ import type {
   DismissedCompletion,
   MorningBrief,
   Tag,
+  CalendarEvent,
+  Person,
+  ChatSession,
+  ChatMessageRecord,
+  DailyReview,
+  MemoryEntry,
+  WorkPattern,
+  WeeklyDigest,
+  OKR,
+  CommitmentOKRLink,
+  SyncEnvelope,
+  ActionProposal,
+  DraftMessage,
+  FollowUpRule,
 } from "./types";
 
 class ClydeDB extends Dexie {
@@ -27,6 +41,20 @@ class ClydeDB extends Dexie {
   dismissed_completions!: EntityTable<DismissedCompletion, "commitmentId">;
   briefs!: EntityTable<MorningBrief, "id">;
   tags!: EntityTable<Tag, "id">;
+  calendar_cache!: EntityTable<CalendarEvent, "id">;
+  people!: EntityTable<Person, "id">;
+  chat_sessions!: EntityTable<ChatSession, "id">;
+  chat_messages!: EntityTable<ChatMessageRecord, "id">;
+  daily_reviews!: EntityTable<DailyReview, "id">;
+  memories!: EntityTable<MemoryEntry, "id">;
+  work_patterns!: EntityTable<WorkPattern, "id">;
+  weekly_digests!: EntityTable<WeeklyDigest, "id">;
+  okrs!: EntityTable<OKR, "id">;
+  commitment_okr_links!: EntityTable<CommitmentOKRLink, "id">;
+  sync_outbox!: EntityTable<SyncEnvelope, "id">;
+  action_proposals!: EntityTable<ActionProposal, "id">;
+  drafts!: EntityTable<DraftMessage, "id">;
+  follow_up_rules!: EntityTable<FollowUpRule, "id">;
 
   constructor() {
     super("CommitmentTracker");
@@ -138,6 +166,57 @@ class ClydeDB extends Dexie {
         color: "#6B7280",
         createdAt: new Date().toISOString(),
       });
+    });
+
+    // Phase 1: Calendar cache + people graph
+    this.version(10).stores({
+      calendar_cache: "++id, &googleEventId, startTime, endTime, fetchedAt",
+      people: "++id, &name, email, relationship, lastSeenAt, createdAt",
+    });
+
+    // Phase 1: Chat persistence + daily reviews
+    this.version(11).stores({
+      chat_sessions: "++id, createdAt, updatedAt",
+      chat_messages: "++id, sessionId, role, createdAt",
+      daily_reviews: "++id, &date, createdAt",
+    });
+
+    // Phase 2: Action execution framework — proposals, drafts, follow-up rules
+    this.version(12).stores({
+      action_proposals: "++id, commitmentId, type, status, source, createdAt",
+      drafts: "++id, commitmentId, proposalId, platform, status, createdAt",
+      follow_up_rules: "++id, commitmentId, status, checkAt, createdAt",
+    });
+
+    // Phase 2: External integrations (legacy — kept for Dexie migration history)
+    this.version(13).stores({
+      integrations: "++id, &service, status, createdAt",
+      external_task_links: "++id, commitmentId, service, externalId, createdAt",
+    });
+
+    // Phase 3: Long-term memory + work patterns + weekly digests
+    this.version(14).stores({
+      memories: "++id, category, importance, source, lastReinforced, createdAt",
+      work_patterns: "++id, type, sentiment, detectedWeek, createdAt",
+      weekly_digests: "++id, weekStart, createdAt",
+    });
+
+    // Phase 3: OKRs + commitment-OKR links + sync outbox
+    this.version(15).stores({
+      okrs: "++id, period, rank, active, createdAt",
+      commitment_okr_links: "++id, commitmentId, okrId, createdAt",
+      sync_outbox: "++id, table, timestamp",
+    });
+
+    // Fix: index commitmentCount on people for orderBy queries
+    this.version(16).stores({
+      people: "++id, &name, email, relationship, lastSeenAt, commitmentCount, createdAt",
+    });
+
+    // Fix: add missing indexes for fields used in orderBy/where queries
+    this.version(17).stores({
+      raw_messages: "++id, source_type, sourceId, capturedAt, context",
+      work_patterns: "++id, type, sentiment, acknowledged, detectedWeek, createdAt",
     });
   }
 }

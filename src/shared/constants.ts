@@ -12,6 +12,7 @@ export const DEFAULTS = {
   uiMode: "popup" as "popup" | "sidepanel",
   voiceInboxEnabled: false,
   googleDocsEnabled: false,
+  gmailEnabled: false,
   slackEnabled: true,
   granolaEnabled: true,
   calendarEnabled: true,
@@ -26,6 +27,13 @@ export const ALARMS = {
   PERIODIC_BACKUP: "periodic-backup",
   SNOOZE_PREFIX: "snooze-",
   CONFIDENCE_TUNE: "confidence-tune",
+  CALENDAR_SYNC: "calendar-sync",
+  EOD_REVIEW: "eod-review",
+  MEMORY_EXTRACTION: "memory-extraction",
+  PATTERN_DETECTION: "pattern-detection",
+  WEEKLY_DIGEST: "weekly-digest",
+  SYNC_PUSH: "sync-push",
+  FOLLOW_UP_CHECK: "follow-up-check",
 } as const;
 
 /** How long to keep raw messages (7 days in ms) */
@@ -69,3 +77,47 @@ export const API_RETRY_DELAY_MS = 5_000;
 
 /** Default: allow messages from channels not in the filter map */
 export const CHANNEL_FILTER_DEFAULT_ALLOW = true;
+
+/** How long to keep cached calendar events (15 min in ms) */
+export const CALENDAR_CACHE_TTL_MS = 15 * 60 * 1000;
+
+/** How long to keep chat history (90 days in ms) */
+export const CHAT_HISTORY_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+
+/** How long to keep daily reviews (90 days in ms) */
+export const DAILY_REVIEW_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+
+/** How long to keep memory entries without reinforcement (180 days in ms) */
+export const MEMORY_TTL_MS = 180 * 24 * 60 * 60 * 1000;
+
+/** How long to keep work patterns (90 days in ms) */
+export const WORK_PATTERN_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+
+/** How long to keep weekly digests (90 days in ms) */
+export const WEEKLY_DIGEST_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+
+/** Days without reinforcement before memory importance decays */
+export const MEMORY_DECAY_DAYS = 90;
+
+/** How long to keep completed/dismissed ActionProposals (30 days in ms) */
+export const ACTION_PROPOSAL_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+/** How long to keep sent/discarded drafts (7 days in ms) */
+export const DRAFT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** How long to keep completed follow-up rules (90 days in ms) */
+export const FOLLOW_UP_RULE_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+
+/** How long to keep external task links (90 days in ms) */
+export const EXTERNAL_TASK_LINK_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+
+/** How long to keep sync outbox entries (7 days in ms) */
+export const SYNC_OUTBOX_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** Google OAuth configuration */
+export const GOOGLE_OAUTH = {
+  AUTH_URL: "https://accounts.google.com/o/oauth2/v2/auth",
+  TOKEN_URL: "https://oauth2.googleapis.com/token",
+  CALENDAR_API: "https://www.googleapis.com/calendar/v3",
+  SCOPES: "https://www.googleapis.com/auth/calendar.readonly",
+} as const;

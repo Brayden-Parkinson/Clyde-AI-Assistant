@@ -8,18 +8,35 @@ import {
   BRIEFS_TTL_MS,
   COMPLETION_SUGGESTION_TTL_MS,
   DISMISSED_COMPLETION_TTL_MS,
+  MEMORY_TTL_MS,
+  WORK_PATTERN_TTL_MS,
+  WEEKLY_DIGEST_TTL_MS,
+  CALENDAR_CACHE_TTL_MS,
+  CHAT_HISTORY_TTL_MS,
+  DAILY_REVIEW_TTL_MS,
+  ACTION_PROPOSAL_TTL_MS,
+  DRAFT_TTL_MS,
+  FOLLOW_UP_RULE_TTL_MS,
+  SYNC_OUTBOX_TTL_MS,
 } from "@shared/constants";
-import type { SlackMessagePayload } from "@shared/types";
+import type { SlackMessagePayload, GmailMessagePayload } from "@shared/types";
 import { logStatus, updateStatus } from "@shared/status";
 import { getUserProfile } from "@shared/user-profile";
-import { addMessages, flush } from "./batcher";
+import { addMessages, flush, addGmailMessages, flushGmail } from "./batcher";
 import { pollGranola } from "./granola-poller";
 import { pollVoiceInbox } from "./voice-inbox";
 import { isGranolaConnected, sendNative } from "./granola-local";
 import { restoreFromBackup, executeBackupSave, requestBackupSave, BACKUP_SAVE_ALARM } from "./backup-sync";
 import { generateMorningBrief } from "./morning-brief";
 import { backfillTags } from "./tag-backfill";
+import { backfillPeopleFromHistory } from "./people-extractor";
 import { runConfidenceTuner } from "./confidence-tuner";
+import { extractMemories, decayMemories } from "./memory-engine";
+import { detectPatterns } from "./pattern-detector";
+import { generateWeeklyDigest } from "./weekly-digest";
+import { initSyncHooks, syncPush } from "./sync-engine";
+import { fetchAndCacheCalendarEvents } from "./google-calendar";
+import { initiateGoogleOAuth, disconnectGoogle } from "./google-auth";
 
 // ─── Badge ───
 
@@ -49,8 +66,21 @@ async function runCleanup(): Promise<void> {
     .each((c) => { if (c.id !== undefined) deletedCommitmentIds.push(c.id); });
   if (deletedCommitmentIds.length > 0) {
     await db.commitments.bulkDelete(deletedCommitmentIds);
-    // Clean up orphaned kanban assignments for deleted commitments
+    // Clean up all related records for deleted commitments
     await db.kanban_assignments.where("commitment_id").anyOf(deletedCommitmentIds).delete();
+    await db.action_log.where("commitmentId").anyOf(deletedCommitmentIds).delete();
+    await db.completion_suggestions.where("commitmentId").anyOf(deletedCommitmentIds).delete();
+    await db.follow_up_rules.where("commitmentId").anyOf(deletedCommitmentIds).delete();
+    await db.commitment_okr_links.where("commitmentId").anyOf(deletedCommitmentIds).delete();
+    // Clean up action_proposals and their linked drafts
+    const orphanedProposals: number[] = [];
+    await db.action_proposals
+      .where("commitmentId").anyOf(deletedCommitmentIds)
+      .each((p) => { if (p.id != null) orphanedProposals.push(p.id); });
+    if (orphanedProposals.length > 0) {
+      await db.drafts.where("proposalId").anyOf(orphanedProposals).delete();
+      await db.action_proposals.bulkDelete(orphanedProposals);
+    }
   }
 
   // Action log: 90 days
@@ -75,6 +105,65 @@ async function runCleanup(): Promise<void> {
     .where("lastDismissedAt")
     .below(dismissedCompletionCutoff)
     .delete();
+
+  // Phase 3: Memories — decay + TTL cleanup
+  await decayMemories().catch((err) =>
+    console.warn("[CT:worker] Memory decay failed:", err),
+  );
+  const memoryCutoff = new Date(now - MEMORY_TTL_MS).toISOString();
+  await db.memories.where("lastReinforced").below(memoryCutoff).delete();
+
+  // Phase 3: Work patterns — TTL cleanup
+  const patternCutoff = new Date(now - WORK_PATTERN_TTL_MS).toISOString();
+  await db.work_patterns.where("createdAt").below(patternCutoff).delete();
+
+  // Phase 3: Weekly digests — TTL cleanup
+  const digestCutoff = new Date(now - WEEKLY_DIGEST_TTL_MS).toISOString();
+  await db.weekly_digests.where("createdAt").below(digestCutoff).delete();
+
+  // Calendar cache: 7 days
+  const calendarCutoff = new Date(now - 7 * 24 * 60 * 60 * 1000).toISOString();
+  await db.calendar_cache.where("fetchedAt").below(calendarCutoff).delete();
+
+  // Chat messages: 90 days
+  const chatCutoff = new Date(now - CHAT_HISTORY_TTL_MS).toISOString();
+  await db.chat_messages.where("createdAt").below(chatCutoff).delete();
+  // Orphaned chat sessions: sessions with no remaining messages (including empty sessions)
+  const allSessions = await db.chat_sessions.toArray();
+  for (const session of allSessions) {
+    if (session.id == null) continue;
+    const msgCount = await db.chat_messages.where("sessionId").equals(session.id).count();
+    if (msgCount === 0) await db.chat_sessions.delete(session.id);
+  }
+
+  // Daily reviews: 90 days
+  const reviewCutoff = new Date(now - DAILY_REVIEW_TTL_MS).toISOString();
+  await db.daily_reviews.where("createdAt").below(reviewCutoff).delete();
+
+  // Phase 2: ActionProposals — 30 days for completed/dismissed
+  const proposalCutoff = new Date(now - ACTION_PROPOSAL_TTL_MS).toISOString();
+  await db.action_proposals
+    .where('status').anyOf('completed', 'dismissed')
+    .filter((p) => p.updatedAt < proposalCutoff)
+    .delete();
+
+  // Phase 2: Drafts — 7 days for sent/discarded
+  const draftCutoff = new Date(now - DRAFT_TTL_MS).toISOString();
+  await db.drafts
+    .where('status').anyOf('sent', 'discarded')
+    .filter((d) => d.updatedAt < draftCutoff)
+    .delete();
+
+  // Phase 2: Follow-up rules — 90 days for completed
+  const followUpCutoff = new Date(now - FOLLOW_UP_RULE_TTL_MS).toISOString();
+  await db.follow_up_rules
+    .where('status').equals('completed')
+    .filter((r) => r.createdAt < followUpCutoff)
+    .delete();
+
+  // Sync outbox: 7 days
+  const syncCutoff = new Date(now - SYNC_OUTBOX_TTL_MS).toISOString();
+  await db.sync_outbox.where("timestamp").below(syncCutoff).delete();
 
   await logStatus("info", "worker", "Daily cleanup completed");
 
@@ -276,8 +365,35 @@ chrome.runtime.onInstalled.addListener(async () => {
     periodInMinutes: 15,
   });
 
+  chrome.alarms.create(ALARMS.CALENDAR_SYNC, {
+    delayInMinutes: 1,
+    periodInMinutes: 15,
+  });
+
+  // Phase 3: Weekly alarms for memory, patterns, digest
+  chrome.alarms.create(ALARMS.MEMORY_EXTRACTION, {
+    delayInMinutes: 60,
+    periodInMinutes: 7 * 24 * 60, // weekly
+  });
+  chrome.alarms.create(ALARMS.PATTERN_DETECTION, {
+    delayInMinutes: 120,
+    periodInMinutes: 7 * 24 * 60, // weekly
+  });
+  chrome.alarms.create(ALARMS.WEEKLY_DIGEST, {
+    delayInMinutes: 180,
+    periodInMinutes: 7 * 24 * 60, // weekly
+  });
+  // Phase 2: Follow-up check every 2 hours
+  chrome.alarms.create(ALARMS.FOLLOW_UP_CHECK, {
+    delayInMinutes: 5,
+    periodInMinutes: 120,
+  });
+
   await scheduleMorningDigestAlarm();
   updateBadge();
+
+  // Initialize sync hooks (registers Dexie table hooks for outbox)
+  initSyncHooks();
 
   // Check API key status
   const result = await chrome.storage.local.get("anthropicApiKey");
@@ -291,6 +407,11 @@ chrome.runtime.onInstalled.addListener(async () => {
   // Run one-time tag backfill for existing commitments (non-blocking)
   backfillTags().catch((err) =>
     console.warn("[CT:worker] Tag backfill failed:", err),
+  );
+
+  // Seed the people table from commitment history (non-blocking, idempotent via name-match upsert)
+  backfillPeopleFromHistory().catch((err) =>
+    console.warn("[CT:worker] People backfill failed:", err),
   );
 });
 
@@ -318,7 +439,19 @@ chrome.runtime.onStartup.addListener(async () => {
     delayInMinutes: 15,
     periodInMinutes: 15,
   });
+  chrome.alarms.create(ALARMS.CALENDAR_SYNC, {
+    delayInMinutes: 1,
+    periodInMinutes: 15,
+  });
+  // Phase 3 weekly alarms
+  chrome.alarms.create(ALARMS.MEMORY_EXTRACTION, { delayInMinutes: 60, periodInMinutes: 7 * 24 * 60 });
+  chrome.alarms.create(ALARMS.PATTERN_DETECTION, { delayInMinutes: 120, periodInMinutes: 7 * 24 * 60 });
+  chrome.alarms.create(ALARMS.WEEKLY_DIGEST, { delayInMinutes: 180, periodInMinutes: 7 * 24 * 60 });
+  // Phase 2: Follow-up check every 2 hours
+  chrome.alarms.create(ALARMS.FOLLOW_UP_CHECK, { delayInMinutes: 5, periodInMinutes: 120 });
   await scheduleMorningDigestAlarm();
+
+  initSyncHooks();
 
   const result = await chrome.storage.local.get("anthropicApiKey");
   await updateStatus({ hasApiKey: !!result.anthropicApiKey });
@@ -338,6 +471,19 @@ chrome.runtime.onMessage.addListener(
     sender: chrome.runtime.MessageSender,
     sendResponse: (response?: unknown) => void,
   ) => {
+    // SECURITY: Restrict sensitive actions to extension pages only (popup, options, sidepanel, newtab).
+    // Content scripts run inside web page tabs (sender.tab is defined), so they must not
+    // be able to trigger actions that send messages, restore backups, or execute proposals.
+    const PRIVILEGED_TYPES = new Set([
+      "EXECUTE_ACTION", "RESTORE_BACKUP", "SEND_DRAFT", "GENERATE_DRAFT",
+      "REGENERATE_DRAFT", "SET_FOLLOW_UP", "GOOGLE_OAUTH_START", "GOOGLE_DISCONNECT",
+    ]);
+    if (PRIVILEGED_TYPES.has(message.type) && sender.tab) {
+      sendResponse({ ok: false, error: "Privileged action rejected — request must originate from extension page, not content script" });
+      logStatus("warn", "worker", `Rejected privileged message "${message.type}" from tab ${sender.tab.url?.slice(0, 60)}`);
+      return false;
+    }
+
     if (message.type === "SLACK_MESSAGES") {
       const tabInfo = sender.tab ? ` (tab: ${sender.tab.url?.slice(0, 50)})` : "";
       logStatus("info", "worker", `Received ${message.messages.length} messages from content script${tabInfo}`);
@@ -347,6 +493,19 @@ chrome.runtime.onMessage.addListener(
         sendResponse({ ok: true, ...(result as object) });
       });
       return true;
+    } else if (message.type === "GMAIL_MESSAGES") {
+      const gmailMsg = message as unknown as GmailMessagePayload;
+      logStatus("info", "worker", `Received ${gmailMsg.messages.length} Gmail messages from content script`);
+      addGmailMessages(gmailMsg.messages).then(() => {
+        sendResponse({ ok: true });
+      }).catch((err: unknown) => {
+        sendResponse({ ok: false, error: String(err) });
+      });
+      return true;
+    } else if (message.type === "GMAIL_CONTENT_SCRIPT_READY") {
+      logStatus("success", "content", `Gmail content script loaded on ${sender.tab?.url?.slice(0, 60) ?? "unknown tab"}`);
+      sendResponse({ ok: true });
+      return false;
     } else if (message.type === "MANUAL_FLUSH") {
       logStatus("info", "worker", "Manual scan triggered");
       Promise.all([flush(), pollGranola(true), pollVoiceInbox()]).then(() => {
@@ -409,11 +568,16 @@ chrome.runtime.onMessage.addListener(
               steps.push(`added: ${cleaned.length}`);
             }
 
-            // Restore chrome.storage settings
+            // Restore chrome.storage settings — strip sensitive keys to prevent backup poisoning
             const chromeStorage = state.chrome_storage as Record<string, unknown> | undefined;
             if (chromeStorage) {
-              await chrome.storage.local.set(chromeStorage);
-              steps.push(`storage: ${Object.keys(chromeStorage).length} keys`);
+              const SENSITIVE_KEYS = new Set(["anthropicApiKey", "slackBotToken", "googleAuthTokens"]);
+              const safeStorage: Record<string, unknown> = {};
+              for (const [k, v] of Object.entries(chromeStorage)) {
+                if (!SENSITIVE_KEYS.has(k)) safeStorage[k] = v;
+              }
+              await chrome.storage.local.set(safeStorage);
+              steps.push(`storage: ${Object.keys(safeStorage).length} keys (${Object.keys(chromeStorage).length - Object.keys(safeStorage).length} sensitive stripped)`);
             }
 
             // Kanban columns
@@ -457,6 +621,11 @@ chrome.runtime.onMessage.addListener(
           error: err instanceof Error ? err.message : "Native host not responding",
         }));
       return true;
+    } else if (message.type === "SCAN_PEOPLE") {
+      backfillPeopleFromHistory()
+        .then(() => sendResponse({ ok: true }))
+        .catch((err) => sendResponse({ ok: false, error: err instanceof Error ? err.message : String(err) }));
+      return true;
     } else if (message.type === "GENERATE_MORNING_BRIEF") {
       generateMorningBrief(true)
         .then(() => sendResponse({ ok: true }))
@@ -467,6 +636,21 @@ chrome.runtime.onMessage.addListener(
       logStatus("success", "content", `Google Docs content script loaded: "${gdocs.title}" (${gdocs.url?.slice(0, 60)})`);
       sendResponse({ ok: true });
       return false;
+    } else if (message.type === "EXTRACT_MEMORIES") {
+      extractMemories()
+        .then(() => sendResponse({ ok: true }))
+        .catch((err) => sendResponse({ ok: false, error: err instanceof Error ? err.message : String(err) }));
+      return true;
+    } else if (message.type === "DETECT_PATTERNS") {
+      detectPatterns()
+        .then(() => sendResponse({ ok: true }))
+        .catch((err) => sendResponse({ ok: false, error: err instanceof Error ? err.message : String(err) }));
+      return true;
+    } else if (message.type === "GENERATE_DIGEST") {
+      generateWeeklyDigest()
+        .then(() => sendResponse({ ok: true }))
+        .catch((err) => sendResponse({ ok: false, error: err instanceof Error ? err.message : String(err) }));
+      return true;
     } else if (message.type === "CONTENT_DIAGNOSTICS") {
       const diag = message as unknown as { diagnostics: string[]; summary: string; displayName: string; url: string };
       logStatus("info", "content", `Diagnostics (${diag.displayName}): ${diag.summary}`);
@@ -476,6 +660,56 @@ chrome.runtime.onMessage.addListener(
       }
       sendResponse({ ok: true });
       return false;
+    } else if (message.type === "GOOGLE_OAUTH_START") {
+      initiateGoogleOAuth()
+        .then(() => sendResponse({ ok: true }))
+        .catch((err) => sendResponse({ ok: false, error: err instanceof Error ? err.message : String(err) }));
+      return true;
+    } else if (message.type === "GOOGLE_DISCONNECT") {
+      disconnectGoogle()
+        .then(() => sendResponse({ ok: true }))
+        .catch((err) => sendResponse({ ok: false, error: err instanceof Error ? err.message : String(err) }));
+      return true;
+    } else if (message.type === "EXECUTE_ACTION") {
+      const { proposalId } = (message as unknown) as { proposalId: number; type: string };
+      import("./action-executor").then(({ executeAction }) => executeAction(proposalId))
+        .then((result) => sendResponse(result))
+        .catch((err) => sendResponse({ ok: false, message: err instanceof Error ? err.message : String(err) }));
+      return true;
+    } else if (message.type === "GENERATE_DRAFT") {
+      const { input } = (message as unknown) as { input: Record<string, unknown>; type: string };
+      import("./draft-generator").then(({ generateDraft }) => generateDraft(input as unknown as Parameters<typeof generateDraft>[0]))
+        .then((result) => sendResponse({ ok: true, ...result }))
+        .catch((err) => sendResponse({ ok: false, error: err instanceof Error ? err.message : String(err) }));
+      return true;
+    } else if (message.type === "REGENERATE_DRAFT") {
+      const { draftId, tone, instruction } = (message as unknown) as { draftId: number; tone: string; instruction: string | null; type: string };
+      import("./draft-generator").then(({ regenerateDraft }) => regenerateDraft(draftId, tone as import("@shared/types").DraftTone, instruction))
+        .then((body) => sendResponse({ ok: true, body }))
+        .catch((err) => sendResponse({ ok: false, error: err instanceof Error ? err.message : String(err) }));
+      return true;
+    } else if (message.type === "SET_FOLLOW_UP") {
+      const { commitmentId, checkAt } = (message as unknown) as { commitmentId: number; checkAt?: string; type: string };
+      import("./follow-up-engine").then(({ setFollowUpRule }) => setFollowUpRule(commitmentId, checkAt))
+        .then((ruleId) => sendResponse({ ok: true, ruleId }))
+        .catch((err) => sendResponse({ ok: false, error: String(err) }));
+      return true;
+    } else if (message.type === "SEND_DRAFT") {
+      const { draftId } = (message as unknown) as { draftId: number; type: string };
+      (async () => {
+        const draft = await db.drafts.get(draftId);
+        if (!draft) { sendResponse({ ok: false, error: "Draft not found" }); return; }
+        const { createProposal, executeAction } = await import("./action-executor");
+        const proposalId = await createProposal(
+          draft.commitmentId, "send_message",
+          `Send ${draft.platform === "slack" ? "Slack message" : "email"} to ${draft.recipient}`,
+          { platform: draft.platform, recipient: draft.recipient, subject: draft.subject, draftId },
+          "manual",
+        );
+        const result = await executeAction(proposalId);
+        sendResponse(result);
+      })().catch((err) => sendResponse({ ok: false, message: err instanceof Error ? err.message : String(err) }));
+      return true;
     }
     return false;
   },
@@ -502,11 +736,36 @@ chrome.alarms.onAlarm.addListener((alarm) => {
       logStatus("info", "batcher", "Batch flush alarm fired");
       flush();
       break;
+    case "gmail-batcher-flush":
+      logStatus("info", "batcher", "Gmail batch flush alarm fired");
+      flushGmail();
+      break;
     case BACKUP_SAVE_ALARM:
       executeBackupSave();
       break;
     case ALARMS.PERIODIC_BACKUP:
       executeBackupSave();
+      break;
+    case ALARMS.CALENDAR_SYNC:
+      fetchAndCacheCalendarEvents().catch((err) =>
+        console.warn("[CT:worker] Calendar sync failed:", err),
+      );
+      break;
+    case ALARMS.MEMORY_EXTRACTION:
+      extractMemories().catch((err) => console.warn("[CT:worker] Memory extraction failed:", err));
+      break;
+    case ALARMS.PATTERN_DETECTION:
+      detectPatterns().catch((err) => console.warn("[CT:worker] Pattern detection failed:", err));
+      break;
+    case ALARMS.WEEKLY_DIGEST:
+      generateWeeklyDigest().catch((err) => console.warn("[CT:worker] Weekly digest failed:", err));
+      break;
+    case ALARMS.SYNC_PUSH:
+      syncPush().catch((err) => console.warn("[CT:worker] Sync push failed:", err));
+      break;
+    case ALARMS.FOLLOW_UP_CHECK:
+      import("./follow-up-engine").then(({ runFollowUpCheck }) => runFollowUpCheck())
+        .catch((err) => console.warn("[CT:worker] Follow-up check failed:", err));
       break;
     default:
       if (alarm.name.startsWith(ALARMS.SNOOZE_PREFIX)) {

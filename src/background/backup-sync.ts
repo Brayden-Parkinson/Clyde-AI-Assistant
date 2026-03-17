@@ -6,9 +6,15 @@ import { sendNative } from "./granola-local";
 
 const BACKUP_ALARM = "backup-save";
 
+/** Sensitive keys that must NEVER be written to disk or restored from backup */
+const SENSITIVE_STORAGE_KEYS = new Set([
+  "anthropicApiKey",
+  "slackBotToken",
+  "googleAuthTokens",
+]);
+
 /** Chrome storage keys that should be backed up */
 const BACKED_UP_STORAGE_KEYS = [
-  "anthropicApiKey",
   "userName",
   "userTitle",
   "userCompany",
@@ -91,22 +97,14 @@ export async function restoreFromBackup(): Promise<void> {
     const extensionId = chrome.runtime.id;
     if (!extensionId) return;
 
-    let result = await sendNative({
+    const result = await sendNative({
       command: "load_state",
       extension_id: extensionId,
     });
 
-    // If no backup for this ID, try the most recent backup from any ID
-    let state = (result as unknown as Record<string, unknown>).state as BackupState | null;
-    if (result.ok && !state) {
-      await logStatus("info", "backup", "No backup for current ID — checking for latest backup");
-      result = await sendNative({ command: "load_latest_state" });
-      state = (result as unknown as Record<string, unknown>).state as BackupState | null;
-      if (state) {
-        const source = (result as unknown as Record<string, unknown>).source as string;
-        await logStatus("info", "backup", `Found backup from different extension ID: ${source}`);
-      }
-    }
+    // SECURITY: Only load backups for this exact extension ID.
+    // Loading from arbitrary IDs would let a malicious extension plant a poisoned backup.
+    const state = (result as unknown as Record<string, unknown>).state as BackupState | null;
 
     if (!result.ok) {
       await logStatus("warn", "backup", `Backup load failed: ${result.error}`);
@@ -284,11 +282,12 @@ async function mergeState(state: BackupState): Promise<void> {
     }
   }
 
-  // Chrome storage: only restore keys that are currently empty
+  // Chrome storage: only restore keys that are currently empty — never restore sensitive keys
   if (state.chrome_storage && Object.keys(state.chrome_storage).length > 0) {
     const current = await chrome.storage.local.get(Object.keys(state.chrome_storage));
     const toRestore: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(state.chrome_storage)) {
+      if (SENSITIVE_STORAGE_KEYS.has(key)) continue;
       if (current[key] === undefined || current[key] === null || current[key] === "") {
         toRestore[key] = value;
       }

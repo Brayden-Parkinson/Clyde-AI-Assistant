@@ -1,10 +1,19 @@
 import { db, getDismissalPatterns, getNewCommitmentCount, getActiveCommitments, getAllTags, ensureGeneralTag, getNextTagColor } from "@shared/db";
 import { CLAUDE_MODEL, CLAUDE_MODEL_FAST, MAX_DISMISSAL_PATTERNS, API_TIMEOUT_MS, API_MAX_RETRIES, API_RETRY_DELAY_MS, DEFAULTS } from "@shared/constants";
-import type { SourceType, ExtractionResponse, ExtractedCommitment, RejectedCandidate, SlackMessagePayload, DecisionLogEntry, ConversationMessage, SlackWatermarks } from "@shared/types";
+import type { SourceType, ExtractionResponse, ExtractedCommitment, RejectedCandidate, SlackMessagePayload, DecisionLogEntry, ConversationMessage, SlackWatermarks, Commitment } from "@shared/types";
 import { logStatus, updateStatus, getStatus } from "@shared/status";
 import { getUserProfile } from "@shared/user-profile";
 import { computeHash, isDuplicate, isFuzzyDuplicate } from "./dedup";
 import { requestBackupSave } from "./backup-sync";
+import { extractPeopleFromCommitment } from "./people-extractor";
+import { getMemoriesForPrompt } from "./memory-engine";
+import {
+  sanitizeDismissalPattern,
+  sanitizeDismissalReason,
+  sanitizeTagName,
+  sanitizeMemoryContent,
+  sanitizeMessageText,
+} from "@shared/sanitize-prompt";
 
 type BufferedMessage = SlackMessagePayload["messages"][number];
 
@@ -16,7 +25,7 @@ async function buildDismissalBlock(): Promise<string> {
 
   const capped = dismissals.slice(0, MAX_DISMISSAL_PATTERNS);
   const lines = capped.map(
-    (d) => `- Dismissed ${d.count}x: "${d.pattern}" -- user says this is ${d.reason}`,
+    (d) => `- Dismissed ${d.count}x: "${sanitizeDismissalPattern(d.pattern)}" -- user says this is ${sanitizeDismissalReason(d.reason)}`,
   );
   return `
 
@@ -32,7 +41,7 @@ async function isDevModeEnabled(): Promise<boolean> {
 async function buildTagBlock(): Promise<string> {
   const tags = await getAllTags();
   if (tags.length === 0) return "";
-  const tagLines = tags.map((t) => `  - ID ${t.id}: "${t.name}"`).join("\n");
+  const tagLines = tags.map((t) => `  - ID ${t.id}: "${sanitizeTagName(t.name)}"`).join("\n");
   return `
 
 SMART TAGS — assign exactly one tag to each commitment:
@@ -46,9 +55,24 @@ Rules:
 - Only suggest a new tag if it represents a clear recurring theme.`;
 }
 
+async function buildMemoryBlock(): Promise<string> {
+  try {
+    const memories = await getMemoriesForPrompt();
+    if (memories.length === 0) return "";
+    const sanitizedMemories = memories.map((m) => sanitizeMemoryContent(m));
+    return `
+
+LONG-TERM MEMORY (things Clyde knows about this person — use for context):
+${sanitizedMemories.join("\n")}`;
+  } catch {
+    return ""; // Non-critical — skip if memory engine fails
+  }
+}
+
 async function buildSystemPrompt(sourceType: SourceType = "slack"): Promise<string> {
   const dismissalBlock = await buildDismissalBlock();
   const tagBlock = await buildTagBlock();
+  const memoryBlock = await buildMemoryBlock();
   const devMode = await isDevModeEnabled();
   const profile = await getUserProfile();
   const userName = profile.userName || "the user";
@@ -83,6 +107,30 @@ In addition to the "commitments" array, also return a "rejections" array listing
 
 Only include messages that matched commitment-like patterns but were ruled out. Don't include completely irrelevant context messages.` : "";
 
+  const gmailBlock = sourceType === "gmail" ? `
+
+GMAIL SOURCE — SPECIAL RULES:
+This content comes from email threads in Gmail. Apply these extra rules:
+
+SKIP THESE (high noise, low signal):
+- Email signatures, legal disclaimers, confidentiality notices, "sent from my iPhone"
+- Forwarded message headers ("---------- Forwarded message ---------")
+- Quoted/replied-to content from previous messages (already stripped, but be cautious)
+- Acknowledgment-only replies ("Thanks!", "Sounds good", "Got it", "Will do", "On it")
+- Auto-replies, calendar invites, notification emails
+
+HIGH CONFIDENCE SIGNALS (boost to 0.85+):
+- Direct requests to ${userName} by name with a clear action verb and timeline
+- Email threads where ${userName} explicitly commits: "I'll handle X by Friday"
+- Action items in meeting recap emails explicitly assigned to ${userName}
+
+CONTEXT FIELD:
+- Use the email subject line as the "context" field (not the sender's email address)
+
+CONFIDENCE FLOOR:
+- Only return items with confidence >= 0.65 (stricter than Slack — email has more noise)
+` : "";
+
   const gdocBlock = sourceType === "gdoc" ? `
 
 GOOGLE DOCS SOURCE — SPECIAL RULES:
@@ -111,9 +159,11 @@ LOW CONFIDENCE / SKIP:
 - Historical notes about what was discussed or decided (not action items)
 ` : "";
 
-  const sourceLabel = sourceType === "gdoc" ? "Google Docs content" : "Slack messages";
+  const sourceLabel = sourceType === "gdoc" ? "Google Docs content"
+    : sourceType === "gmail" ? "Gmail emails"
+    : "Slack messages";
 
-  return `You are analyzing ${sourceLabel} for ${userName}${userTitle}${userCompany}.${gdocBlock}
+  return `You are analyzing ${sourceLabel} for ${userName}${userTitle}${userCompany}.${gmailBlock}${gdocBlock}
 
 TASK: Extract commitments — things ${userName} agreed to do, or that were assigned to them by someone else.
 
@@ -219,7 +269,7 @@ Messages:
 [ME] [[User] in #engineering at 11:05 AM]: I'll try to look at it if I get time
 Output: {"commitments":[]}
 
-Return ONLY valid JSON. No markdown fences. No preamble.${tagBlock}${rejectionBlock}${dismissalBlock}`;
+Return ONLY valid JSON. No markdown fences. No preamble.${tagBlock}${rejectionBlock}${dismissalBlock}${memoryBlock}`;
 }
 
 function buildUserMessage(
@@ -280,7 +330,7 @@ function buildUserMessage(
       const location = msg.is_thread_reply
         ? `replying in #${msg.channel}`
         : `in #${msg.channel}`;
-      let line = `${prefix} [${msg.sender} ${location} at ${msg.timestamp}]: ${msg.text}`;
+      let line = `${prefix} [${msg.sender} ${location} at ${msg.timestamp}]: ${sanitizeMessageText(msg.text)}`;
       if (msg.reactions && msg.reactions.length > 0) {
         line += ` [reactions: ${msg.reactions.join(", ")}]`;
       }
@@ -453,6 +503,7 @@ function buildConversationMessages(
  */
 async function getConfidenceFloor(sourceType: SourceType): Promise<number> {
   if (sourceType === "gdoc") return 0.75;
+  if (sourceType === "gmail") return 0.65;
   const result = await chrome.storage.local.get("confidenceThreshold");
   const stored = result.confidenceThreshold;
   if (typeof stored === "number" && stored >= 0.5 && stored <= 0.95) {
@@ -620,6 +671,12 @@ export async function extractCommitments(
       }
 
       newCount++;
+
+      // Non-blocking people extraction
+      extractPeopleFromCommitment({
+        conversation_messages: conversationMessages,
+        context: commitment.context,
+      } as Commitment).catch(() => {});
 
       if (commitment.urgency === "high") {
         chrome.notifications.create({
@@ -848,7 +905,7 @@ export async function detectCompletions(
     .join("\n");
 
   const messagesList = allMessages
-    .map((m) => `[${m.sender} in #${m.channel}]: ${m.text}`)
+    .map((m) => `[${m.sender} in #${m.channel}]: ${sanitizeMessageText(m.text)}`)
     .join("\n");
 
   const profile = await getUserProfile();

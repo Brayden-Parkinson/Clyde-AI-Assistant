@@ -7,6 +7,7 @@ import { db } from "@shared/db";
 import { useCommitments } from "./hooks/useCommitments";
 import { useActions, type Actions } from "./hooks/useActions";
 import { useKanban } from "./hooks/useKanban";
+import { useSeenCommitments } from "./hooks/useSeenCommitments";
 import {
   DEMO_ACTIVE,
   DEMO_KANBAN,
@@ -16,6 +17,11 @@ import {
   DEMO_BRIEFS,
   DEMO_DECISION_LOG,
   DEMO_TAGS,
+  DEMO_MEMORIES,
+  DEMO_PATTERNS,
+  DEMO_DIGESTS,
+  DEMO_OKRS,
+  DEMO_OKR_LINKS,
 } from "@shared/demo-data";
 import { CommitmentCard } from "./components/CommitmentCard";
 import { KanbanBoard } from "./components/KanbanBoard";
@@ -27,14 +33,20 @@ import { SmartTagsModal } from "./components/SmartTagsModal";
 import { SetupWizard } from "./components/SetupWizard";
 import { SettingsPanel } from "../options/Options";
 import { ClydeChat } from "./components/ClydeChat";
+import { DailyPlanner } from "./components/DailyPlanner";
+import { MemoryPanel } from "./components/MemoryPanel";
+import { InsightsPanel } from "./components/InsightsPanel";
+import { OKRPanel } from "./components/OKRPanel";
+import { DraftComposer } from "./components/DraftComposer";
+import { PeoplePanel } from "./components/PeoplePanel";
 import {
   IconSettings, IconWarning, IconX, IconRefresh, IconLoader, IconCheck,
   IconBoard, IconList, IconSun, IconChevronRight, IconChevronLeft,
   IconChevronUp, IconChevronDown, IconArrowRight, IconClock, IconLogo,
-  IconSearch, InlineIcon,
+  IconSearch, InlineIcon, IconChat, IconPeople,
 } from "./components/Icons";
 
-type ViewMode = "list" | "board" | "brief" | "devlog" | "settings";
+type ViewMode = "list" | "board" | "brief" | "devlog" | "settings" | "chat" | "people" | "memory" | "insights" | "okrs" | "draft";
 
 // ─── Display settings (persisted in chrome.storage.local) ───
 
@@ -346,7 +358,14 @@ function WarningBanner({ onOpenSettings, demoMode }: { onOpenSettings: () => voi
 
 // ─── Scan time helper ───
 
-function useScanAgo() {
+const STALE_THRESHOLD_MS = 30 * 60 * 1000; // 30 minutes
+
+interface ScanStatus {
+  scanAgo: string | null;
+  staleWarning: string | null;
+}
+
+function useScanStatus(): ScanStatus {
   const [status, setStatus] = useState<PipelineStatus | null>(null);
 
   useEffect(() => {
@@ -361,11 +380,39 @@ function useScanAgo() {
     return () => clearInterval(interval);
   }, []);
 
-  if (!status?.lastExtraction) return null;
-  const diff = Date.now() - new Date(status.lastExtraction).getTime();
-  if (diff < 60000) return "just now";
-  if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
-  return `${Math.floor(diff / 3600000)}h ago`;
+  let scanAgo: string | null = null;
+  if (status?.lastExtraction) {
+    const diff = Date.now() - new Date(status.lastExtraction).getTime();
+    if (diff < 60000) scanAgo = "just now";
+    else if (diff < 3600000) scanAgo = `${Math.floor(diff / 60000)}m ago`;
+    else scanAgo = `${Math.floor(diff / 3600000)}h ago`;
+  }
+
+  // Stale detection: warn if a previously-connected source has gone silent
+  let staleWarning: string | null = null;
+  if (status) {
+    const now = Date.now();
+    // Check Slack: was connected but last ping is stale
+    if (status.slackConnected && status.lastContentPing) {
+      const pingAge = now - new Date(status.lastContentPing).getTime();
+      if (pingAge > STALE_THRESHOLD_MS) {
+        staleWarning = "Slack data may be stale — no messages received recently. Make sure Slack is open in a browser tab.";
+      }
+    }
+    // Check extraction: had successful extraction before but it's very old
+    if (!staleWarning && status.lastExtraction) {
+      const extractAge = now - new Date(status.lastExtraction).getTime();
+      if (extractAge > STALE_THRESHOLD_MS && status.totalMessagesReceived > 0) {
+        staleWarning = "No recent scans — Clyde may be missing new commitments.";
+      }
+    }
+    // Check for extraction errors
+    if (!staleWarning && status.lastError) {
+      staleWarning = `Last scan failed: ${status.lastError.slice(0, 80)}`;
+    }
+  }
+
+  return { scanAgo, staleWarning };
 }
 
 // ─── API Key Setup ───
@@ -1456,6 +1503,7 @@ function LeftNav({
   demoMode,
   privacyMode,
   onTogglePrivacy,
+  staleWarning,
 }: {
   viewMode: ViewMode;
   setViewMode: (v: ViewMode) => void;
@@ -1471,6 +1519,7 @@ function LeftNav({
   demoMode: boolean;
   privacyMode: boolean;
   onTogglePrivacy: () => void;
+  staleWarning: string | null;
 }) {
   const [showNavSettings, setShowNavSettings] = useState(false);
   const settingsBtnRef = useRef<HTMLButtonElement>(null) as React.RefObject<HTMLButtonElement>;
@@ -1573,7 +1622,12 @@ function LeftNav({
         <div style={{ flex: 1, paddingTop: 10, display: "flex", flexDirection: "column", gap: 2 }}>
           <NavIcon icon={<IconBoard size={14} />} label="Board" active={viewMode === "board"} onClick={() => setViewMode("board")} />
           <NavIcon icon={<IconList size={14} />} label="List" active={viewMode === "list"} onClick={() => setViewMode("list")} />
-          <NavIcon icon={<IconSun size={14} />} label="Brief" active={viewMode === "brief"} onClick={() => setViewMode("brief")} />
+          <NavIcon icon={<IconSun size={14} />} label="Planner" active={viewMode === "brief"} onClick={() => setViewMode("brief")} />
+          <NavIcon icon={<IconChat size={14} />} label="Chat" active={viewMode === "chat"} onClick={() => setViewMode("chat")} />
+          <NavIcon icon={<IconPeople size={14} />} label="People" active={viewMode === "people"} onClick={() => setViewMode("people")} />
+          <NavIcon icon={"M"} label="Memory" active={viewMode === "memory"} onClick={() => setViewMode("memory")} />
+          <NavIcon icon={"I"} label="Insights" active={viewMode === "insights"} onClick={() => setViewMode("insights")} />
+          <NavIcon icon={"O"} label="OKRs" active={viewMode === "okrs"} onClick={() => setViewMode("okrs")} />
           {developerMode && (
             <NavIcon icon={"</>"} label="Dev Log" active={viewMode === "devlog"} onClick={() => setViewMode("devlog")} />
           )}
@@ -1598,6 +1652,19 @@ function LeftNav({
               {scanning ? <IconLoader size={12} /> : <IconRefresh size={12} />}
             </button>
         </div>
+
+        {/* Stale warning dot — collapsed */}
+        {staleWarning && (
+          <div
+            title={staleWarning}
+            style={{
+              width: 8, height: 8, borderRadius: "50%",
+              background: "rgb(245, 158, 11)",
+              margin: "4px auto",
+              boxShadow: "0 0 4px rgba(245, 158, 11, 0.5)",
+            }}
+          />
+        )}
 
         {/* Settings icon */}
         <div style={{ borderTop: "1px solid rgba(255,255,255,0.1)", padding: "10px 0", width: "100%", textAlign: "center" }}>
@@ -1670,7 +1737,13 @@ function LeftNav({
         <NavSection label="Views" />
         <NavItem label="Board" active={viewMode === "board"} onClick={() => setViewMode("board")} />
         <NavItem label="List" active={viewMode === "list"} onClick={() => setViewMode("list")} />
-        <NavItem label="Brief" active={viewMode === "brief"} onClick={() => setViewMode("brief")} />
+        <NavItem label="Planner" active={viewMode === "brief"} onClick={() => setViewMode("brief")} />
+        <NavItem label="Chat" active={viewMode === "chat"} onClick={() => setViewMode("chat")} />
+        <NavItem label="People" active={viewMode === "people"} onClick={() => setViewMode("people")} />
+        <NavSection label="Intelligence" />
+        <NavItem label="Memory" active={viewMode === "memory"} onClick={() => setViewMode("memory")} />
+        <NavItem label="Insights" active={viewMode === "insights"} onClick={() => setViewMode("insights")} />
+        <NavItem label="OKRs" active={viewMode === "okrs"} onClick={() => setViewMode("okrs")} />
         {developerMode && (
           <NavItem label="Dev Log" active={viewMode === "devlog"} onClick={() => setViewMode("devlog")} />
         )}
@@ -1700,6 +1773,29 @@ function LeftNav({
             {scanning ? <IconLoader size={12} /> : <IconRefresh size={12} />}
           </button>
       </div>
+
+      {/* Stale warning banner — expanded */}
+      {staleWarning && (
+        <div style={{
+          borderTop: "1px solid rgba(255,255,255,0.1)",
+          padding: "8px 14px",
+          background: "rgba(245, 158, 11, 0.12)",
+        }}>
+          <div style={{ fontSize: 11, color: "rgba(255, 200, 50, 0.9)", lineHeight: 1.4 }}>
+            ⚠ {staleWarning}
+          </div>
+          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 4, lineHeight: 1.3 }}>
+            Check{" "}
+            <span
+              onClick={onOpenFullSettings}
+              style={{ textDecoration: "underline", cursor: "pointer", color: "rgba(255, 200, 50, 0.7)" }}
+            >
+              settings
+            </span>
+            {" "}or contact brayden.parkinson@openspace.ai
+          </div>
+        </div>
+      )}
 
       {/* Settings footer */}
       <div style={{ borderTop: "1px solid rgba(255,255,255,0.1)", padding: "10px 14px" }}>
@@ -1745,6 +1841,8 @@ export default function App() {
   const [boardSearch, setBoardSearch] = useState("");
   const [listFilter, setListFilter] = useState<FilterKey>("all");
   const [listSearch, setListSearch] = useState("");
+  // People page filter: when set, list view shows only commitments involving this person
+  const [personFilter, setPersonFilter] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [toast, setToast] = useState<{ message: string; variant?: "success" | "error" | "warning" | "info" } | null>(null);
   const [hasApiKey, setHasApiKey] = useState<boolean | null>(null);
@@ -1755,14 +1853,20 @@ export default function App() {
   const [isWide, setIsWide] = useState(false);
   const isNarrow = !isWide;
   const [viewMode, setViewMode] = useState<ViewMode>("board");
+  const [activeDraftId, setActiveDraftId] = useState<number | null>(null);
+  // Clear draft state when user navigates away from draft view
+  useEffect(() => {
+    if (viewMode !== "draft") setActiveDraftId(null);
+  }, [viewMode]);
   const [developerMode, setDeveloperMode] = useState(false);
   const [demoMode, setDemoMode] = useState(false);
   const [privacyMode, setPrivacyMode] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [proactiveMsg, setProactiveMsg] = useState<string | null>(null);
   const todoOverflowFiredRef = useRef(false);
-  const scanAgo = useScanAgo();
+  const { scanAgo, staleWarning } = useScanStatus();
   const realKanban = useKanban(boardFilter);
+  const { isNew: isNewCommitment, markVisible, markHidden } = useSeenCommitments();
   const { settings: displaySettings, update: updateDisplay } = useDisplaySettings();
   const nav = useNavCollapsed();
 
@@ -1780,6 +1884,15 @@ export default function App() {
     () => db.completion_suggestions.where("status").equals("pending").toArray(),
     []
   ) ?? [];
+
+  // Phase 2: set of commitment IDs that have an active follow-up rule (for CommitmentCard badges)
+  const followUpRuleIds = useLiveQuery(
+    () => demoMode
+      ? Promise.resolve(new Set<number>())
+      : db.follow_up_rules.where("status").equals("active").toArray()
+          .then((rules) => new Set(rules.map((r) => r.commitmentId))),
+    [demoMode],
+  ) ?? new Set<number>();
 
   useEffect(() => {
     chrome.storage.local.get(["anthropicApiKey", "userName", "developerMode", "demoMode"]).then((result) => {
@@ -1935,6 +2048,12 @@ export default function App() {
     [demoMode, showToast],
   );
 
+  const onFollowUp = useCallback(async (id: number) => {
+    if (demoMode) { showToast("Follow-up set (demo)"); return; }
+    await chrome.runtime.sendMessage({ type: "SET_FOLLOW_UP", commitmentId: id });
+    showToast("Following up in 48 hours");
+  }, [demoMode, showToast]);
+
   const onAcceptCompletion = useCallback(async (suggestionId: number, commitmentId: number) => {
     if (demoMode) { showToast("\u2713 Marked done"); return; }
     const now = new Date().toISOString();
@@ -2001,10 +2120,21 @@ export default function App() {
       if (listFilter === "meetings") return c.source_type === "meeting";
       if (listFilter === "slack") return c.source_type === "slack";
       if (listFilter === "gdoc") return c.source_type === "gdoc";
+      if (listFilter === "gmail") return c.source_type === "gmail";
       return true;
     })
     .filter((c) => matchesSearch(c, listSearch))
     .filter((c) => listSelectedTags.length === 0 || (c.tag_id != null && listSelectedTags.includes(c.tag_id)))
+    .filter((c) => {
+      if (!personFilter) return true;
+      const pLower = personFilter.toLowerCase();
+      // Match if this person appears anywhere in the conversation
+      return (
+        c.conversation_messages?.some((m) => m.sender.toLowerCase() === pLower) ||
+        c.context.toLowerCase().includes(pLower) ||
+        c.text.toLowerCase().includes(pLower)
+      );
+    })
     .sort((a, b) => {
       if (a.likely_completed !== b.likely_completed) {
         return a.likely_completed ? 1 : -1;
@@ -2041,6 +2171,7 @@ export default function App() {
       isExpanded={expandedId === item.id}
       isSelected={selectedId === item.id}
       isNarrow={!isWide}
+      isNew={isNewCommitment(item.id, item.createdAt)}
       verboseMode={displaySettings.showConfidence}
       displaySettings={displaySettings}
       privacyMode={privacyMode}
@@ -2048,6 +2179,8 @@ export default function App() {
         setExpandedId(expandedId === item.id ? null : (item.id ?? null))
       }
       onSelect={(id) => setSelectedId(selectedId === id ? null : id)}
+      onVisible={item.id != null ? () => markVisible(item.id!) : undefined}
+      onHidden={item.id != null ? () => markHidden(item.id!) : undefined}
       onDismiss={onDismiss}
       onClose={onClose}
       onDone={onDone}
@@ -2055,6 +2188,8 @@ export default function App() {
       onCalendar={onCalendar}
       onSlack={onSlack}
       onReminder={onReminder}
+      onFollowUp={onFollowUp}
+      hasFollowUpRule={item.id != null && followUpRuleIds.has(item.id)}
     />
   );
 
@@ -2113,6 +2248,7 @@ export default function App() {
           demoMode={demoMode}
           privacyMode={privacyMode}
           onTogglePrivacy={() => setPrivacyMode((p) => !p)}
+          staleWarning={demoMode ? null : staleWarning}
         />
       )}
 
@@ -2242,7 +2378,8 @@ export default function App() {
         <div style={{ flex: isWide ? 1 : undefined, overflowY: isWide ? "auto" : undefined }}>
           <div style={(() => {
             const isFullWidth = viewMode === "board" || viewMode === "devlog"
-              || viewMode === "brief"
+              || viewMode === "brief" || viewMode === "chat" || viewMode === "people"
+              || viewMode === "memory" || viewMode === "insights" || viewMode === "okrs"
               || (viewMode === "list" && isWide);
             const needsBoardPadding = viewMode === "board" || viewMode === "devlog";
             return {
@@ -2288,6 +2425,9 @@ export default function App() {
                   privacyMode={privacyMode}
                   onTodoOverflow={handleTodoOverflow}
                   tagMap={tagMap}
+                  isNewFn={isNewCommitment}
+                  onMarkVisible={markVisible}
+                  onMarkHidden={markHidden}
                 />
               </>
             )}
@@ -2295,12 +2435,38 @@ export default function App() {
             {/* List view */}
             {hasApiKey !== false && viewMode === "list" && (
               <div style={{ background: OS.white, paddingTop: 12 }}>
+                {/* Person filter banner — shown when navigating from People page */}
+                {personFilter && (
+                  <div style={{
+                    display: "flex", alignItems: "center", gap: 8,
+                    padding: "6px 16px 0",
+                  }}>
+                    <div style={{
+                      display: "inline-flex", alignItems: "center", gap: 6,
+                      padding: "4px 10px", borderRadius: 6,
+                      background: OS.blueBg, border: `1px solid ${OS.blue}30`,
+                      fontSize: 12, fontWeight: 500, color: OS.blue,
+                    }}>
+                      <span style={{ fontSize: 14 }}>👤</span>
+                      Commitments involving <strong>{personFilter}</strong>
+                      <button
+                        onClick={() => setPersonFilter(null)}
+                        style={{
+                          background: "none", border: "none", padding: "0 0 0 4px",
+                          color: OS.blue, cursor: "pointer", fontSize: 14, lineHeight: 1,
+                          opacity: 0.7,
+                        }}
+                        title="Clear filter"
+                      >×</button>
+                    </div>
+                  </div>
+                )}
                 <div style={{ padding: "0 16px" }}>
                   <ViewToolbar
                     filter={listFilter}
-                    onFilterChange={setListFilter}
+                    onFilterChange={(f) => { setListFilter(f); setPersonFilter(null); }}
                     search={listSearch}
-                    onSearchChange={setListSearch}
+                    onSearchChange={(s) => { setListSearch(s); if (s) setPersonFilter(null); }}
                     tags={effectiveTags}
                     selectedTags={listSelectedTags}
                     onTagToggle={toggleListTag}
@@ -2360,13 +2526,62 @@ export default function App() {
               </div>
             )}
 
-            {/* Brief view */}
+            {/* Daily Planner view */}
             {viewMode === "brief" && (
-              <BriefView commitments={commitments} onCalendar={onCalendar} onDone={onDone} demoMode={demoMode} demoBriefs={demoMode ? DEMO_BRIEFS : undefined} />
+              <DailyPlanner commitments={commitments} demoMode={demoMode} showToast={showToast} />
             )}
 
             {/* Dev Log view */}
             {viewMode === "devlog" && <DevLogView demoMode={demoMode} demoEntries={demoMode ? DEMO_DECISION_LOG : undefined} />}
+
+            {/* Chat full-view */}
+            {viewMode === "chat" && (
+              <ClydeChat fullView={true} showToast={showToast} sidePanelOpen={false} proactiveMessage={null} onProactiveHandled={() => {}} demoMode={demoMode} hasApiKey={hasApiKey === true} onNavigateToDraft={(draftId) => { setActiveDraftId(draftId); setViewMode("draft"); }} />
+            )}
+
+            {/* People view */}
+            {viewMode === "people" && (
+              <PeoplePanel
+                demoMode={demoMode}
+                showToast={showToast}
+                onViewCommitments={(name) => {
+                  setPersonFilter(name);
+                  setListFilter("all");
+                  setListSearch("");
+                  setViewMode("list");
+                }}
+                onNavigateToDraft={(draftId) => {
+                  setActiveDraftId(draftId);
+                  setViewMode("draft");
+                }}
+              />
+            )}
+
+            {/* Memory view */}
+            {viewMode === "memory" && (
+              <MemoryPanel demoMode={demoMode} demoMemories={demoMode ? DEMO_MEMORIES : undefined} />
+            )}
+
+            {/* Insights view */}
+            {viewMode === "insights" && (
+              <InsightsPanel demoMode={demoMode} demoPatterns={demoMode ? DEMO_PATTERNS : undefined} demoDigests={demoMode ? DEMO_DIGESTS : undefined} />
+            )}
+
+            {/* OKRs view */}
+            {viewMode === "okrs" && (
+              <OKRPanel demoMode={demoMode} demoOKRs={demoMode ? DEMO_OKRS : undefined} demoLinks={demoMode ? DEMO_OKR_LINKS : undefined} />
+            )}
+
+            {/* Draft Composer view (reachable from Chat) */}
+            {viewMode === "draft" && activeDraftId !== null && (
+              <DraftComposer
+                draftId={activeDraftId}
+                demoMode={demoMode}
+                onBack={() => setViewMode("chat")}
+                onSent={() => { setActiveDraftId(null); setViewMode("list"); }}
+                showToast={showToast}
+              />
+            )}
 
             {/* Settings view */}
             {viewMode === "settings" && (
@@ -2403,10 +2618,10 @@ export default function App() {
         </div>
       )}
 
-      {showSmartTags && <SmartTagsModal onClose={() => setShowSmartTags(false)} />}
+      {showSmartTags && <SmartTagsModal onClose={() => setShowSmartTags(false)} demoMode={demoMode} />}
 
       {toast && <Toast message={toast.message} variant={toast.variant} onClose={() => setToast(null)} />}
-      <ClydeChat showToast={showToast} sidePanelOpen={showPanel} proactiveMessage={proactiveMsg} onProactiveHandled={() => setProactiveMsg(null)} demoMode={demoMode} hasApiKey={hasApiKey === true} />
+      {viewMode !== "chat" && <ClydeChat showToast={showToast} sidePanelOpen={showPanel} proactiveMessage={proactiveMsg} onProactiveHandled={() => setProactiveMsg(null)} demoMode={demoMode} hasApiKey={hasApiKey === true} />}
     </div>
     </>
   );
