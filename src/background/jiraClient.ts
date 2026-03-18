@@ -99,13 +99,19 @@ export async function searchJiraIssues(
       throw new Error(`Jira API ${resp.status}: ${text}`);
     }
 
-    const data = (await resp.json()) as JiraSearchResult;
-    allIssues.push(...data.issues);
+    const data = (await resp.json()) as Record<string, unknown>;
+    // The new /search/jql endpoint may return issues in "issues" or "values"
+    const issues = (data.issues ?? data.values ?? []) as JiraIssueResponse[];
+    allIssues.push(...issues);
 
-    onProgress?.(allIssues.length, data.total);
+    // Total may be in "total" (classic) or absent (cursor-based pagination)
+    const total = (data.total as number | undefined) ?? undefined;
+    onProgress?.(allIssues.length, total ?? allIssues.length);
 
-    startAt += data.maxResults;
-    if (startAt >= data.total) break;
+    // Stop if: no more results, or we have a total and exceeded it
+    if (issues.length < maxResults) break;
+    if (total != null && startAt + issues.length >= total) break;
+    startAt += issues.length;
   }
 
   return allIssues;
