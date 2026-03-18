@@ -676,44 +676,69 @@ export function EngStatsView({ darkMode = false }: EngStatsViewProps) {
     setSyncing(true);
     setSyncError(null);
     setSyncResult(null);
+    setJiraSyncProgress(null);
+    const parts: string[] = [];
     try {
-      const resp = await chrome.runtime.sendMessage({ type: "GITHUB_SYNC" });
+      // 1. GitHub sync
+      const ghResp = await chrome.runtime.sendMessage({ type: "GITHUB_SYNC" });
 
-      if (!resp) {
+      if (!ghResp) {
         setSyncError("No response from service worker — try reloading the extension");
         return;
       }
 
-      // Show errors (service worker sends errors[] and/or error)
-      const errList = resp.errors as string[] | undefined;
-      const errSingle = resp.error as string | undefined;
-      if (errList?.length) {
-        setSyncError(errList.join(" | "));
-      } else if (errSingle) {
-        setSyncError(errSingle);
-      }
+      const ghErrors = ghResp.errors as string[] | undefined;
+      const ghError = ghResp.error as string | undefined;
+      if (ghErrors?.length) parts.push(`GitHub: ${ghErrors.join(", ")}`);
+      else if (ghError) parts.push(`GitHub: ${ghError}`);
 
-      // Show result
-      const s = resp.synced as number | undefined;
-      const t = resp.total as number | undefined;
-      if (s != null) {
-        if (s === 0 && (t ?? 0) > 0) {
-          setSyncResult(`${t} PRs found, all already synced`);
-        } else if (s === 0) {
-          setSyncResult("No merged PRs found in the last 90 days");
-        } else {
-          setSyncResult(`Synced ${s} PRs` + (t != null ? ` (${t} found)` : ""));
+      const ghSynced = ghResp.synced as number | undefined;
+      const ghTotal = ghResp.total as number | undefined;
+      if (ghSynced != null) {
+        if (ghSynced === 0 && (ghTotal ?? 0) > 0) {
+          setSyncResult(`${ghTotal} PRs found, all already synced`);
+        } else if (ghSynced > 0) {
+          setSyncResult(`Synced ${ghSynced} PRs`);
         }
       }
 
-      const r = await chrome.storage.local.get("githubLastSynced");
-      setLastSynced(r.githubLastSynced ?? null);
-      // Force live queries to re-evaluate with fresh data from SW
+      // 2. Jira sync (if configured)
+      const jiraConf = await chrome.storage.local.get(["jiraToken", "jiraEmail"]);
+      if (jiraConf.jiraToken && jiraConf.jiraEmail) {
+        setSyncResult((prev) => prev ? `${prev} — syncing Jira…` : "Syncing Jira…");
+        const jiraResp = await chrome.runtime.sendMessage({ type: "JIRA_SYNC" });
+
+        if (jiraResp) {
+          const jErrors = jiraResp.errors as string[] | undefined;
+          const jError = jiraResp.error as string | undefined;
+          if (jErrors?.length) parts.push(`Jira: ${jErrors.join(", ")}`);
+          else if (jError) parts.push(`Jira: ${jError}`);
+
+          const jSynced = jiraResp.synced as number | undefined;
+          const jLinked = jiraResp.linked as number | undefined;
+          const jiraMsg = [
+            jSynced ? `${jSynced} tickets` : null,
+            jLinked ? `${jLinked} linked` : null,
+          ].filter(Boolean).join(", ");
+
+          setSyncResult((prev) => {
+            const ghPart = prev?.replace(/ — syncing Jira…$/, "") ?? "";
+            return [ghPart, jiraMsg].filter(Boolean).join(" | ");
+          });
+        }
+        setJiraSyncProgress(null);
+      }
+
+      if (parts.length) setSyncError(parts.join(" | "));
+
+      const r = await chrome.storage.local.get(["githubLastSynced", "jiraLastSynced"]);
+      setLastSynced(r.githubLastSynced ?? r.jiraLastSynced ?? null);
       setQueryKey((k) => k + 1);
     } catch (e) {
       setSyncError(String(e));
     } finally {
       setSyncing(false);
+      setJiraSyncProgress(null);
     }
   }, []);
 
