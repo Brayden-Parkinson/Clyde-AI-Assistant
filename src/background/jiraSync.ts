@@ -60,14 +60,19 @@ export async function syncJiraData(): Promise<{
   const projects = result.jiraProjects as string[] | undefined;
 
   if (!token || !email) {
+    console.log("[CT:jira] No Jira credentials configured — skipping");
     return { synced: 0, total: 0, linked: 0, errors: ["No Jira credentials configured"] };
   }
   if (!baseUrl) {
+    console.log("[CT:jira] No Jira URL configured — skipping");
     return { synced: 0, total: 0, linked: 0, errors: ["No Jira URL configured"] };
   }
   if (!projects?.length) {
+    console.log("[CT:jira] No Jira projects configured — skipping");
     return { synced: 0, total: 0, linked: 0, errors: ["No Jira projects configured"] };
   }
+
+  console.log(`[CT:jira] Starting sync for projects: ${projects.join(", ")}`);
 
   let synced = 0;
   let totalFound = 0;
@@ -78,12 +83,17 @@ export async function syncJiraData(): Promise<{
   for (const project of projects) {
     try {
       const jql = `project = ${project} AND updated >= "-${DEFAULT_LOOKBACK_DAYS}d" ORDER BY updated DESC`;
+      console.log(`[CT:jira] Fetching: ${jql}`);
 
       const issues = await searchJiraIssues(email, token, baseUrl, jql, (current, total) => {
+        if (current % 100 === 0 || current === total) {
+          console.log(`[CT:jira] ${project}: ${current}/${total} tickets fetched`);
+        }
         broadcastProgress("tickets", current, total);
       });
 
       totalFound += issues.length;
+      console.log(`[CT:jira] ${project}: ${issues.length} tickets found`);
 
       for (const issue of issues) {
         try {
@@ -112,8 +122,12 @@ export async function syncJiraData(): Promise<{
     }
   }
 
+  console.log(`[CT:jira] Ticket sync done: ${synced} upserted, ${totalFound} total, ${errors.length} errors`);
+
   // Phase 2: Link PRs to Jira tickets
+  console.log("[CT:jira] Starting PR-Jira linking...");
   const linked = await linkPRsToJira();
+  console.log(`[CT:jira] Linking done: ${linked} new links created`);
 
   await chrome.storage.local.set({ jiraLastSynced: syncedAt });
   return { synced, total: totalFound, linked, errors };
@@ -135,6 +149,7 @@ export async function linkPRsToJira(): Promise<number> {
   const unlinkedPRs = allPRs.filter((pr) => pr.id != null && !linkedPRIds.has(pr.id));
   let linked = 0;
 
+  console.log(`[CT:jira] Linker: ${allPRs.length} PRs total, ${existingLinks.length} already linked, ${unlinkedPRs.length} to scan, ${knownKeys.size} known Jira keys`);
   broadcastProgress("linking", 0, unlinkedPRs.length);
 
   for (let i = 0; i < unlinkedPRs.length; i++) {

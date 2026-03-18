@@ -81,7 +81,7 @@ export async function searchJiraIssues(
   const base = baseUrl.replace(/\/+$/, "");
 
   while (true) {
-    const resp = await fetch(`${base}/rest/api/3/search`, {
+    const resp = await fetch(`${base}/rest/api/3/search/jql`, {
       method: "POST",
       headers: {
         Authorization: basicAuthHeader(email, token),
