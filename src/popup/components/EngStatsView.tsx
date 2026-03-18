@@ -680,32 +680,41 @@ export function EngStatsView({ darkMode = false }: EngStatsViewProps) {
     setJiraSyncProgress(null);
     const parts: string[] = [];
     try {
-      // 1. GitHub sync
-      setSyncPhase("GitHub PRs…");
-      const ghResp = await chrome.runtime.sendMessage({ type: "GITHUB_SYNC" });
+      // 1. GitHub sync — skip if synced within the last hour
+      const storageSnap = await chrome.storage.local.get(["githubLastSynced", "jiraToken", "jiraEmail"]);
+      const ghLastSynced = storageSnap.githubLastSynced as string | undefined;
+      const ghSyncedRecently = ghLastSynced && (Date.now() - new Date(ghLastSynced).getTime()) < 60 * 60 * 1000;
 
-      if (!ghResp) {
-        setSyncError("No response from service worker — try reloading the extension");
-        return;
+      let ghMsg: string | null = null;
+      if (ghSyncedRecently) {
+        ghMsg = "GitHub up to date";
+        setSyncPhase("Skipping GitHub (recent)…");
+      } else {
+        setSyncPhase("GitHub PRs…");
+        const ghResp = await chrome.runtime.sendMessage({ type: "GITHUB_SYNC" });
+
+        if (!ghResp) {
+          setSyncError("No response from service worker — try reloading the extension");
+          return;
+        }
+
+        const ghErrors = ghResp.errors as string[] | undefined;
+        const ghError = ghResp.error as string | undefined;
+        if (ghErrors?.length) parts.push(`GitHub: ${ghErrors.join(", ")}`);
+        else if (ghError) parts.push(`GitHub: ${ghError}`);
+
+        const ghSynced = ghResp.synced as number | undefined;
+        const ghTotal = ghResp.total as number | undefined;
+        ghMsg = ghSynced != null && ghSynced > 0
+          ? `${ghSynced} PRs`
+          : ghTotal && ghTotal > 0
+          ? `${ghTotal} PRs (up to date)`
+          : null;
       }
 
-      const ghErrors = ghResp.errors as string[] | undefined;
-      const ghError = ghResp.error as string | undefined;
-      if (ghErrors?.length) parts.push(`GitHub: ${ghErrors.join(", ")}`);
-      else if (ghError) parts.push(`GitHub: ${ghError}`);
-
-      const ghSynced = ghResp.synced as number | undefined;
-      const ghTotal = ghResp.total as number | undefined;
-      const ghMsg = ghSynced != null && ghSynced > 0
-        ? `${ghSynced} PRs`
-        : ghTotal && ghTotal > 0
-        ? `${ghTotal} PRs (up to date)`
-        : null;
-
       // 2. Jira sync (if configured)
-      const jiraConf = await chrome.storage.local.get(["jiraToken", "jiraEmail"]);
       let jiraMsg: string | null = null;
-      if (jiraConf.jiraToken && jiraConf.jiraEmail) {
+      if (storageSnap.jiraToken && storageSnap.jiraEmail) {
         setSyncPhase("Jira tickets…");
         const jiraResp = await chrome.runtime.sendMessage({ type: "JIRA_SYNC" });
 
