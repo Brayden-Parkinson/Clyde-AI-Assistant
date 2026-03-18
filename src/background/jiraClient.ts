@@ -81,19 +81,17 @@ export async function searchJiraIssues(
   const base = baseUrl.replace(/\/+$/, "");
 
   while (true) {
-    const resp = await fetch(`${base}/rest/api/3/search/jql`, {
-      method: "POST",
+    const params = new URLSearchParams({
+      jql,
+      startAt: String(startAt),
+      maxResults: String(maxResults),
+      fields,
+    });
+    const resp = await fetch(`${base}/rest/api/3/search/jql?${params}`, {
       headers: {
         Authorization: basicAuthHeader(email, token),
-        "Content-Type": "application/json",
         Accept: "application/json",
       },
-      body: JSON.stringify({
-        jql,
-        startAt,
-        maxResults,
-        fields: fields.split(","),
-      }),
     });
 
     if (!resp.ok) {
