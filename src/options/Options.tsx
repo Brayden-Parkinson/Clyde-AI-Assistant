@@ -55,6 +55,15 @@ interface FormState {
   // Phase 2: external integration tokens (stored like anthropicApiKey)
   slackBotToken: string;
   nudgeEnabled: boolean;
+  // Eng Stats: GitHub integration
+  githubToken: string;
+  githubRepos: string;   // newline-separated textarea value
+  githubOrg: string;
+  // Eng Stats: Jira integration
+  jiraEmail: string;
+  jiraToken: string;
+  jiraBaseUrl: string;
+  jiraProjects: string;   // comma-separated
 }
 
 const DEFAULT_FORM: FormState = {
@@ -82,6 +91,13 @@ const DEFAULT_FORM: FormState = {
   calendarEnabled: true,
   slackBotToken: "",
   nudgeEnabled: true,
+  githubToken: "",
+  githubRepos: "",
+  githubOrg: "",
+  jiraEmail: "",
+  jiraToken: "",
+  jiraBaseUrl: "https://openspaceai.atlassian.net",
+  jiraProjects: "RAD",
 };
 
 type SettingsTab = "profile" | "integrations" | "detection" | "advanced";
@@ -366,6 +382,14 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
   const [activeTab, setActiveTab] = useState<SettingsTab>("profile");
   const [granolaConnected, setGranolaConnected] = useState(false);
   const [granolaTestLoading, setGranolaTestLoading] = useState(false);
+  const [githubTestLoading, setGithubTestLoading] = useState(false);
+  const [githubTestUser, setGithubTestUser] = useState<string | null>(null);
+  const [githubTestError, setGithubTestError] = useState<string | null>(null);
+  const [githubFetchingRepos, setGithubFetchingRepos] = useState(false);
+  const [githubAvailableRepos, setGithubAvailableRepos] = useState<string[]>([]);
+  const [jiraTestLoading, setJiraTestLoading] = useState(false);
+  const [jiraTestUser, setJiraTestUser] = useState<string | null>(null);
+  const [jiraTestError, setJiraTestError] = useState<string | null>(null);
   const [extensionId, setExtensionId] = useState("");
   const [copiedInstall, setCopiedInstall] = useState(false);
   const [restoring, setRestoring] = useState(false);
@@ -415,6 +439,13 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
         "slackEnabled",
         "granolaEnabled",
         "calendarEnabled",
+        "githubToken",
+        "githubRepos",
+        "githubOrg",
+        "jiraEmail",
+        "jiraToken",
+        "jiraBaseUrl",
+        "jiraProjects",
       ],
       (result) => {
         setForm((prev) => ({
@@ -452,6 +483,17 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
           calendarEnabled: result.calendarEnabled !== false,
           slackBotToken: result.slackBotToken ?? "",
           nudgeEnabled: result.nudgeEnabled !== false,
+          githubToken: result.githubToken ?? "",
+          githubRepos: Array.isArray(result.githubRepos)
+            ? (result.githubRepos as string[]).join("\n")
+            : result.githubRepos ?? "",
+          githubOrg: result.githubOrg ?? "",
+          jiraEmail: result.jiraEmail ?? "",
+          jiraToken: result.jiraToken ?? "",
+          jiraBaseUrl: result.jiraBaseUrl ?? "https://openspaceai.atlassian.net",
+          jiraProjects: Array.isArray(result.jiraProjects)
+            ? (result.jiraProjects as string[]).join(", ")
+            : result.jiraProjects ?? "RAD",
         }));
         if (result.confidenceTuneInfo) {
           setTuneInfo(result.confidenceTuneInfo as { lastChecked: string; dismissRate: number; totalSamples: number });
@@ -541,6 +583,19 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
         calendarEnabled: formData.calendarEnabled,
         slackBotToken: formData.slackBotToken,
         nudgeEnabled: formData.nudgeEnabled,
+        githubToken: formData.githubToken,
+        githubRepos: formData.githubRepos
+          .split("\n")
+          .map((r) => r.trim())
+          .filter(Boolean),
+        githubOrg: formData.githubOrg.trim(),
+        jiraEmail: formData.jiraEmail.trim(),
+        jiraToken: formData.jiraToken,
+        jiraBaseUrl: formData.jiraBaseUrl.trim(),
+        jiraProjects: formData.jiraProjects
+          .split(/[,\n]/)
+          .map((s: string) => s.trim())
+          .filter(Boolean),
       },
       () => {
         showToast("Settings saved", "success");
@@ -1513,6 +1568,330 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
             <div style={subLabel}>Clyde checks every 2 hours and surfaces commitments that need attention</div>
           </div>
           <Toggle value={form.nudgeEnabled} onChange={() => update("nudgeEnabled", !form.nudgeEnabled)} />
+        </div>
+      </div>
+
+      {/* GitHub — Eng Stats */}
+      <div style={sectionStyle}>
+        <h2 style={sectionTitle}>GitHub</h2>
+        <p style={{ fontSize: 12, color: dk(darkMode, 'rgba(255,255,255,0.35)', OS.muted), marginBottom: 14, lineHeight: 1.5 }}>
+          Powers the Eng Stats dashboard — cycle time, review velocity, PR size, and AI adoption metrics.
+          Token is stored locally and never sent to Anthropic.
+        </p>
+
+        {/* PAT + Test button */}
+        <div style={{ ...fieldRow, marginBottom: 12 }}>
+          <div>
+            <div style={labelStyle}>Personal Access Token</div>
+            <div style={subLabel}>Requires <code>repo</code> scope. Add <code>read:org</code> for Copilot metrics.</div>
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <input
+              type="password"
+              style={inputStyle}
+              value={form.githubToken}
+              placeholder="ghp_..."
+              onChange={(e) => {
+                update("githubToken", e.target.value);
+                setGithubTestUser(null);
+                setGithubTestError(null);
+              }}
+            />
+            <button
+              disabled={!form.githubToken || githubTestLoading}
+              onClick={async () => {
+                setGithubTestLoading(true);
+                setGithubTestUser(null);
+                setGithubTestError(null);
+                try {
+                  const resp = await fetch("https://api.github.com/user", {
+                    headers: {
+                      Authorization: `Bearer ${form.githubToken}`,
+                      Accept: "application/vnd.github+json",
+                    },
+                  });
+                  if (!resp.ok) throw new Error(`${resp.status} ${resp.statusText}`);
+                  const data = await resp.json() as { login: string };
+                  setGithubTestUser(data.login);
+                } catch (err) {
+                  setGithubTestError(err instanceof Error ? err.message : String(err));
+                } finally {
+                  setGithubTestLoading(false);
+                }
+              }}
+              style={{
+                border: dk(darkMode, '0.5px solid rgba(255,255,255,0.10)', '0.5px solid rgba(0,0,0,0.12)'),
+                borderRadius: 999,
+                padding: "5px 14px",
+                fontSize: 12,
+                fontWeight: 500,
+                background: "transparent",
+                color: dk(darkMode, 'rgba(255,255,255,0.7)', OS.secondary),
+                cursor: !form.githubToken || githubTestLoading ? "not-allowed" : "pointer",
+                whiteSpace: "nowrap" as const,
+                opacity: !form.githubToken ? 0.4 : 1,
+                fontFamily: OS.font,
+              }}
+            >
+              {githubTestLoading ? "Testing…" : "Test"}
+            </button>
+          </div>
+        </div>
+        {githubTestUser && (
+          <div style={{ fontSize: 12, color: OS.green, marginBottom: 10, marginLeft: 2 }}>
+            ✓ Connected as <strong>{githubTestUser}</strong>
+          </div>
+        )}
+        {githubTestError && (
+          <div style={{ fontSize: 12, color: OS.red, marginBottom: 10, marginLeft: 2 }}>
+            ✗ {githubTestError}
+          </div>
+        )}
+
+        {/* Repo selector */}
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ ...fieldRow, marginBottom: 6 }}>
+            <div>
+              <div style={labelStyle}>Repositories</div>
+              <div style={subLabel}>Select repos to track in Eng Stats</div>
+            </div>
+            <button
+              disabled={!form.githubToken || githubFetchingRepos}
+              onClick={async () => {
+                setGithubFetchingRepos(true);
+                try {
+                  const resp = await fetch(
+                    "https://api.github.com/user/repos?per_page=100&sort=updated&affiliation=owner,collaborator,organization_member",
+                    {
+                      headers: {
+                        Authorization: `Bearer ${form.githubToken}`,
+                        Accept: "application/vnd.github+json",
+                      },
+                    },
+                  );
+                  if (!resp.ok) throw new Error(`${resp.status} ${resp.statusText}`);
+                  const repos = await resp.json() as Array<{ full_name: string }>;
+                  setGithubAvailableRepos(repos.map((r) => r.full_name));
+                } catch (err) {
+                  showToast(err instanceof Error ? err.message : "Failed to load repos", "error");
+                } finally {
+                  setGithubFetchingRepos(false);
+                }
+              }}
+              style={{
+                border: dk(darkMode, '0.5px solid rgba(255,255,255,0.10)', '0.5px solid rgba(0,0,0,0.12)'),
+                borderRadius: 999,
+                padding: "5px 14px",
+                fontSize: 12,
+                fontWeight: 500,
+                background: "transparent",
+                color: dk(darkMode, 'rgba(255,255,255,0.7)', OS.secondary),
+                cursor: !form.githubToken || githubFetchingRepos ? "not-allowed" : "pointer",
+                whiteSpace: "nowrap" as const,
+                opacity: !form.githubToken ? 0.4 : 1,
+                fontFamily: OS.font,
+              }}
+            >
+              {githubFetchingRepos ? "Loading…" : "Load repos"}
+            </button>
+          </div>
+
+          {githubAvailableRepos.length > 0 && (() => {
+            const selected = new Set(
+              form.githubRepos.split("\n").map((r) => r.trim()).filter(Boolean),
+            );
+            return (
+              <div style={{
+                border: dk(darkMode, '1px solid rgba(255,255,255,0.08)', `1px solid ${OS.border}`),
+                borderRadius: 8,
+                maxHeight: 200,
+                overflowY: "auto" as const,
+                padding: "4px 0",
+              }}>
+                {githubAvailableRepos.map((repo) => {
+                  const checked = selected.has(repo);
+                  return (
+                    <label
+                      key={repo}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 10,
+                        padding: "6px 12px",
+                        cursor: "pointer",
+                        background: checked
+                          ? dk(darkMode, "rgba(94,106,210,0.12)", "rgba(94,106,210,0.06)")
+                          : "transparent",
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => {
+                          const next = new Set(selected);
+                          if (checked) next.delete(repo);
+                          else next.add(repo);
+                          update("githubRepos", Array.from(next).join("\n"));
+                        }}
+                        style={{ accentColor: OS.blue, width: 14, height: 14 }}
+                      />
+                      <span style={{
+                        fontSize: 12,
+                        fontFamily: OS.mono,
+                        color: dk(darkMode, "rgba(255,255,255,0.8)", OS.text),
+                      }}>
+                        {repo}
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+            );
+          })()}
+
+          {githubAvailableRepos.length === 0 && form.githubRepos && (
+            <div style={{ fontSize: 11, color: dk(darkMode, 'rgba(255,255,255,0.35)', OS.muted), marginTop: 4 }}>
+              {form.githubRepos.split("\n").filter(Boolean).length} repo(s) configured. Click "Load repos" to change.
+            </div>
+          )}
+        </div>
+
+        <div style={{ ...fieldRow, marginBottom: 0 }}>
+          <div>
+            <div style={labelStyle}>GitHub Org <span style={{ fontWeight: 400, color: dk(darkMode, 'rgba(255,255,255,0.35)', OS.muted) }}>(optional)</span></div>
+            <div style={subLabel}>Required for Copilot usage metrics — needs <code>read:org</code> scope</div>
+          </div>
+          <input
+            type="text"
+            style={inputStyle}
+            value={form.githubOrg}
+            placeholder="my-org"
+            onChange={(e) => update("githubOrg", e.target.value)}
+          />
+        </div>
+      </div>
+
+      {/* Jira — Eng Stats */}
+      <div style={sectionStyle}>
+        <h2 style={sectionTitle}>Jira</h2>
+        <p style={{ fontSize: 12, color: dk(darkMode, 'rgba(255,255,255,0.35)', OS.muted), marginBottom: 14, lineHeight: 1.5 }}>
+          Links Jira tickets to GitHub PRs for team breakdowns and work type metrics.
+          Credentials are stored locally and never sent to Anthropic.
+        </p>
+
+        {/* Base URL */}
+        <div style={{ ...fieldRow, marginBottom: 12 }}>
+          <div>
+            <div style={labelStyle}>Jira URL</div>
+            <div style={subLabel}>Your Atlassian cloud instance</div>
+          </div>
+          <input
+            type="text"
+            style={inputStyle}
+            value={form.jiraBaseUrl}
+            placeholder="https://yourcompany.atlassian.net"
+            onChange={(e) => update("jiraBaseUrl", e.target.value)}
+          />
+        </div>
+
+        {/* Email */}
+        <div style={{ ...fieldRow, marginBottom: 12 }}>
+          <div>
+            <div style={labelStyle}>Email</div>
+            <div style={subLabel}>Atlassian account email for Basic Auth</div>
+          </div>
+          <input
+            type="email"
+            style={inputStyle}
+            value={form.jiraEmail}
+            placeholder="you@company.com"
+            onChange={(e) => update("jiraEmail", e.target.value)}
+          />
+        </div>
+
+        {/* API Token + Test */}
+        <div style={{ ...fieldRow, marginBottom: 12 }}>
+          <div>
+            <div style={labelStyle}>API Token</div>
+            <div style={subLabel}>Generate at id.atlassian.com/manage-profile/security/api-tokens</div>
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <input
+              type="password"
+              style={inputStyle}
+              value={form.jiraToken}
+              placeholder="ATATT3x..."
+              onChange={(e) => {
+                update("jiraToken", e.target.value);
+                setJiraTestUser(null);
+                setJiraTestError(null);
+              }}
+            />
+            <button
+              disabled={!form.jiraToken || !form.jiraEmail || jiraTestLoading}
+              onClick={async () => {
+                setJiraTestLoading(true);
+                setJiraTestUser(null);
+                setJiraTestError(null);
+                try {
+                  const base = form.jiraBaseUrl.replace(/\/+$/, "");
+                  const resp = await fetch(`${base}/rest/api/3/myself`, {
+                    headers: {
+                      Authorization: `Basic ${btoa(`${form.jiraEmail}:${form.jiraToken}`)}`,
+                      Accept: "application/json",
+                    },
+                  });
+                  if (!resp.ok) throw new Error(`${resp.status} ${resp.statusText}`);
+                  const data = await resp.json() as { displayName: string };
+                  setJiraTestUser(data.displayName);
+                } catch (err) {
+                  setJiraTestError(err instanceof Error ? err.message : String(err));
+                } finally {
+                  setJiraTestLoading(false);
+                }
+              }}
+              style={{
+                border: dk(darkMode, '0.5px solid rgba(255,255,255,0.10)', '0.5px solid rgba(0,0,0,0.12)'),
+                borderRadius: 999,
+                padding: "5px 14px",
+                fontSize: 12,
+                fontWeight: 500,
+                background: "transparent",
+                color: dk(darkMode, 'rgba(255,255,255,0.7)', OS.secondary),
+                cursor: !form.jiraToken || !form.jiraEmail || jiraTestLoading ? "not-allowed" : "pointer",
+                whiteSpace: "nowrap" as const,
+                opacity: !form.jiraToken || !form.jiraEmail ? 0.4 : 1,
+                fontFamily: OS.font,
+              }}
+            >
+              {jiraTestLoading ? "Testing\u2026" : "Test"}
+            </button>
+          </div>
+        </div>
+        {jiraTestUser && (
+          <div style={{ fontSize: 12, color: OS.green, marginBottom: 10, marginLeft: 2 }}>
+            ✓ Connected as <strong>{jiraTestUser}</strong>
+          </div>
+        )}
+        {jiraTestError && (
+          <div style={{ fontSize: 12, color: OS.red, marginBottom: 10, marginLeft: 2 }}>
+            ✗ {jiraTestError}
+          </div>
+        )}
+
+        {/* Projects */}
+        <div style={{ ...fieldRow, marginBottom: 0 }}>
+          <div>
+            <div style={labelStyle}>Projects</div>
+            <div style={subLabel}>Comma-separated Jira project keys</div>
+          </div>
+          <input
+            type="text"
+            style={inputStyle}
+            value={form.jiraProjects}
+            placeholder="RAD, ENG"
+            onChange={(e) => update("jiraProjects", e.target.value)}
+          />
         </div>
       </div>
     </>

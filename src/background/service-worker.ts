@@ -37,6 +37,8 @@ import { generateWeeklyDigest } from "./weekly-digest";
 import { initSyncHooks, syncPush } from "./sync-engine";
 import { fetchAndCacheCalendarEvents } from "./google-calendar";
 import { initiateGoogleOAuth, disconnectGoogle } from "./google-auth";
+import { syncGitHubData } from "./githubSync";
+import { syncJiraData, linkPRsToJira } from "./jiraSync";
 
 // ─── Badge ───
 
@@ -389,6 +391,17 @@ chrome.runtime.onInstalled.addListener(async () => {
     periodInMinutes: 120,
   });
 
+  // Eng Stats: GitHub sync every 6 hours
+  chrome.alarms.create(ALARMS.GITHUB_SYNC, {
+    delayInMinutes: 10,
+    periodInMinutes: 360,
+  });
+  // Eng Stats: Jira sync every 6 hours
+  chrome.alarms.create(ALARMS.JIRA_SYNC, {
+    delayInMinutes: 15,
+    periodInMinutes: 360,
+  });
+
   await scheduleMorningDigestAlarm();
   updateBadge();
 
@@ -449,6 +462,10 @@ chrome.runtime.onStartup.addListener(async () => {
   chrome.alarms.create(ALARMS.WEEKLY_DIGEST, { delayInMinutes: 180, periodInMinutes: 7 * 24 * 60 });
   // Phase 2: Follow-up check every 2 hours
   chrome.alarms.create(ALARMS.FOLLOW_UP_CHECK, { delayInMinutes: 5, periodInMinutes: 120 });
+  // Eng Stats: GitHub sync every 6 hours
+  chrome.alarms.create(ALARMS.GITHUB_SYNC, { delayInMinutes: 10, periodInMinutes: 360 });
+  // Eng Stats: Jira sync every 6 hours
+  chrome.alarms.create(ALARMS.JIRA_SYNC, { delayInMinutes: 15, periodInMinutes: 360 });
   await scheduleMorningDigestAlarm();
 
   initSyncHooks();
@@ -571,7 +588,7 @@ chrome.runtime.onMessage.addListener(
             // Restore chrome.storage settings — strip sensitive keys to prevent backup poisoning
             const chromeStorage = state.chrome_storage as Record<string, unknown> | undefined;
             if (chromeStorage) {
-              const SENSITIVE_KEYS = new Set(["anthropicApiKey", "slackBotToken", "googleAuthTokens"]);
+              const SENSITIVE_KEYS = new Set(["anthropicApiKey", "slackBotToken", "googleAuthTokens", "githubToken"]);
               const safeStorage: Record<string, unknown> = {};
               for (const [k, v] of Object.entries(chromeStorage)) {
                 if (!SENSITIVE_KEYS.has(k)) safeStorage[k] = v;
@@ -694,6 +711,20 @@ chrome.runtime.onMessage.addListener(
         .then((ruleId) => sendResponse({ ok: true, ruleId }))
         .catch((err) => sendResponse({ ok: false, error: String(err) }));
       return true;
+    } else if (message.type === "GITHUB_SYNC") {
+      syncGitHubData()
+        .then((result) => {
+          // After GitHub sync, run the PR-Jira linker too
+          linkPRsToJira().catch(() => {});
+          sendResponse({ ok: true, ...result });
+        })
+        .catch((err) => sendResponse({ ok: false, error: String(err) }));
+      return true;
+    } else if (message.type === "JIRA_SYNC") {
+      syncJiraData()
+        .then((result) => sendResponse({ ok: true, ...result }))
+        .catch((err) => sendResponse({ ok: false, error: String(err) }));
+      return true;
     } else if (message.type === "SEND_DRAFT") {
       const { draftId } = (message as unknown) as { draftId: number; type: string };
       (async () => {
@@ -766,6 +797,15 @@ chrome.alarms.onAlarm.addListener((alarm) => {
     case ALARMS.FOLLOW_UP_CHECK:
       import("./follow-up-engine").then(({ runFollowUpCheck }) => runFollowUpCheck())
         .catch((err) => console.warn("[CT:worker] Follow-up check failed:", err));
+      break;
+    case ALARMS.GITHUB_SYNC:
+      syncGitHubData()
+        .then(() => linkPRsToJira())
+        .catch((err) => console.warn("[CT:worker] GitHub sync failed:", err));
+      break;
+    case ALARMS.JIRA_SYNC:
+      syncJiraData()
+        .catch((err) => console.warn("[CT:worker] Jira sync failed:", err));
       break;
     default:
       if (alarm.name.startsWith(ALARMS.SNOOZE_PREFIX)) {
