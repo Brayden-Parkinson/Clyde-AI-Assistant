@@ -209,9 +209,10 @@ export async function syncGitHubData(): Promise<{
         }
       }
     } catch (copilotErr) {
-      // Copilot API often 403s without the right plan — don't treat as fatal
-      if (!String(copilotErr).includes("403")) {
-        errors.push(`Copilot: ${String(copilotErr)}`);
+      // Copilot API often 403s/404s without the right plan — don't treat as fatal
+      const copilotErrStr = String(copilotErr);
+      if (!copilotErrStr.includes("403") && !copilotErrStr.includes("404")) {
+        errors.push(`Copilot: ${copilotErrStr}`);
       }
     }
   }
