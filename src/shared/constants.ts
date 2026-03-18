@@ -34,6 +34,8 @@ export const ALARMS = {
   WEEKLY_DIGEST: "weekly-digest",
   SYNC_PUSH: "sync-push",
   FOLLOW_UP_CHECK: "follow-up-check",
+  GITHUB_SYNC: "github-sync",
+  JIRA_SYNC: "jira-sync",
 } as const;
 
 /** How long to keep raw messages (7 days in ms) */
