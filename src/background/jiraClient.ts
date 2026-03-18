@@ -73,7 +73,7 @@ export async function searchJiraIssues(
   onProgress?: (current: number, total: number) => void,
 ): Promise<JiraIssueResponse[]> {
   const allIssues: JiraIssueResponse[] = [];
-  let startAt = 0;
+  let nextPageToken: string | null = null;
   const maxResults = 100;
   const fields = "summary,status,issuetype,components,priority,project,parent,created,updated,resolutiondate";
 
@@ -83,10 +83,11 @@ export async function searchJiraIssues(
   while (true) {
     const params = new URLSearchParams({
       jql,
-      startAt: String(startAt),
       maxResults: String(maxResults),
       fields,
     });
+    if (nextPageToken) params.set("nextPageToken", nextPageToken);
+
     const resp = await fetch(`${base}/rest/api/3/search/jql?${params}`, {
       headers: {
         Authorization: basicAuthHeader(email, token),
@@ -100,18 +101,17 @@ export async function searchJiraIssues(
     }
 
     const data = (await resp.json()) as Record<string, unknown>;
-    // The new /search/jql endpoint may return issues in "issues" or "values"
-    const issues = (data.issues ?? data.values ?? []) as JiraIssueResponse[];
+    const issues = (data.issues ?? []) as JiraIssueResponse[];
     allIssues.push(...issues);
 
-    // Total may be in "total" (classic) or absent (cursor-based pagination)
-    const total = (data.total as number | undefined) ?? undefined;
-    onProgress?.(allIssues.length, total ?? allIssues.length);
+    const isLast = data.isLast as boolean | undefined;
+    onProgress?.(allIssues.length, allIssues.length);
 
-    // Stop if: no more results, or we have a total and exceeded it
-    if (issues.length < maxResults) break;
-    if (total != null && startAt + issues.length >= total) break;
-    startAt += issues.length;
+    // Stop if this is the last page or no more results
+    if (isLast !== false || issues.length === 0) break;
+
+    nextPageToken = (data.nextPageToken as string) ?? null;
+    if (!nextPageToken) break;
   }
 
   return allIssues;
