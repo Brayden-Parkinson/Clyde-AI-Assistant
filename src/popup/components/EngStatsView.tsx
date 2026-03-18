@@ -672,6 +672,7 @@ export function EngStatsView({ darkMode = false }: EngStatsViewProps) {
 
   // ─── Manual sync ───
   const [syncResult, setSyncResult] = useState<string | null>(null);
+  const [syncPhase, setSyncPhase] = useState<string>("");
   const handleSync = useCallback(async () => {
     setSyncing(true);
     setSyncError(null);
@@ -680,6 +681,7 @@ export function EngStatsView({ darkMode = false }: EngStatsViewProps) {
     const parts: string[] = [];
     try {
       // 1. GitHub sync
+      setSyncPhase("GitHub PRs…");
       const ghResp = await chrome.runtime.sendMessage({ type: "GITHUB_SYNC" });
 
       if (!ghResp) {
@@ -694,18 +696,17 @@ export function EngStatsView({ darkMode = false }: EngStatsViewProps) {
 
       const ghSynced = ghResp.synced as number | undefined;
       const ghTotal = ghResp.total as number | undefined;
-      if (ghSynced != null) {
-        if (ghSynced === 0 && (ghTotal ?? 0) > 0) {
-          setSyncResult(`${ghTotal} PRs found, all already synced`);
-        } else if (ghSynced > 0) {
-          setSyncResult(`Synced ${ghSynced} PRs`);
-        }
-      }
+      const ghMsg = ghSynced != null && ghSynced > 0
+        ? `${ghSynced} PRs`
+        : ghTotal && ghTotal > 0
+        ? `${ghTotal} PRs (up to date)`
+        : null;
 
       // 2. Jira sync (if configured)
       const jiraConf = await chrome.storage.local.get(["jiraToken", "jiraEmail"]);
+      let jiraMsg: string | null = null;
       if (jiraConf.jiraToken && jiraConf.jiraEmail) {
-        setSyncResult((prev) => prev ? `${prev} — syncing Jira…` : "Syncing Jira…");
+        setSyncPhase("Jira tickets…");
         const jiraResp = await chrome.runtime.sendMessage({ type: "JIRA_SYNC" });
 
         if (jiraResp) {
@@ -716,19 +717,16 @@ export function EngStatsView({ darkMode = false }: EngStatsViewProps) {
 
           const jSynced = jiraResp.synced as number | undefined;
           const jLinked = jiraResp.linked as number | undefined;
-          const jiraMsg = [
+          jiraMsg = [
             jSynced ? `${jSynced} tickets` : null,
             jLinked ? `${jLinked} linked` : null,
-          ].filter(Boolean).join(", ");
-
-          setSyncResult((prev) => {
-            const ghPart = prev?.replace(/ — syncing Jira…$/, "") ?? "";
-            return [ghPart, jiraMsg].filter(Boolean).join(" | ");
-          });
+          ].filter(Boolean).join(", ") || null;
         }
         setJiraSyncProgress(null);
       }
 
+      // Combined result
+      setSyncResult([ghMsg, jiraMsg].filter(Boolean).join(" · ") || "Up to date");
       if (parts.length) setSyncError(parts.join(" | "));
 
       const r = await chrome.storage.local.get(["githubLastSynced", "jiraLastSynced"]);
@@ -738,6 +736,7 @@ export function EngStatsView({ darkMode = false }: EngStatsViewProps) {
       setSyncError(String(e));
     } finally {
       setSyncing(false);
+      setSyncPhase("");
       setJiraSyncProgress(null);
     }
   }, []);
@@ -918,7 +917,7 @@ export function EngStatsView({ darkMode = false }: EngStatsViewProps) {
             opacity: syncing ? 0.6 : 1,
           }}
         >
-          {syncing ? "Syncing…" : "Sync"}
+          {syncing ? (syncPhase || "Syncing…") : "Sync"}
         </button>
       </div>
 
