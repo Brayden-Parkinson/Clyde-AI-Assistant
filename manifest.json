@@ -22,7 +22,9 @@
     "https://www.googleapis.com/*",
     "https://accounts.google.com/*",
     "https://slack.com/api/*",
-    "https://gmail.googleapis.com/*"
+    "https://gmail.googleapis.com/*",
+    "https://api.github.com/*",
+    "https://*.atlassian.net/*"
   ],
   "background": {
     "service_worker": "src/background/service-worker.ts",
