@@ -13,6 +13,7 @@ import {
   fetchReleases,
   fetchCopilotMetrics,
   detectAITools,
+  detectAIReviewers,
   isBot,
 } from "./githubClient";
 
@@ -121,6 +122,7 @@ export async function syncGitHubData(): Promise<{
 
           const commitMessages = commits.map((c) => c.commit.message);
           const aiTools = detectAITools(pull.body, commitMessages, pull.head?.ref, pull.user?.login);
+          const aiReviewers = detectAIReviewers(reviews);
 
           const metric: PRMetric = {
             repo,
@@ -138,6 +140,7 @@ export async function syncGitHubData(): Promise<{
             changedFiles: detail.changed_files,
             aiAssisted: aiTools.length > 0,
             aiTools,
+            aiReviewers,
             syncedAt,
           };
 

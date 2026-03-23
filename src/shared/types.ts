@@ -675,8 +675,10 @@ export interface PRMetric {
   changedFiles: number;
   /** true if any AI co-author/signature was detected */
   aiAssisted: boolean;
-  /** e.g. ["claude", "cursor", "copilot"] */
+  /** e.g. ["claude", "cursor", "copilot"] — dev tools that authored code */
   aiTools: string[];
+  /** e.g. ["coderabbit", "copilot"] — AI tools that reviewed the PR */
+  aiReviewers: string[];
   syncedAt: string;
 }
 

@@ -259,6 +259,13 @@ class ClydeDB extends Dexie {
         if (pr.author === undefined) pr.author = null;
       });
     });
+
+    // Add aiReviewers field to PR metrics
+    this.version(22).stores({}).upgrade((tx) => {
+      return tx.table("pr_metrics").toCollection().modify((pr) => {
+        if (pr.aiReviewers === undefined) pr.aiReviewers = [];
+      });
+    });
   }
 }
 
