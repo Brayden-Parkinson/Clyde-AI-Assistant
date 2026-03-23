@@ -120,7 +120,7 @@ export async function syncGitHubData(): Promise<{
           );
 
           const commitMessages = commits.map((c) => c.commit.message);
-          const aiTools = detectAITools(pull.body, commitMessages);
+          const aiTools = detectAITools(pull.body, commitMessages, pull.head?.ref, pull.user?.login);
 
           const metric: PRMetric = {
             repo,

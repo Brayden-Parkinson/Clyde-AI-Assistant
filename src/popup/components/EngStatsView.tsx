@@ -1382,10 +1382,15 @@ export function EngStatsView({ darkMode = false }: EngStatsViewProps) {
     claude: "#D97706",
     copilot: "#2EA043",
     cursor: "#7C3AED",
-    coderabbit: "#0891B2",
+    aider: "#F59E0B",
+    devin: "#EC4899",
+    codex: "#10B981",
+    "amazon-q": "#FF9900",
+    sweep: "#6366F1",
     tabnine: "#4B83CD",
     windsurf: "#06B6D4",
-    devin: "#EC4899",
+    cody: "#A855F7",
+    coderabbit: "#0891B2",
   };
 
   // Separate known tools from unattributed "ai" catch-all
@@ -1402,18 +1407,21 @@ export function EngStatsView({ darkMode = false }: EngStatsViewProps) {
 
   // ─── Per-author AI adoption (excludes bots) ───
   const authorAIRows = useMemo(() => {
-    const authorStats = new Map<string, { total: number; ai: number; tools: Set<string>; cycleTimes: number[]; sizes: number[] }>();
+    const authorStats = new Map<string, { total: number; ai: number; toolCounts: Map<string, number>; cycleTimes: number[]; sizes: number[] }>();
     for (const m of metrics) {
       if (!m.author) continue;
       if (BOT_ACCOUNTS.has(m.author)) continue;
-      if (!authorStats.has(m.author)) authorStats.set(m.author, { total: 0, ai: 0, tools: new Set(), cycleTimes: [], sizes: [] });
+      if (!authorStats.has(m.author)) authorStats.set(m.author, { total: 0, ai: 0, toolCounts: new Map(), cycleTimes: [], sizes: [] });
       const s = authorStats.get(m.author)!;
       s.total++;
       if (m.cycleTimeHours != null) s.cycleTimes.push(m.cycleTimeHours);
       s.sizes.push(m.additions + m.deletions);
       if (m.aiAssisted) {
         s.ai++;
-        for (const t of m.aiTools) if (t.toLowerCase() !== "ai") s.tools.add(t);
+        for (const t of m.aiTools) {
+          if (t.toLowerCase() === "ai") continue;
+          s.toolCounts.set(t, (s.toolCounts.get(t) ?? 0) + 1);
+        }
       }
     }
     return [...authorStats.entries()]
@@ -1429,7 +1437,8 @@ export function EngStatsView({ darkMode = false }: EngStatsViewProps) {
           total: s.total,
           ai: s.ai,
           pct: s.total > 0 ? Math.round((s.ai / s.total) * 100) : 0,
-          tools: [...s.tools].sort(),
+          toolCounts: [...s.toolCounts.entries()].sort((a, b) => b[1] - a[1]),
+          tools: [...s.toolCounts.keys()].sort(),
           avgCycleHours: avgCycle,
           avgSize,
         };
@@ -2535,7 +2544,7 @@ export function EngStatsView({ darkMode = false }: EngStatsViewProps) {
                 ) : (
                   <>
                     {/* Table header */}
-                    <div style={{ display: "grid", gridTemplateColumns: "120px 1fr 52px 52px 80px", gap: 6, marginBottom: 6, padding: "0 0 4px 0", borderBottom: `1px solid ${dk(darkMode, "rgba(255,255,255,0.08)", OS.border)}` }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "120px 1fr 52px 52px 1fr", gap: 6, marginBottom: 6, padding: "0 0 4px 0", borderBottom: `1px solid ${dk(darkMode, "rgba(255,255,255,0.08)", OS.border)}` }}>
                       <div style={{ fontSize: 11, color: dk(darkMode, "rgba(255,255,255,0.5)", OS.muted), textTransform: "uppercase", letterSpacing: "0.05em" }}>Author</div>
                       <div style={{ fontSize: 11, color: dk(darkMode, "rgba(255,255,255,0.5)", OS.muted), textTransform: "uppercase", letterSpacing: "0.05em" }}>AI %</div>
                       <div style={{ fontSize: 11, color: dk(darkMode, "rgba(255,255,255,0.5)", OS.muted), textTransform: "uppercase", letterSpacing: "0.05em", textAlign: "right" }}>PRs</div>
@@ -2547,7 +2556,7 @@ export function EngStatsView({ darkMode = false }: EngStatsViewProps) {
                       const barColor = r.pct > 50 ? OS.green : r.pct > 20 ? OS.warning : dk(darkMode, "rgba(255,255,255,0.15)", OS.faint);
                       const lowConfidence = r.total < 5;
                       return (
-                        <div key={r.author} style={{ display: "grid", gridTemplateColumns: "120px 1fr 52px 52px 80px", gap: 6, alignItems: "center", padding: "4px 0" }}>
+                        <div key={r.author} style={{ display: "grid", gridTemplateColumns: "120px 1fr 52px 52px 1fr", gap: 6, alignItems: "center", padding: "4px 0" }}>
                           <span style={{
                             fontSize: 12,
                             color: dk(darkMode, "rgba(255,255,255,0.8)", OS.text),
@@ -2567,13 +2576,21 @@ export function EngStatsView({ darkMode = false }: EngStatsViewProps) {
                           <span style={{ fontSize: 12, fontFamily: OS.mono, color: dk(darkMode, "rgba(255,255,255,0.6)", OS.secondary), textAlign: "right" }}>
                             {r.avgCycleHours != null ? fmtHours(r.avgCycleHours) : "—"}
                           </span>
-                          <span style={{
-                            fontSize: 11, fontFamily: OS.mono,
-                            color: dk(darkMode, "rgba(255,255,255,0.5)", OS.muted),
-                            textAlign: "right", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                          }} title={r.tools.join(", ")}>
-                            {r.tools.length > 0 ? r.tools.join(", ") : "—"}
-                          </span>
+                          <div style={{ display: "flex", gap: 4, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                            {r.toolCounts.length > 0 ? r.toolCounts.map(([tool, count]) => (
+                              <span key={tool} style={{
+                                fontSize: 10, fontFamily: OS.mono, padding: "1px 6px", borderRadius: 4,
+                                background: (toolColors[tool.toLowerCase()] ?? dk(darkMode, "rgba(255,255,255,0.1)", OS.faint)) + "22",
+                                color: toolColors[tool.toLowerCase()] ?? dk(darkMode, "rgba(255,255,255,0.6)", OS.secondary),
+                                border: `1px solid ${(toolColors[tool.toLowerCase()] ?? dk(darkMode, "rgba(255,255,255,0.1)", OS.faint)) + "44"}`,
+                                whiteSpace: "nowrap",
+                              }}>
+                                {tool} {count > 1 ? `×${count}` : ""}
+                              </span>
+                            )) : (
+                              <span style={{ fontSize: 11, color: dk(darkMode, "rgba(255,255,255,0.3)", OS.muted) }}>—</span>
+                            )}
+                          </div>
                         </div>
                       );
                     })}
@@ -2587,7 +2604,7 @@ export function EngStatsView({ darkMode = false }: EngStatsViewProps) {
                       </div>
                     )}
                     {showZeroAuthors && authorAIRows.filter(r => r.ai === 0).map((r) => (
-                      <div key={r.author} style={{ display: "grid", gridTemplateColumns: "120px 1fr 52px 52px 80px", gap: 6, alignItems: "center", padding: "3px 0", opacity: 0.5 }}>
+                      <div key={r.author} style={{ display: "grid", gridTemplateColumns: "120px 1fr 52px 52px 1fr", gap: 6, alignItems: "center", padding: "3px 0", opacity: 0.5 }}>
                         <span style={{
                           fontSize: 12,
                           color: dk(darkMode, "rgba(255,255,255,0.6)", OS.secondary),
@@ -2603,7 +2620,7 @@ export function EngStatsView({ darkMode = false }: EngStatsViewProps) {
                         <span style={{ fontSize: 12, fontFamily: OS.mono, color: dk(darkMode, "rgba(255,255,255,0.4)", OS.muted), textAlign: "right" }}>
                           {r.avgCycleHours != null ? fmtHours(r.avgCycleHours) : "—"}
                         </span>
-                        <span style={{ fontSize: 11, fontFamily: OS.mono, color: dk(darkMode, "rgba(255,255,255,0.3)", OS.muted), textAlign: "right" }}>—</span>
+                        <span style={{ fontSize: 11, color: dk(darkMode, "rgba(255,255,255,0.3)", OS.muted), textAlign: "right" }}>—</span>
                       </div>
                     ))}
                     {/* Low confidence footnote */}

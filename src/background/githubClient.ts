@@ -182,8 +182,15 @@ const AI_PATTERNS: Array<{ tool: string; patterns: RegExp[] }> = [
     tool: "claude",
     patterns: [
       /co-authored-by:.*claude/i,
-      /🤖 generated with claude code/i,
+      /🤖 generated with (?:\[)?claude(?: code)?/i,
       /noreply@anthropic\.com/i,
+    ],
+  },
+  {
+    tool: "copilot",
+    patterns: [
+      /co-authored-by:.*copilot/i,
+      /agent-logs-url:/i,
     ],
   },
   {
@@ -195,17 +202,39 @@ const AI_PATTERNS: Array<{ tool: string; patterns: RegExp[] }> = [
     ],
   },
   {
-    tool: "copilot",
+    tool: "aider",
     patterns: [
-      /co-authored-by:.*github copilot/i,
-      /co-authored-by:.*copilot/i,
+      /co-authored-by:.*aider/i,
+      /noreply@aider\.chat/i,
+      /\(aider\)/i,
+      /^aider:/m,
     ],
   },
   {
     tool: "devin",
     patterns: [
-      /co-authored-by:.*devin/i,
+      /devin-ai-integration/i,
       /app\.devin\.ai/i,
+    ],
+  },
+  {
+    tool: "codex",
+    patterns: [
+      /co-authored-by:.*codex/i,
+      /openai codex/i,
+    ],
+  },
+  {
+    tool: "amazon-q",
+    patterns: [
+      /amazon-q-developer/i,
+      /co-authored-by:.*amazon q/i,
+    ],
+  },
+  {
+    tool: "sweep",
+    patterns: [
+      /sweep-ai\[bot\]/i,
     ],
   },
   {
@@ -223,18 +252,44 @@ const AI_PATTERNS: Array<{ tool: string; patterns: RegExp[] }> = [
       /windsurf/i,
     ],
   },
+  {
+    tool: "cody",
+    patterns: [
+      /co-authored-by:.*cody/i,
+      /sourcegraph cody/i,
+    ],
+  },
 ];
 
+/** Known AI bot accounts that author PRs directly */
+const AI_BOT_AUTHORS = new Map<string, string>([
+  ["copilot-swe-agent[bot]", "copilot"],
+  ["devin-ai-integration[bot]", "devin"],
+  ["amazon-q-developer[bot]", "amazon-q"],
+  ["sweep-ai[bot]", "sweep"],
+]);
+
 /**
- * Scan PR body and commit messages for known AI tool signatures.
+ * Scan PR body, commit messages, branch name, and PR author for AI tool signatures.
  * Returns deduplicated array of matched tool names.
  */
 export function detectAITools(
   prBody: string | null,
   commitMessages: string[],
+  branch?: string | null,
+  prAuthor?: string | null,
 ): string[] {
-  const haystack = [prBody ?? "", ...commitMessages].join("\n");
+  const haystack = [prBody ?? "", ...commitMessages, branch ?? ""].join("\n");
   const found = new Set<string>();
+
+  // Check if the PR was authored by a known AI bot
+  if (prAuthor) {
+    const botTool = AI_BOT_AUTHORS.get(prAuthor.toLowerCase());
+    if (botTool) found.add(botTool);
+  }
+
+  // Check branch prefix for Sweep
+  if (branch?.startsWith("sweep/")) found.add("sweep");
 
   for (const { tool, patterns } of AI_PATTERNS) {
     if (patterns.some((re) => re.test(haystack))) {
