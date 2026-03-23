@@ -30,14 +30,13 @@ import { SettingsPanel } from "../options/Options";
 import { ClydeChat } from "./components/ClydeChat";
 import { DraftComposer } from "./components/DraftComposer";
 import { PeoplePanel } from "./components/PeoplePanel";
-import { FocusPanel } from "./components/FocusPanel";
 import {
   IconSettings, IconWarning, IconX, IconRefresh, IconLoader, IconCheck,
   IconChevronUp, IconChevronDown, IconArrowRight, IconClock, IconPeople,
   InlineIcon,
 } from "./components/Icons";
 
-type ViewMode = "board" | "people" | "focus" | "devlog" | "settings" | "draft";
+type ViewMode = "board" | "people" | "devlog" | "settings" | "draft";
 
 // ─── Display settings (persisted in chrome.storage.local) ───
 
@@ -1421,7 +1420,6 @@ function TopBar({
   const navItems: Array<{ key: ViewMode; label: string; show: boolean }> = [
     { key: "board", label: "Board", show: true },
     { key: "people", label: "People", show: true },
-    { key: "focus", label: "Focus", show: true },
     { key: "devlog", label: "Dev Log", show: developerMode },
   ];
 
@@ -1938,7 +1936,7 @@ export default function App() {
 
       <div style={{ flex: 1, overflowY: "auto", display: "flex" }}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ padding: (viewMode === "board" || viewMode === "devlog" || viewMode === "focus") ? "12px 16px" : 0 }}>
+          <div style={{ padding: (viewMode === "board" || viewMode === "devlog") ? "12px 16px" : 0 }}>
 
             {/* Board view */}
             {viewMode === "board" && (
@@ -2014,11 +2012,6 @@ export default function App() {
                 }}
                 onSelectCommitment={(id) => setSelectedId(id)}
               />
-            )}
-
-            {/* Focus view */}
-            {viewMode === "focus" && (
-              <FocusPanel demoMode={demoMode} showToast={showToast} />
             )}
 
             {/* Dev Log view */}

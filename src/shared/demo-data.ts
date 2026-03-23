@@ -24,7 +24,6 @@ import type {
   FollowUpRule,
   JiraTicket,
   PRJiraLink,
-  FocusSession,
 } from "./types";
 
 // ─── Date helpers ───
@@ -1410,65 +1409,5 @@ export const DEMO_PR_JIRA_LINKS: PRJiraLink[] = [
   { prMetricId: 5, jiraTicketKey: "RAD-8290", source: "title", linkedAt: "2026-03-18T00:00:00Z" },
   { prMetricId: 6, jiraTicketKey: "RAD-8310", source: "title", linkedAt: "2026-03-18T00:00:00Z" },
   { prMetricId: 7, jiraTicketKey: "RAD-8325", source: "branch", linkedAt: "2026-03-18T00:00:00Z" },
-];
-
-// ─── Demo Focus Sessions ───
-
-export const DEMO_FOCUS_SESSIONS: FocusSession[] = [
-  {
-    id: -1,
-    commitmentId: -1,
-    targetMinutes: 25,
-    startedAt: hoursAgo(5),
-    endedAt: hoursAgo(4.58),
-    actualMinutes: 25,
-    status: "completed",
-    note: "Got the API endpoint scaffolded",
-    createdAt: hoursAgo(5),
-  },
-  {
-    id: -2,
-    commitmentId: -2,
-    targetMinutes: 50,
-    startedAt: hoursAgo(3),
-    endedAt: hoursAgo(2.17),
-    actualMinutes: 50,
-    status: "completed",
-    note: "Reviewed all 3 PRs and left comments",
-    createdAt: hoursAgo(3),
-  },
-  {
-    id: -3,
-    commitmentId: -1,
-    targetMinutes: 25,
-    startedAt: hoursAgo(1.5),
-    endedAt: hoursAgo(1.2),
-    actualMinutes: 18,
-    status: "abandoned",
-    note: null,
-    createdAt: hoursAgo(1.5),
-  },
-  {
-    id: -4,
-    commitmentId: -3,
-    targetMinutes: 25,
-    startedAt: daysAgo(1),
-    endedAt: new Date(Date.now() - 23.58 * 3600_000).toISOString(),
-    actualMinutes: 25,
-    status: "completed",
-    note: null,
-    createdAt: daysAgo(1),
-  },
-  {
-    id: -5,
-    commitmentId: -4,
-    targetMinutes: 50,
-    startedAt: daysAgo(1),
-    endedAt: new Date(Date.now() - 23 * 3600_000).toISOString(),
-    actualMinutes: 50,
-    status: "completed",
-    note: "Finished the draft and sent to Sarah for review",
-    createdAt: daysAgo(1),
-  },
 ];
 

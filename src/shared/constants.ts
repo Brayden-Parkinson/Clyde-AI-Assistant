@@ -36,7 +36,6 @@ export const ALARMS = {
   FOLLOW_UP_CHECK: "follow-up-check",
   GITHUB_SYNC: "github-sync",
   JIRA_SYNC: "jira-sync",
-  FOCUS_TIMER: "focus-timer",
 } as const;
 
 /** How long to keep raw messages (7 days in ms) */
@@ -113,15 +112,6 @@ export const EXTERNAL_TASK_LINK_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 
 /** How long to keep sync outbox entries (7 days in ms) */
 export const SYNC_OUTBOX_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-
-/** How long to keep completed/abandoned focus sessions (90 days in ms) */
-export const FOCUS_SESSION_TTL_MS = 90 * 24 * 60 * 60 * 1000;
-
-/** Default focus session duration in minutes */
-export const FOCUS_DEFAULT_MINUTES = 25;
-
-/** Focus session duration presets in minutes */
-export const FOCUS_PRESETS = [15, 25, 50, 90] as const;
 
 /** Google OAuth configuration */
 export const GOOGLE_OAUTH = {
