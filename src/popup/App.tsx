@@ -1388,6 +1388,7 @@ function TopBar({
   viewMode,
   setViewMode,
   developerMode,
+  engStatsEnabled,
   onOpenSettings,
   scanning,
   onRescan,
@@ -1403,6 +1404,7 @@ function TopBar({
   viewMode: ViewMode;
   setViewMode: (v: ViewMode) => void;
   developerMode: boolean;
+  engStatsEnabled: boolean;
   onOpenSettings: () => void;
   scanning: boolean;
   onRescan: () => void;
@@ -1421,7 +1423,7 @@ function TopBar({
   const navItems: Array<{ key: ViewMode; label: string; show: boolean }> = [
     { key: "board", label: "Board", show: true },
     { key: "people", label: "People", show: true },
-    { key: "eng-stats", label: "Eng Stats", show: true },
+    { key: "eng-stats", label: "Eng Stats", show: engStatsEnabled },
     { key: "devlog", label: "Dev Log", show: developerMode },
   ];
 
@@ -1436,7 +1438,7 @@ function TopBar({
     if (el) {
       setSlider({ left: el.offsetLeft, width: el.offsetWidth });
     }
-  }, [viewMode, developerMode]);
+  }, [viewMode, developerMode, engStatsEnabled]);
 
   return (
     <div
@@ -1626,6 +1628,7 @@ export default function App() {
     if (viewMode !== "draft") setActiveDraftId(null);
   }, [viewMode]);
   const [developerMode, setDeveloperMode] = useState(false);
+  const [engStatsEnabled, setEngStatsEnabled] = useState(false);
   const [demoMode, setDemoMode] = useState(false);
   const [privacyMode, setPrivacyMode] = useState(false);
   const [scanning, setScanning] = useState(false);
@@ -1658,9 +1661,10 @@ export default function App() {
   ) ?? new Set<number>();
 
   useEffect(() => {
-    chrome.storage.local.get(["anthropicApiKey", "userName", "developerMode", "demoMode"]).then((result) => {
+    chrome.storage.local.get(["anthropicApiKey", "userName", "developerMode", "demoMode", "engStatsEnabled"]).then((result) => {
       setHasApiKey(!!result.anthropicApiKey);
       setDeveloperMode(result.developerMode === true);
+      setEngStatsEnabled(result.engStatsEnabled === true);
       setDemoMode(result.demoMode === true);
       // In demo mode, always show the setup wizard on refresh
       setIsFirstRun(result.demoMode === true || (!result.anthropicApiKey && !result.userName));
@@ -1673,6 +1677,9 @@ export default function App() {
       if (area !== "local") return;
       if (changes.developerMode) {
         setDeveloperMode(changes.developerMode.newValue === true);
+      }
+      if (changes.engStatsEnabled) {
+        setEngStatsEnabled(changes.engStatsEnabled.newValue === true);
       }
       if (changes.demoMode) {
         setDemoMode(changes.demoMode.newValue === true);
@@ -1920,6 +1927,7 @@ export default function App() {
         viewMode={viewMode}
         setViewMode={setViewMode}
         developerMode={developerMode}
+        engStatsEnabled={engStatsEnabled}
         onOpenSettings={() => setViewMode("settings")}
         scanning={scanning}
         onRescan={onRescan}
