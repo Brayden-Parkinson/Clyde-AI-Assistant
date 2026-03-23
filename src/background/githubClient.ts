@@ -238,25 +238,11 @@ const AI_PATTERNS: Array<{ tool: string; patterns: RegExp[] }> = [
     ],
   },
   {
-    tool: "tabnine",
-    patterns: [
-      /co-authored-by:.*tabnine/i,
-      /tabnine/i,
-    ],
-  },
-  {
     tool: "windsurf",
     patterns: [
       /co-authored-by:.*windsurf/i,
       /codeium/i,
       /windsurf/i,
-    ],
-  },
-  {
-    tool: "cody",
-    patterns: [
-      /co-authored-by:.*cody/i,
-      /sourcegraph cody/i,
     ],
   },
 ];
@@ -297,5 +283,40 @@ export function detectAITools(
     }
   }
 
+  return Array.from(found);
+}
+
+// ─── AI review tool detection ───
+
+/** Known AI review bot accounts (login → display name) */
+const AI_REVIEW_BOTS = new Map<string, string>([
+  ["coderabbitai", "coderabbit"],
+  ["github-actions[bot]", "github-actions"],
+  ["copilot-swe-agent[bot]", "copilot"],
+  ["amazon-q-developer[bot]", "amazon-q"],
+  ["devin-ai-integration[bot]", "devin"],
+  ["cursorbot", "cursor"],
+  ["sonarcloud[bot]", "sonarcloud"],
+  ["codeclimate[bot]", "codeclimate"],
+]);
+
+/**
+ * Detect which AI tools reviewed a PR based on reviewer logins.
+ * Returns deduplicated array of AI review tool names.
+ */
+export function detectAIReviewers(reviews: GHReview[]): string[] {
+  const found = new Set<string>();
+  for (const r of reviews) {
+    if (!r.user) continue;
+    const login = r.user.login.toLowerCase();
+    const tool = AI_REVIEW_BOTS.get(login);
+    if (tool) found.add(tool);
+    // Also catch any [bot] reviewer with "ai" or known tool name in their login
+    if (login.endsWith("[bot]")) {
+      if (login.includes("coderabbit")) found.add("coderabbit");
+      if (login.includes("tabnine")) found.add("tabnine");
+      if (login.includes("windsurf")) found.add("windsurf");
+    }
+  }
   return Array.from(found);
 }

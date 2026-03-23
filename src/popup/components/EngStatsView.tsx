@@ -1160,6 +1160,24 @@ export function EngStatsView({ darkMode = false }: EngStatsViewProps) {
     (a, b) => b[1] - a[1],
   );
 
+  // ─── AI review tool breakdown ───
+  const aiReviewStats = useMemo(() => {
+    const reviewToolCounts: Record<string, number> = {};
+    let reviewedByAI = 0;
+    for (const m of metrics) {
+      const reviewers = (m as PRMetric & { aiReviewers?: string[] }).aiReviewers ?? [];
+      if (reviewers.length > 0) {
+        reviewedByAI++;
+        for (const tool of reviewers) {
+          reviewToolCounts[tool] = (reviewToolCounts[tool] ?? 0) + 1;
+        }
+      }
+    }
+    const pct = metrics.length ? Math.round((reviewedByAI / metrics.length) * 100) : 0;
+    const toolEntries = Object.entries(reviewToolCounts).sort((a, b) => b[1] - a[1]);
+    return { reviewedByAI, pct, toolEntries };
+  }, [metrics]);
+
   // Weekly AI pct trend
   const weeklyAI = useMemo(() => {
     const buckets: Map<string, { ai: number; total: number }> = new Map();
@@ -1387,10 +1405,7 @@ export function EngStatsView({ darkMode = false }: EngStatsViewProps) {
     codex: "#10B981",
     "amazon-q": "#FF9900",
     sweep: "#6366F1",
-    tabnine: "#4B83CD",
     windsurf: "#06B6D4",
-    cody: "#A855F7",
-    coderabbit: "#0891B2",
   };
 
   // Separate known tools from unattributed "ai" catch-all
@@ -2630,6 +2645,52 @@ export function EngStatsView({ darkMode = false }: EngStatsViewProps) {
                       </div>
                     )}
                   </>
+                )}
+              </div>
+
+              {/* ─── AI Reviews section ─── */}
+              <div style={{ padding: "14px 16px", borderRadius: 10, border: cardBorder, background: cardBg }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 2 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: dk(darkMode, "rgba(255,255,255,0.8)", OS.secondary) }}>AI Reviews ({timeRange}d)</div>
+                  <span style={{ fontSize: 20, fontWeight: 700, fontFamily: OS.mono, color: dk(darkMode, "#fff", OS.text) }}>
+                    {aiReviewStats.pct}%
+                  </span>
+                </div>
+                <div style={{ fontSize: 11, color: dk(darkMode, "rgba(255,255,255,0.5)", OS.muted), marginBottom: 12 }}>
+                  {aiReviewStats.reviewedByAI} of {metrics.length} PRs reviewed by AI tools
+                </div>
+                {aiReviewStats.toolEntries.length > 0 ? (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    {aiReviewStats.toolEntries.map(([tool, count]) => {
+                      const maxCount = aiReviewStats.toolEntries[0][1];
+                      const reviewColors: Record<string, string> = {
+                        coderabbit: "#0891B2",
+                        copilot: "#2EA043",
+                        "amazon-q": "#FF9900",
+                        cursor: "#7C3AED",
+                        devin: "#EC4899",
+                        tabnine: "#4B83CD",
+                        sonarcloud: "#F97316",
+                        codeclimate: "#10B981",
+                        windsurf: "#06B6D4",
+                      };
+                      return (
+                        <div key={tool} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <span style={{ fontSize: 12, color: dk(darkMode, "rgba(255,255,255,0.7)", OS.secondary), width: 100, flexShrink: 0, textTransform: "capitalize" }}>{tool}</span>
+                          <div style={{ flex: 1, height: 14, borderRadius: 3, background: dk(darkMode, "rgba(255,255,255,0.06)", OS.border), overflow: "hidden" }}>
+                            <div style={{ height: "100%", width: `${Math.round((count / maxCount) * 100)}%`, background: reviewColors[tool.toLowerCase()] ?? dk(darkMode, "rgba(255,255,255,0.2)", OS.faint), borderRadius: 3, minWidth: 2 }} />
+                          </div>
+                          <span style={{ fontSize: 12, fontFamily: OS.mono, color: dk(darkMode, "rgba(255,255,255,0.6)", OS.secondary), minWidth: 36, textAlign: "right" }}>
+                            {count} <span style={{ fontSize: 10, opacity: 0.5 }}>PRs</span>
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div style={{ fontSize: 12, color: dk(darkMode, "rgba(255,255,255,0.4)", OS.muted) }}>
+                    No AI review tools detected yet. Data populates on next sync.
+                  </div>
                 )}
               </div>
             </>
