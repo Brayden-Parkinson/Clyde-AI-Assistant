@@ -38,7 +38,7 @@ import { generateWeeklyDigest } from "./weekly-digest";
 import { initSyncHooks, syncPush } from "./sync-engine";
 import { fetchAndCacheCalendarEvents } from "./google-calendar";
 import { initiateGoogleOAuth, disconnectGoogle } from "./google-auth";
-import { syncGitHubData } from "./githubSync";
+import { syncGitHubData, backfillPRAuthors } from "./githubSync";
 import { syncJiraData, linkPRsToJira } from "./jiraSync";
 
 // ─── Badge ───
@@ -417,6 +417,12 @@ chrome.runtime.onInstalled.addListener(async () => {
       chrome.alarms.create(ALARMS.REVIEW_BACKFILL, { delayInMinutes: 2 });
     }
   });
+  // Eng Stats: Author backfill — kick off if not already done
+  chrome.storage.local.get("authorBackfillDone").then((r) => {
+    if (!r.authorBackfillDone) {
+      chrome.alarms.create(ALARMS.AUTHOR_BACKFILL, { delayInMinutes: 3 });
+    }
+  });
 
   // People Context: compute every 4 hours
   chrome.alarms.create(ALARMS.PEOPLE_CONTEXT, {
@@ -492,6 +498,12 @@ chrome.runtime.onStartup.addListener(async () => {
   chrome.storage.local.get("botFilterBackfillDone").then((r) => {
     if (!r.botFilterBackfillDone) {
       chrome.alarms.create(ALARMS.REVIEW_BACKFILL, { delayInMinutes: 2 });
+    }
+  });
+  // Eng Stats: Author backfill — resume if not done
+  chrome.storage.local.get("authorBackfillDone").then((r) => {
+    if (!r.authorBackfillDone) {
+      chrome.alarms.create(ALARMS.AUTHOR_BACKFILL, { delayInMinutes: 3 });
     }
   });
   // People Context: compute every 4 hours
@@ -853,6 +865,10 @@ chrome.alarms.onAlarm.addListener((alarm) => {
     case ALARMS.PEOPLE_CONTEXT:
       computePeopleContext()
         .catch((err) => console.warn("[CT:worker] People context computation failed:", err));
+      break;
+    case ALARMS.AUTHOR_BACKFILL:
+      backfillPRAuthors()
+        .catch((err) => console.warn("[CT:worker] Author backfill failed:", err));
       break;
     default:
       if (alarm.name.startsWith(ALARMS.SNOOZE_PREFIX)) {

@@ -38,6 +38,7 @@ export const ALARMS = {
   JIRA_SYNC: "jira-sync",
   REVIEW_BACKFILL: "review-backfill",
   PEOPLE_CONTEXT: "people-context",
+  AUTHOR_BACKFILL: "author-backfill",
 } as const;
 
 /** How long to keep raw messages (7 days in ms) */

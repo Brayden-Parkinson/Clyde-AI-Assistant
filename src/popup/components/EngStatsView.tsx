@@ -1375,28 +1375,45 @@ export function EngStatsView({ darkMode = false }: EngStatsViewProps) {
 
   // ─── Per-author AI adoption ───
   const authorAIRows = useMemo(() => {
-    const authorStats = new Map<string, { total: number; ai: number; tools: Set<string> }>();
+    const authorStats = new Map<string, { total: number; ai: number; tools: Set<string>; cycleTimes: number[]; sizes: number[] }>();
     for (const m of metrics) {
-      const author = m.author || "Unknown";
-      if (!authorStats.has(author)) authorStats.set(author, { total: 0, ai: 0, tools: new Set() });
-      const s = authorStats.get(author)!;
+      if (!m.author) continue; // skip PRs without author data
+      if (!authorStats.has(m.author)) authorStats.set(m.author, { total: 0, ai: 0, tools: new Set(), cycleTimes: [], sizes: [] });
+      const s = authorStats.get(m.author)!;
       s.total++;
+      if (m.cycleTimeHours != null) s.cycleTimes.push(m.cycleTimeHours);
+      s.sizes.push(m.additions + m.deletions);
       if (m.aiAssisted) {
         s.ai++;
         for (const t of m.aiTools) s.tools.add(t);
       }
     }
     return [...authorStats.entries()]
-      .map(([author, s]) => ({
-        author,
-        total: s.total,
-        ai: s.ai,
-        pct: s.total > 0 ? Math.round((s.ai / s.total) * 100) : 0,
-        tools: [...s.tools].sort(),
-      }))
-      .filter(r => r.total >= 2) // only show authors with 2+ PRs
-      .sort((a, b) => b.ai - a.ai || b.pct - a.pct);
+      .map(([author, s]) => {
+        const avgCycle = s.cycleTimes.length > 0
+          ? s.cycleTimes.reduce((a, b) => a + b, 0) / s.cycleTimes.length
+          : null;
+        const avgSize = s.sizes.length > 0
+          ? Math.round(s.sizes.reduce((a, b) => a + b, 0) / s.sizes.length)
+          : 0;
+        return {
+          author,
+          total: s.total,
+          ai: s.ai,
+          pct: s.total > 0 ? Math.round((s.ai / s.total) * 100) : 0,
+          tools: [...s.tools].sort(),
+          avgCycleHours: avgCycle,
+          avgSize,
+        };
+      })
+      .filter(r => r.total >= 2)
+      .sort((a, b) => b.pct - a.pct || b.ai - a.ai);
   }, [metrics]);
+
+  const authorBackfillPending = useMemo(
+    () => metrics.length > 0 && metrics.every(m => !m.author),
+    [metrics],
+  );
 
   // ─── Team breakdown rows (pre-computed) ───
   const teamRows = useMemo(() => {
@@ -2413,42 +2430,61 @@ export function EngStatsView({ darkMode = false }: EngStatsViewProps) {
               </div>
               {/* Per-author AI adoption */}
               <div style={{ padding: "14px 16px", borderRadius: 10, border: cardBorder, background: cardBg }}>
-                <div style={{ fontSize: 12, fontWeight: 600, color: dk(darkMode, "rgba(255,255,255,0.7)", OS.secondary), marginBottom: 10 }}>By Author ({timeRange}d)</div>
-                {authorAIRows.length === 0 ? (
-                  <div style={{ fontSize: 11, color: dk(darkMode, "rgba(255,255,255,0.3)", OS.muted) }}>No authors with 2+ PRs</div>
+                <div style={{ fontSize: 12, fontWeight: 600, color: dk(darkMode, "rgba(255,255,255,0.7)", OS.secondary), marginBottom: 2 }}>By Author ({timeRange}d)</div>
+                <div style={{ fontSize: 10, color: dk(darkMode, "rgba(255,255,255,0.35)", OS.muted), marginBottom: 10 }}>
+                  AI adoption rate per contributor
+                </div>
+                {authorBackfillPending ? (
+                  <div style={{ fontSize: 11, color: dk(darkMode, "rgba(255,255,255,0.35)", OS.muted), padding: "8px 0" }}>
+                    Author data syncing — reload extension or trigger a GitHub sync to populate.
+                  </div>
+                ) : authorAIRows.length === 0 ? (
+                  <div style={{ fontSize: 11, color: dk(darkMode, "rgba(255,255,255,0.3)", OS.muted) }}>No authors with 2+ PRs in this period</div>
                 ) : (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                    {authorAIRows.slice(0, 15).map((r) => {
+                  <>
+                    {/* Table header */}
+                    <div style={{ display: "grid", gridTemplateColumns: "110px 1fr 52px 52px 70px", gap: 6, marginBottom: 6, padding: "0 0 4px 0", borderBottom: `1px solid ${dk(darkMode, "rgba(255,255,255,0.06)", OS.border)}` }}>
+                      <div style={{ fontSize: 9, color: dk(darkMode, "rgba(255,255,255,0.3)", OS.muted), textTransform: "uppercase", fontFamily: OS.mono, letterSpacing: "0.05em" }}>Author</div>
+                      <div style={{ fontSize: 9, color: dk(darkMode, "rgba(255,255,255,0.3)", OS.muted), textTransform: "uppercase", fontFamily: OS.mono, letterSpacing: "0.05em" }}>AI %</div>
+                      <div style={{ fontSize: 9, color: dk(darkMode, "rgba(255,255,255,0.3)", OS.muted), textTransform: "uppercase", fontFamily: OS.mono, letterSpacing: "0.05em", textAlign: "right" }}>PRs</div>
+                      <div style={{ fontSize: 9, color: dk(darkMode, "rgba(255,255,255,0.3)", OS.muted), textTransform: "uppercase", fontFamily: OS.mono, letterSpacing: "0.05em", textAlign: "right" }}>Cycle</div>
+                      <div style={{ fontSize: 9, color: dk(darkMode, "rgba(255,255,255,0.3)", OS.muted), textTransform: "uppercase", fontFamily: OS.mono, letterSpacing: "0.05em", textAlign: "right" }}>Tools</div>
+                    </div>
+                    {/* Rows */}
+                    {authorAIRows.slice(0, 20).map((r) => {
                       const barColor = r.pct > 50 ? OS.green : r.pct > 20 ? OS.warning : dk(darkMode, "rgba(255,255,255,0.15)", OS.faint);
                       return (
-                        <div key={r.author} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <div key={r.author} style={{ display: "grid", gridTemplateColumns: "110px 1fr 52px 52px 70px", gap: 6, alignItems: "center", padding: "3px 0" }}>
                           <span style={{
-                            width: 100, fontSize: 11, fontFamily: OS.mono,
-                            color: dk(darkMode, "rgba(255,255,255,0.6)", OS.secondary),
-                            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flexShrink: 0,
+                            fontSize: 11, fontFamily: OS.mono,
+                            color: dk(darkMode, "rgba(255,255,255,0.7)", OS.text),
+                            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
                           }} title={r.author}>{r.author}</span>
-                          <div style={{ flex: 1, height: 12, background: dk(darkMode, "rgba(255,255,255,0.04)", OS.border), borderRadius: 3, overflow: "hidden" }}>
-                            <div style={{ width: `${r.pct}%`, height: "100%", borderRadius: 3, minWidth: r.ai > 0 ? 2 : 0, background: barColor }} />
-                          </div>
-                          <span style={{
-                            width: 60, fontSize: 11, fontFamily: OS.mono, textAlign: "right", whiteSpace: "nowrap",
-                            color: dk(darkMode, "rgba(255,255,255,0.5)", OS.muted),
-                          }}>
-                            {r.pct}%
-                            <span style={{ fontSize: 9, opacity: 0.4 }}> ({r.ai}/{r.total})</span>
-                          </span>
-                          {r.tools.length > 0 && (
-                            <span style={{
-                              fontSize: 9, color: dk(darkMode, "rgba(255,255,255,0.3)", OS.muted),
-                              maxWidth: 80, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                            }} title={r.tools.join(", ")}>
-                              {r.tools.join(", ")}
+                          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                            <div style={{ flex: 1, height: 12, background: dk(darkMode, "rgba(255,255,255,0.04)", OS.border), borderRadius: 3, overflow: "hidden" }}>
+                              <div style={{ width: `${r.pct}%`, height: "100%", borderRadius: 3, minWidth: r.ai > 0 ? 2 : 0, background: barColor }} />
+                            </div>
+                            <span style={{ fontSize: 11, fontFamily: OS.mono, color: dk(darkMode, "rgba(255,255,255,0.5)", OS.muted), minWidth: 28, textAlign: "right" }}>
+                              {r.pct}%
                             </span>
-                          )}
+                          </div>
+                          <span style={{ fontSize: 11, fontFamily: OS.mono, color: dk(darkMode, "rgba(255,255,255,0.5)", OS.muted), textAlign: "right" }}>
+                            {r.ai}<span style={{ fontSize: 9, opacity: 0.4 }}>/{r.total}</span>
+                          </span>
+                          <span style={{ fontSize: 11, fontFamily: OS.mono, color: dk(darkMode, "rgba(255,255,255,0.5)", OS.muted), textAlign: "right" }}>
+                            {r.avgCycleHours != null ? fmtHours(r.avgCycleHours) : "—"}
+                          </span>
+                          <span style={{
+                            fontSize: 9, fontFamily: OS.mono,
+                            color: dk(darkMode, "rgba(255,255,255,0.35)", OS.muted),
+                            textAlign: "right", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                          }} title={r.tools.join(", ")}>
+                            {r.tools.length > 0 ? r.tools.join(", ") : "—"}
+                          </span>
                         </div>
                       );
                     })}
-                  </div>
+                  </>
                 )}
               </div>
             </>

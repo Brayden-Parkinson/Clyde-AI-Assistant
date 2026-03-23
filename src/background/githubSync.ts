@@ -224,3 +224,45 @@ export async function getDeployFrequency(): Promise<number> {
 
   return totalReleases / 13; // 90 days ≈ 13 weeks
 }
+
+/**
+ * Backfill author field for existing PRs that have author=null.
+ * Fetches PR detail (which includes user.login) for each, rate-limit aware.
+ */
+export async function backfillPRAuthors(): Promise<{ updated: number; errors: string[] }> {
+  const result = await chrome.storage.local.get(["githubToken"]);
+  const token = result.githubToken as string | undefined;
+  if (!token) return { updated: 0, errors: ["No GitHub token"] };
+
+  const missing = await db.pr_metrics.filter(pr => !pr.author).toArray();
+  if (missing.length === 0) {
+    await chrome.storage.local.set({ authorBackfillDone: true });
+    return { updated: 0, errors: [] };
+  }
+
+  let updated = 0;
+  const errors: string[] = [];
+
+  for (const pr of missing) {
+    try {
+      const detail = await fetchPRDetails(token, pr.repo, pr.prNumber);
+      if (detail.user?.login && pr.id != null) {
+        await db.pr_metrics.update(pr.id, { author: detail.user.login });
+        updated++;
+      }
+    } catch (err) {
+      const msg = String(err);
+      if (msg.includes("403") || msg.includes("429")) {
+        errors.push("Rate limited — will continue on next run");
+        break;
+      }
+      errors.push(`${pr.repo}#${pr.prNumber}: ${msg}`);
+    }
+  }
+
+  if (updated === missing.length || errors.length === 0) {
+    await chrome.storage.local.set({ authorBackfillDone: true });
+  }
+
+  return { updated, errors };
+}

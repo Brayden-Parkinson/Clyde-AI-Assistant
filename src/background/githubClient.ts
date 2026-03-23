@@ -22,6 +22,7 @@ export interface GHPRDetail {
   additions: number;
   deletions: number;
   changed_files: number;
+  user: { login: string; type: string } | null;
 }
 
 export interface GHReview {
