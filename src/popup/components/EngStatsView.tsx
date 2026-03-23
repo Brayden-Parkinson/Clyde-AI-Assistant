@@ -129,6 +129,12 @@ function fmtHours(h: number | null): string {
   return `${(h / 24).toFixed(1)}d`;
 }
 
+/** Always format as days — no unit mixing */
+function fmtDays(h: number | null): string {
+  if (h === null || isNaN(h)) return "—";
+  return `${(h / 24).toFixed(1)}d`;
+}
+
 function weekLabel(date: Date): string {
   return `${date.getMonth() + 1}/${date.getDate()}`;
 }
@@ -715,6 +721,32 @@ function PRSizeChart({
   );
 }
 
+// ─── Catmull-Rom → cubic Bézier smooth path ───
+
+function smoothPath(pts: { x: number; y: number }[], tension = 0.3): string {
+  if (pts.length < 2) return "";
+  if (pts.length === 2) return `M ${pts[0].x} ${pts[0].y} L ${pts[1].x} ${pts[1].y}`;
+  let d = `M ${pts[0].x} ${pts[0].y}`;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = pts[Math.max(i - 1, 0)];
+    const p1 = pts[i];
+    const p2 = pts[i + 1];
+    const p3 = pts[Math.min(i + 2, pts.length - 1)];
+    const cp1x = p1.x + (p2.x - p0.x) * tension / 3;
+    const cp1y = p1.y + (p2.y - p0.y) * tension / 3;
+    const cp2x = p2.x - (p3.x - p1.x) * tension / 3;
+    const cp2y = p2.y - (p3.y - p1.y) * tension / 3;
+    d += ` C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${p2.x} ${p2.y}`;
+  }
+  return d;
+}
+
+function smoothArea(pts: { x: number; y: number }[], baseY: number, tension = 0.3): string {
+  const line = smoothPath(pts, tension);
+  if (!line || pts.length < 2) return "";
+  return `${line} L ${pts[pts.length - 1].x} ${baseY} L ${pts[0].x} ${baseY} Z`;
+}
+
 // ─── AI Adoption Line Chart with target (pure SVG) ───
 
 function AIAdoptionChart({
@@ -757,10 +789,8 @@ function AIAdoptionChart({
     x: toX(i), y: toY(w.pct), label: w.label, pct: w.pct,
   }));
 
-  const pathD = points
-    .map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`)
-    .join(" ");
-  const areaD = `${pathD} L ${points[points.length - 1].x} ${PAD.top + chartH} L ${points[0].x} ${PAD.top + chartH} Z`;
+  const pathD = smoothPath(points, 0.3);
+  const areaD = smoothArea(points, PAD.top + chartH, 0.3);
 
   // Prediction path
   const predPathD = [pcts[pcts.length - 1], ...predicted]
@@ -844,11 +874,13 @@ function AIAdoptionChart({
         );
       })}
 
-      {/* Data points */}
+      {/* Data points — hidden by default, visible on hover + annotations */}
       {points.map((p, i) => {
         const hasAnno = annotations?.[p.label];
+        const isHovered = hover === i;
+        if (!hasAnno && !isHovered) return null;
         return (
-          <circle key={i} cx={p.x} cy={p.y} r={hover === i ? 4 : hasAnno ? 3.5 : 2.5}
+          <circle key={i} cx={p.x} cy={p.y} r={isHovered ? 4 : 3.5}
             fill={hasAnno ? OS.warning : OS.blue} />
         );
       })}
@@ -865,10 +897,10 @@ function AIAdoptionChart({
         <g>
           <line x1={points[hover].x} y1={PAD.top} x2={points[hover].x} y2={PAD.top + chartH}
             stroke={dk(dark, "rgba(255,255,255,0.15)", "rgba(0,0,0,0.1)")} strokeWidth={1} />
-          <rect x={points[hover].x - 26} y={points[hover].y - 22} width={52} height={18} rx={3}
+          <rect x={points[hover].x - 42} y={points[hover].y - 22} width={84} height={18} rx={3}
             fill={dk(dark, "rgba(0,0,0,0.85)", "rgba(0,0,0,0.75)")} stroke={dk(dark, "rgba(255,255,255,0.1)", "rgba(0,0,0,0.2)")} />
           <text x={points[hover].x} y={points[hover].y - 10} textAnchor="middle"
-            fill="#e2e8f0" fontSize={10} fontFamily={OS.mono}>{points[hover].pct}%</text>
+            fill="#e2e8f0" fontSize={10} fontFamily={OS.mono}>{points[hover].pct}% AI-assisted</text>
         </g>
       )}
 
@@ -1465,6 +1497,36 @@ export function EngStatsView({ darkMode = false }: EngStatsViewProps) {
   const activeAuthorRows = useMemo(() => authorAIRows.filter(r => r.ai > 0), [authorAIRows]);
   const zeroAdoptionCount = useMemo(() => authorAIRows.filter(r => r.ai === 0).length, [authorAIRows]);
   const [showZeroAuthors, setShowZeroAuthors] = useState(false);
+  const [showAllAuthors, setShowAllAuthors] = useState(false);
+  const [showLowTeams, setShowLowTeams] = useState(false);
+
+  type AuthorSortKey = "pct" | "ai" | "total" | "cycle";
+  const [authorSortKey, setAuthorSortKey] = useState<AuthorSortKey>("pct");
+  const [authorSortAsc, setAuthorSortAsc] = useState(false);
+
+  const sortedActiveAuthors = useMemo(() => {
+    const rows = [...activeAuthorRows];
+    const dir = authorSortAsc ? 1 : -1;
+    rows.sort((a, b) => {
+      switch (authorSortKey) {
+        case "pct": return dir * (a.pct - b.pct) || b.ai - a.ai;
+        case "ai": return dir * (a.ai - b.ai);
+        case "total": return dir * (a.total - b.total);
+        case "cycle": {
+          const aVal = a.avgCycleHours ?? Infinity;
+          const bVal = b.avgCycleHours ?? Infinity;
+          return dir * (aVal - bVal);
+        }
+        default: return 0;
+      }
+    });
+    return rows;
+  }, [activeAuthorRows, authorSortKey, authorSortAsc]);
+
+  const toggleAuthorSort = (key: AuthorSortKey) => {
+    if (authorSortKey === key) setAuthorSortAsc((a) => !a);
+    else { setAuthorSortKey(key); setAuthorSortAsc(false); }
+  };
 
   const authorBackfillPending = useMemo(
     () => metrics.length > 0 && metrics.every(m => !m.author),
@@ -1479,7 +1541,10 @@ export function EngStatsView({ darkMode = false }: EngStatsViewProps) {
       selectedRepo === "__all__"
         ? allMetrics
         : allMetrics.filter((x) => x.repo === selectedRepo);
+    const seen = new Set<number>();
     for (const m of source) {
+      if (m.id != null && seen.has(m.id)) continue;
+      if (m.id != null) seen.add(m.id);
       const tickets = prToTickets.get(m.id!);
       if (!tickets?.length) {
         unlinked.push(m);
@@ -1515,9 +1580,9 @@ export function EngStatsView({ darkMode = false }: EngStatsViewProps) {
           )
         : 0;
       const aiPctTeam = prs.length
-        ? Math.round(
+        ? Math.min(100, Math.round(
             (prs.filter((p) => p.aiAssisted).length / prs.length) * 100,
-          )
+          ))
         : 0;
       const avgCycleHours = ct.length
         ? ct.reduce((a, b) => a + b, 0) / ct.length
@@ -2430,9 +2495,10 @@ export function EngStatsView({ darkMode = false }: EngStatsViewProps) {
 
           {/* ─── AI Adoption View ─── */}
           {activeTab === "AI Adoption" && !noData && (
-            <>
-              {/* Hero scorecard */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+              {/* Hero KPI cards */}
               <div style={{ display: "grid", gridTemplateColumns: aiCycleComparison ? "1fr 1fr 1fr" : "1fr 1fr", gap: 12 }}>
+                {/* Card 1 — AI-Assisted PRs */}
                 <div style={{ padding: "14px 16px", borderRadius: 10, border: cardBorder, background: cardBg, textAlign: "center" }}>
                   <div style={{ fontSize: 28, fontWeight: 700, color: dk(darkMode, "#fff", OS.text), fontFamily: OS.mono }}>
                     {aiPct}%
@@ -2441,115 +2507,211 @@ export function EngStatsView({ darkMode = false }: EngStatsViewProps) {
                     AI-Assisted PRs
                   </div>
                   {aiDelta != null && (
-                    <div style={{ fontSize: 11, color: aiDelta > 0 ? OS.green : aiDelta < 0 ? OS.red : dk(darkMode, "rgba(255,255,255,0.4)", OS.muted), marginTop: 4 }}>
-                      {aiDelta > 0 ? "+" : ""}{aiDelta}% vs prior period
+                    <span style={{
+                      display: "inline-block",
+                      fontSize: 11,
+                      fontWeight: 600,
+                      fontFamily: OS.mono,
+                      padding: "2px 8px",
+                      borderRadius: 999,
+                      marginTop: 6,
+                      background: aiDelta > 0 ? `${OS.green}18` : aiDelta < 0 ? `${OS.red}18` : "transparent",
+                      color: aiDelta > 0 ? OS.green : aiDelta < 0 ? OS.red : dk(darkMode, "rgba(255,255,255,0.4)", OS.muted),
+                    }}>
+                      {aiDelta > 0 ? "+" : ""}{aiDelta}% vs prior
+                    </span>
+                  )}
+                  <div style={{ fontSize: 11, color: dk(darkMode, "rgba(255,255,255,0.35)", OS.muted), marginTop: 4 }}>
+                    {aiPRs} of {metrics.length} PRs
+                  </div>
+                </div>
+
+                {/* Card 2 — AI PR Cycle Time */}
+                {aiCycleComparison ? (
+                  <div style={{ padding: "14px 16px", borderRadius: 10, border: cardBorder, background: cardBg, textAlign: "center" }}>
+                    <div style={{ fontSize: 28, fontWeight: 700, color: dk(darkMode, "#fff", OS.text), fontFamily: OS.mono }}>
+                      {fmtDays(aiCycleComparison.avgAi)}
+                    </div>
+                    <div style={{ fontSize: 12, color: dk(darkMode, "rgba(255,255,255,0.6)", OS.secondary), marginTop: 2 }}>
+                      AI PR Cycle Time
+                    </div>
+                    <span style={{
+                      display: "inline-block",
+                      fontSize: 11,
+                      fontWeight: 600,
+                      fontFamily: OS.mono,
+                      padding: "2px 8px",
+                      borderRadius: 999,
+                      marginTop: 6,
+                      background: `${OS.green}18`,
+                      color: OS.green,
+                    }}>
+                      {aiCycleComparison.pctDiff}% faster
+                    </span>
+                    <div style={{ fontSize: 11, color: dk(darkMode, "rgba(255,255,255,0.35)", OS.muted), marginTop: 4 }}>
+                      vs {fmtDays(aiCycleComparison.avgNon)} non-AI avg
+                    </div>
+                  </div>
+                ) : (
+                  /* Fallback: tool breakdown takes 2nd slot when no cycle data */
+                  null
+                )}
+
+                {/* Card 3 — Tool Breakdown */}
+                <div style={{ padding: "14px 16px", borderRadius: 10, border: cardBorder, background: cardBg }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: dk(darkMode, "rgba(255,255,255,0.8)", OS.secondary), marginBottom: 8, textAlign: "center" }}>
+                    Tool Breakdown
+                  </div>
+                  {displayToolEntries.length > 0 ? (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                      {displayToolEntries.map(([tool, count]) => {
+                        const pct = aiPRs > 0 ? Math.round((count / aiPRs) * 100) : 0;
+                        return (
+                          <div key={tool} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                            <span style={{ fontSize: 12, color: toolColors[tool.toLowerCase()] ?? dk(darkMode, "rgba(255,255,255,0.7)", OS.secondary), textTransform: "capitalize", fontWeight: 500 }}>{tool}</span>
+                            <span style={{ fontSize: 11, fontFamily: OS.mono, color: dk(darkMode, "rgba(255,255,255,0.5)", OS.muted) }}>
+                              {count} <span style={{ opacity: 0.6 }}>·</span> {pct}%
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: 12, color: dk(darkMode, "rgba(255,255,255,0.4)", OS.muted), textAlign: "center" }}>No tools detected</div>
+                  )}
+                  {unattributedAICount > 0 && (
+                    <div style={{ fontSize: 10, color: dk(darkMode, "rgba(255,255,255,0.3)", OS.muted), marginTop: 6, textAlign: "center" }}>
+                      +{unattributedAICount} PRs with unidentified tool
                     </div>
                   )}
                 </div>
-                <div style={{ padding: "14px 16px", borderRadius: 10, border: cardBorder, background: cardBg, textAlign: "center" }}>
-                  <div style={{ fontSize: 28, fontWeight: 700, color: dk(darkMode, "#fff", OS.text), fontFamily: OS.mono }}>
-                    {displayToolEntries.length > 0 ? displayToolEntries[0][0] : "—"}
-                  </div>
-                  <div style={{ fontSize: 12, color: dk(darkMode, "rgba(255,255,255,0.6)", OS.secondary), marginTop: 2 }}>
-                    Top Tool ({displayToolEntries.length > 0 ? displayToolEntries[0][1] : 0} PRs)
-                  </div>
-                </div>
-                {aiCycleComparison && (
-                  <div style={{ padding: "14px 16px", borderRadius: 10, border: cardBorder, background: cardBg, textAlign: "center" }}>
-                    <div style={{ fontSize: 28, fontWeight: 700, color: aiCycleComparison.pctDiff > 0 ? OS.green : dk(darkMode, "#fff", OS.text), fontFamily: OS.mono }}>
-                      {aiCycleComparison.pctDiff > 0 ? "-" : ""}{Math.abs(aiCycleComparison.pctDiff)}%
-                    </div>
-                    <div style={{ fontSize: 12, color: dk(darkMode, "rgba(255,255,255,0.6)", OS.secondary), marginTop: 2 }}>
-                      AI PRs Cycle Time
-                    </div>
-                    <div style={{ fontSize: 11, color: dk(darkMode, "rgba(255,255,255,0.4)", OS.muted), marginTop: 4 }}>
-                      {fmtHours(aiCycleComparison.avgAi)} vs {fmtHours(aiCycleComparison.avgNon)}
-                    </div>
-                  </div>
-                )}
               </div>
 
               {/* Weekly trend chart */}
               <div style={{ padding: "14px 16px", borderRadius: 10, border: cardBorder, background: cardBg }}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: dk(darkMode, "rgba(255,255,255,0.85)", OS.secondary), marginBottom: 2 }}>
-                  AI-Assisted PR % by Week
+                <div style={{ fontSize: 14, fontWeight: 500, color: dk(darkMode, "rgba(255,255,255,0.85)", OS.text), marginBottom: 2 }}>
+                  Weekly Trend
                 </div>
-                <div style={{ fontSize: 11, color: dk(darkMode, "rgba(255,255,255,0.5)", OS.muted), marginBottom: 12 }}>
+                <div style={{ fontSize: 12, color: dk(darkMode, "rgba(255,255,255,0.5)", OS.muted), marginBottom: 12 }}>
                   {aiSubtitle}
                 </div>
                 {weeklyAI.length >= 2 && (
-                  <AIAdoptionChart weeklyPcts={weeklyAI} dark={darkMode} fullWidth height={220} />
+                  <AIAdoptionChart weeklyPcts={weeklyAI} dark={darkMode} fullWidth height={150} />
                 )}
               </div>
 
-              {/* Team + Tool grid (Team first — more actionable) */}
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                {/* By Team */}
-                <div style={{ padding: "14px 16px", borderRadius: 10, border: cardBorder, background: cardBg }}>
-                  <div style={{ fontSize: 12, fontWeight: 600, color: dk(darkMode, "rgba(255,255,255,0.8)", OS.secondary), marginBottom: 10 }}>By Team ({timeRange}d)</div>
-                  {(() => {
-                    const rows = teamRows
-                      .filter((r) => r.team !== "Unlinked")
-                      .map((r) => ({ team: r.team, aiCount: Math.round(r.prCount * r.aiPctTeam / 100), total: r.prCount, pct: r.aiPctTeam }))
-                      .filter((r) => r.aiCount > 0)
-                      .sort((a, b) => a.pct - b.pct);
-                    const unlinkedRow = teamRows.find((r) => r.team === "Unlinked");
-                    return rows.length === 0 ? (
-                      <div style={{ fontSize: 12, color: dk(darkMode, "rgba(255,255,255,0.4)", OS.muted) }}>No AI-assisted PRs</div>
-                    ) : (
-                      <>
-                        {rows.map((r) => (
-                          <div key={r.team} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-                            <span style={{ width: 130, fontSize: 12, color: dk(darkMode, "rgba(255,255,255,0.7)", OS.secondary), textAlign: "right", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flexShrink: 0 }} title={r.team}>{r.team}</span>
-                            <div style={{ flex: 1, height: 14, background: dk(darkMode, "rgba(255,255,255,0.06)", OS.border), borderRadius: 3, overflow: "hidden" }}>
-                              <div style={{ width: `${r.pct}%`, height: "100%", borderRadius: 3, minWidth: 2, background: r.pct > 30 ? OS.green : r.pct > 15 ? OS.warning : dk(darkMode, "rgba(255,255,255,0.15)", OS.faint) }} />
-                            </div>
-                            <span style={{ width: 70, fontSize: 12, fontFamily: OS.mono, color: dk(darkMode, "rgba(255,255,255,0.6)", OS.secondary), textAlign: "right", whiteSpace: "nowrap" }}>
+              {/* By Team — chip layout */}
+              <div style={{ padding: "14px 16px", borderRadius: 10, border: cardBorder, background: cardBg }}>
+                <div style={{ fontSize: 14, fontWeight: 500, color: dk(darkMode, "rgba(255,255,255,0.85)", OS.text), marginBottom: 2 }}>By Team</div>
+                <div style={{ fontSize: 12, color: dk(darkMode, "rgba(255,255,255,0.5)", OS.muted), marginBottom: 12 }}>AI adoption rate per team ({timeRange}d)</div>
+                {(() => {
+                  const allRows = teamRows
+                    .filter((r) => r.team !== "Unlinked")
+                    .map((r) => ({ team: r.team, aiCount: Math.round(r.prCount * r.aiPctTeam / 100), total: r.prCount, pct: r.aiPctTeam }))
+                    .filter((r) => r.aiCount > 0)
+                    .sort((a, b) => b.pct - a.pct);
+                  const highRows = allRows.filter((r) => r.pct >= 15);
+                  const lowRows = allRows.filter((r) => r.pct < 15);
+                  const unlinkedRow = teamRows.find((r) => r.team === "Unlinked");
+
+                  const chipStyle = (pct: number): React.CSSProperties => ({
+                    padding: "10px 14px",
+                    borderRadius: 8,
+                    border: `1px solid ${dk(darkMode, "rgba(255,255,255,0.08)", OS.border)}`,
+                    background: dk(darkMode, "rgba(255,255,255,0.03)", OS.bg),
+                    minWidth: 90,
+                  });
+
+                  return allRows.length === 0 ? (
+                    <div style={{ fontSize: 12, color: dk(darkMode, "rgba(255,255,255,0.4)", OS.muted) }}>No AI-assisted PRs</div>
+                  ) : (
+                    <>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                        {highRows.map((r) => (
+                          <div key={r.team} style={chipStyle(r.pct)}>
+                            <div style={{ fontSize: 12, color: dk(darkMode, "rgba(255,255,255,0.7)", OS.secondary), marginBottom: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.team}>{r.team}</div>
+                            <div style={{ fontSize: 16, fontWeight: 700, fontFamily: OS.mono, color: r.pct > 30 ? OS.green : r.pct > 15 ? OS.warning : dk(darkMode, "rgba(255,255,255,0.5)", OS.muted) }}>
                               {r.pct}%
-                              <span style={{ fontSize: 10, opacity: 0.5 }}> ({r.aiCount})</span>
-                            </span>
+                            </div>
+                            <div style={{ fontSize: 11, color: dk(darkMode, "rgba(255,255,255,0.35)", OS.muted), marginTop: 2 }}>
+                              {r.aiCount} PRs
+                            </div>
                           </div>
                         ))}
-                        {unlinkedRow && (
-                          <div style={{ fontSize: 11, color: dk(darkMode, "rgba(255,255,255,0.35)", OS.muted), marginTop: 6, borderTop: `1px solid ${dk(darkMode, "rgba(255,255,255,0.06)", OS.border)}`, paddingTop: 6 }}>
-                            {unlinkedRow.prCount} PRs not linked to Jira (excluded from team breakdown)
+                        {lowRows.length > 0 && !showLowTeams && (
+                          <div
+                            onClick={() => setShowLowTeams(true)}
+                            style={{
+                              ...chipStyle(0),
+                              cursor: "pointer",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              minHeight: 60,
+                            }}
+                          >
+                            <span style={{ fontSize: 12, color: dk(darkMode, "rgba(255,255,255,0.45)", OS.muted) }}>
+                              +{lowRows.length} team{lowRows.length !== 1 ? "s" : ""} under 15%
+                            </span>
                           </div>
                         )}
-                      </>
-                    );
-                  })()}
-                </div>
-                {/* By Tool */}
-                <div style={{ padding: "14px 16px", borderRadius: 10, border: cardBorder, background: cardBg }}>
-                  <div style={{ fontSize: 12, fontWeight: 600, color: dk(darkMode, "rgba(255,255,255,0.8)", OS.secondary), marginBottom: 10 }}>By Tool ({timeRange}d)</div>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                    {displayToolEntries.map(([tool, count]) => {
-                      const maxCount = displayToolEntries.length > 0 ? displayToolEntries[0][1] : 1;
-                      return (
-                        <div key={tool} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                          <span style={{ fontSize: 12, color: dk(darkMode, "rgba(255,255,255,0.7)", OS.secondary), width: 80, flexShrink: 0, textTransform: "capitalize" }}>{tool}</span>
-                          <div style={{ flex: 1, height: 14, borderRadius: 3, background: dk(darkMode, "rgba(255,255,255,0.06)", OS.border), overflow: "hidden" }}>
-                            <div style={{ height: "100%", width: `${Math.round((count / maxCount) * 100)}%`, background: toolColors[tool.toLowerCase()] ?? OS.faint, borderRadius: 3, minWidth: count > 0 ? 2 : 0 }} />
+                        {showLowTeams && lowRows.map((r) => (
+                          <div key={r.team} style={{ ...chipStyle(r.pct), opacity: 0.7 }}>
+                            <div style={{ fontSize: 12, color: dk(darkMode, "rgba(255,255,255,0.6)", OS.secondary), marginBottom: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.team}>{r.team}</div>
+                            <div style={{ fontSize: 16, fontWeight: 700, fontFamily: OS.mono, color: dk(darkMode, "rgba(255,255,255,0.4)", OS.muted) }}>
+                              {r.pct}%
+                            </div>
+                            <div style={{ fontSize: 11, color: dk(darkMode, "rgba(255,255,255,0.3)", OS.muted), marginTop: 2 }}>
+                              {r.aiCount} PRs
+                            </div>
                           </div>
-                          <span style={{ fontSize: 12, fontFamily: OS.mono, color: dk(darkMode, "rgba(255,255,255,0.5)", OS.muted), minWidth: 28, textAlign: "right" }}>{count}</span>
+                        ))}
+                        {showLowTeams && lowRows.length > 0 && (
+                          <div
+                            onClick={() => setShowLowTeams(false)}
+                            style={{ ...chipStyle(0), cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", minHeight: 60 }}
+                          >
+                            <span style={{ fontSize: 12, color: dk(darkMode, "rgba(255,255,255,0.45)", OS.muted) }}>Collapse ▴</span>
+                          </div>
+                        )}
+                      </div>
+                      {unlinkedRow && (
+                        <div style={{ fontSize: 11, color: dk(darkMode, "rgba(255,255,255,0.35)", OS.muted), marginTop: 10 }}>
+                          {unlinkedRow.prCount} PRs not linked to Jira (excluded from team breakdown)
                         </div>
-                      );
-                    })}
-                  </div>
-                  {unattributedAICount > 0 && (
-                    <div style={{ fontSize: 11, color: dk(darkMode, "rgba(255,255,255,0.35)", OS.muted), marginTop: 8, borderTop: `1px solid ${dk(darkMode, "rgba(255,255,255,0.06)", OS.border)}`, paddingTop: 6 }}>
-                      {unattributedAICount} additional PRs detected as AI-assisted (tool unidentified)
-                    </div>
-                  )}
-                </div>
+                      )}
+                    </>
+                  );
+                })()}
               </div>
 
               {/* Per-author AI adoption */}
               <div style={{ padding: "14px 16px", borderRadius: 10, border: cardBorder, background: cardBg }}>
-                <div style={{ fontSize: 12, fontWeight: 600, color: dk(darkMode, "rgba(255,255,255,0.8)", OS.secondary), marginBottom: 2 }}>By Author ({timeRange}d)</div>
-                <div style={{ fontSize: 11, color: dk(darkMode, "rgba(255,255,255,0.5)", OS.muted), marginBottom: 10 }}>
-                  AI adoption rate per contributor (bots excluded)
+                <div style={{ fontSize: 14, fontWeight: 500, color: dk(darkMode, "rgba(255,255,255,0.85)", OS.text), marginBottom: 2 }}>By Author</div>
+                <div style={{ fontSize: 12, color: dk(darkMode, "rgba(255,255,255,0.5)", OS.muted), marginBottom: 8 }}>
+                  AI adoption rate per contributor, bots excluded ({timeRange}d)
                 </div>
+                {/* Tool legend */}
+                {displayToolEntries.length > 0 && (
+                  <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 10, flexWrap: "wrap" }}>
+                    {displayToolEntries.map(([tool]) => (
+                      <div key={tool} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                        <span style={{
+                          width: 8, height: 8, borderRadius: 2,
+                          background: toolColors[tool.toLowerCase()] ?? dk(darkMode, "rgba(255,255,255,0.15)", OS.faint),
+                          flexShrink: 0,
+                        }} />
+                        <span style={{
+                          fontSize: 11,
+                          color: dk(darkMode, "rgba(255,255,255,0.55)", OS.secondary),
+                          textTransform: "capitalize",
+                        }}>
+                          {tool}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
                 {authorBackfillPending ? (
                   <div style={{ fontSize: 12, color: dk(darkMode, "rgba(255,255,255,0.5)", OS.muted), padding: "8px 0" }}>
                     Author data syncing — reload extension or trigger a GitHub sync to populate.
@@ -2558,68 +2720,117 @@ export function EngStatsView({ darkMode = false }: EngStatsViewProps) {
                   <div style={{ fontSize: 12, color: dk(darkMode, "rgba(255,255,255,0.4)", OS.muted) }}>No authors with 2+ PRs in this period</div>
                 ) : (
                   <>
-                    {/* Table header */}
-                    <div style={{ display: "grid", gridTemplateColumns: "120px 1fr 52px 52px 1fr", gap: 6, marginBottom: 6, padding: "0 0 4px 0", borderBottom: `1px solid ${dk(darkMode, "rgba(255,255,255,0.08)", OS.border)}` }}>
-                      <div style={{ fontSize: 11, color: dk(darkMode, "rgba(255,255,255,0.5)", OS.muted), textTransform: "uppercase", letterSpacing: "0.05em" }}>Author</div>
-                      <div style={{ fontSize: 11, color: dk(darkMode, "rgba(255,255,255,0.5)", OS.muted), textTransform: "uppercase", letterSpacing: "0.05em" }}>AI %</div>
-                      <div style={{ fontSize: 11, color: dk(darkMode, "rgba(255,255,255,0.5)", OS.muted), textTransform: "uppercase", letterSpacing: "0.05em", textAlign: "right" }}>PRs</div>
-                      <div style={{ fontSize: 11, color: dk(darkMode, "rgba(255,255,255,0.5)", OS.muted), textTransform: "uppercase", letterSpacing: "0.05em", textAlign: "right" }}>Cycle</div>
-                      <div style={{ fontSize: 11, color: dk(darkMode, "rgba(255,255,255,0.5)", OS.muted), textTransform: "uppercase", letterSpacing: "0.05em", textAlign: "right" }}>Tools</div>
-                    </div>
-                    {/* Active author rows (ai > 0) */}
-                    {activeAuthorRows.slice(0, 20).map((r) => {
-                      const barColor = r.pct > 50 ? OS.green : r.pct > 20 ? OS.warning : dk(darkMode, "rgba(255,255,255,0.15)", OS.faint);
-                      const lowConfidence = r.total < 5;
+                    {/* Table header — sortable, 4-column (no Tools) */}
+                    {(() => {
+                      const thBase: React.CSSProperties = {
+                        fontSize: 11,
+                        color: dk(darkMode, "rgba(255,255,255,0.5)", OS.muted),
+                        textTransform: "uppercase",
+                        letterSpacing: "0.05em",
+                        cursor: "pointer",
+                        userSelect: "none",
+                        fontFamily: OS.font,
+                        fontWeight: 500,
+                        background: "none",
+                        border: "none",
+                        padding: 0,
+                      };
+                      const arrow = (key: AuthorSortKey) =>
+                        authorSortKey === key ? (authorSortAsc ? " ▴" : " ▾") : "";
+                      const activeColor = dk(darkMode, "rgba(255,255,255,0.8)", OS.text);
                       return (
-                        <div key={r.author} style={{ display: "grid", gridTemplateColumns: "120px 1fr 52px 52px 1fr", gap: 6, alignItems: "center", padding: "4px 0" }}>
+                        <div style={{ display: "grid", gridTemplateColumns: "140px 1fr 52px 52px", gap: 6, marginBottom: 6, padding: "0 0 4px 0", borderBottom: `1px solid ${dk(darkMode, "rgba(255,255,255,0.08)", OS.border)}` }}>
+                          <div style={{ ...thBase, cursor: "default" }}>Author</div>
+                          <button onClick={() => toggleAuthorSort("pct")} style={{ ...thBase, color: authorSortKey === "pct" ? activeColor : thBase.color }}>AI %{arrow("pct")}</button>
+                          <button onClick={() => toggleAuthorSort("ai")} style={{ ...thBase, textAlign: "right", color: authorSortKey === "ai" ? activeColor : thBase.color }}>PRs{arrow("ai")}</button>
+                          <button onClick={() => toggleAuthorSort("cycle")} style={{ ...thBase, textAlign: "right", color: authorSortKey === "cycle" ? activeColor : thBase.color }}>Cycle{arrow("cycle")}</button>
+                        </div>
+                      );
+                    })()}
+                    {/* Active author rows (ai > 0) — capped at 8, expandable */}
+                    {sortedActiveAuthors.slice(0, showAllAuthors ? sortedActiveAuthors.length : 8).map((r) => {
+                      // Color bar by primary tool, fall back to threshold colors
+                      const primaryTool = r.toolCounts.length > 0 ? r.toolCounts[0][0] : null;
+                      const primaryToolColor = primaryTool ? toolColors[primaryTool.toLowerCase()] : null;
+                      const barColor = primaryToolColor
+                        ?? (r.pct > 50 ? OS.green : r.pct > 20 ? OS.warning : dk(darkMode, "rgba(255,255,255,0.15)", OS.faint));
+                      const lowConfidence = r.total < 5;
+                      const toolTotal = r.toolCounts.reduce((s, [, c]) => s + c, 0);
+                      const toolTip = r.toolCounts.length > 0
+                        ? r.toolCounts.map(([t, c]) => `${t}: ${c} PR${c !== 1 ? "s" : ""} (${Math.round((c / toolTotal) * 100)}%)`).join("\n")
+                        : undefined;
+                      return (
+                        <div key={r.author} style={{ display: "grid", gridTemplateColumns: "140px 1fr 52px 52px", gap: 6, alignItems: "center", padding: "4px 0" }}>
                           <span style={{
                             fontSize: 12,
                             color: dk(darkMode, "rgba(255,255,255,0.8)", OS.text),
                             overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                          }} title={r.author}>{r.author}</span>
+                            display: "flex", alignItems: "center", gap: 6,
+                          }} title={r.author}>
+                            {/* Tool color dot */}
+                            {primaryToolColor && (
+                              <span title={toolTip} style={{
+                                width: 7, height: 7, borderRadius: 999,
+                                background: primaryToolColor, flexShrink: 0,
+                              }} />
+                            )}
+                            {r.author}
+                          </span>
                           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                            <div style={{ flex: 1, height: 14, background: dk(darkMode, "rgba(255,255,255,0.06)", OS.border), borderRadius: 3, overflow: "hidden" }}>
-                              <div style={{ width: `${r.pct}%`, height: "100%", borderRadius: 3, minWidth: r.ai > 0 ? 2 : 0, background: barColor }} />
+                            <div style={{ flex: 1, height: 14, background: dk(darkMode, "rgba(255,255,255,0.06)", OS.border), borderRadius: 3, overflow: "hidden" }}
+                              title={toolTip}
+                            >
+                              {/* Stacked tool segments inside the AI% bar */}
+                              {r.toolCounts.length > 1 ? (
+                                <div style={{ display: "flex", height: "100%", width: `${r.pct}%`, minWidth: r.ai > 0 ? 2 : 0, borderRadius: 3, overflow: "hidden" }}>
+                                  {r.toolCounts.map(([tool, count]) => {
+                                    return (
+                                      <div key={tool} style={{
+                                        flex: count,
+                                        height: "100%",
+                                        background: toolColors[tool.toLowerCase()] ?? barColor,
+                                      }} />
+                                    );
+                                  })}
+                                </div>
+                              ) : (
+                                <div style={{ width: `${r.pct}%`, height: "100%", borderRadius: 3, minWidth: r.ai > 0 ? 2 : 0, background: barColor }} />
+                              )}
                             </div>
                             <span style={{ fontSize: 12, fontFamily: OS.mono, color: dk(darkMode, "rgba(255,255,255,0.6)", OS.secondary), minWidth: 32, textAlign: "right", opacity: lowConfidence ? 0.6 : 1 }}>
                               {r.pct}%{lowConfidence ? "*" : ""}
                             </span>
                           </div>
-                          <span style={{ fontSize: 12, fontFamily: OS.mono, color: dk(darkMode, "rgba(255,255,255,0.6)", OS.secondary), textAlign: "right" }}>
-                            {r.ai}<span style={{ fontSize: 10, opacity: 0.5 }}>/{r.total}</span>
+                          <span style={{ fontSize: 12, fontFamily: OS.mono, textAlign: "right" }}>
+                            <span style={{ fontWeight: 600, color: dk(darkMode, "rgba(255,255,255,0.85)", OS.text) }}>{r.ai}</span>
+                            <span style={{ fontSize: 10, color: dk(darkMode, "rgba(255,255,255,0.35)", OS.muted) }}>/{r.total}</span>
                           </span>
                           <span style={{ fontSize: 12, fontFamily: OS.mono, color: dk(darkMode, "rgba(255,255,255,0.6)", OS.secondary), textAlign: "right" }}>
-                            {r.avgCycleHours != null ? fmtHours(r.avgCycleHours) : "—"}
+                            {r.avgCycleHours != null ? fmtDays(r.avgCycleHours) : "—"}
                           </span>
-                          <div style={{ display: "flex", gap: 4, flexWrap: "wrap", justifyContent: "flex-end" }}>
-                            {r.toolCounts.length > 0 ? r.toolCounts.map(([tool, count]) => (
-                              <span key={tool} style={{
-                                fontSize: 10, fontFamily: OS.mono, padding: "1px 6px", borderRadius: 4,
-                                background: (toolColors[tool.toLowerCase()] ?? dk(darkMode, "rgba(255,255,255,0.1)", OS.faint)) + "22",
-                                color: toolColors[tool.toLowerCase()] ?? dk(darkMode, "rgba(255,255,255,0.6)", OS.secondary),
-                                border: `1px solid ${(toolColors[tool.toLowerCase()] ?? dk(darkMode, "rgba(255,255,255,0.1)", OS.faint)) + "44"}`,
-                                whiteSpace: "nowrap",
-                              }}>
-                                {tool} {count > 1 ? `×${count}` : ""}
-                              </span>
-                            )) : (
-                              <span style={{ fontSize: 11, color: dk(darkMode, "rgba(255,255,255,0.3)", OS.muted) }}>—</span>
-                            )}
-                          </div>
                         </div>
                       );
                     })}
+                    {/* Show more / less toggle */}
+                    {sortedActiveAuthors.length > 8 && (
+                      <div
+                        onClick={() => setShowAllAuthors((v) => !v)}
+                        style={{ fontSize: 11, color: OS.blue, marginTop: 6, cursor: "pointer", userSelect: "none" }}
+                      >
+                        {showAllAuthors ? "Show less ▴" : `Show all ${sortedActiveAuthors.length} authors ▾`}
+                      </div>
+                    )}
                     {/* Zero adoption toggle */}
                     {zeroAdoptionCount > 0 && (
                       <div
                         onClick={() => setShowZeroAuthors(!showZeroAuthors)}
-                        style={{ fontSize: 11, color: dk(darkMode, "rgba(255,255,255,0.4)", OS.muted), marginTop: 8, cursor: "pointer", userSelect: "none", borderTop: `1px solid ${dk(darkMode, "rgba(255,255,255,0.06)", OS.border)}`, paddingTop: 8 }}
+                        style={{ fontSize: 11, color: dk(darkMode, "rgba(255,255,255,0.4)", OS.muted), marginTop: 6, cursor: "pointer", userSelect: "none", borderTop: `1px solid ${dk(darkMode, "rgba(255,255,255,0.06)", OS.border)}`, paddingTop: 6 }}
                       >
                         {showZeroAuthors ? "Hide" : "Show"} {zeroAdoptionCount} author{zeroAdoptionCount !== 1 ? "s" : ""} with 0% AI usage {showZeroAuthors ? "▴" : "▾"}
                       </div>
                     )}
                     {showZeroAuthors && authorAIRows.filter(r => r.ai === 0).map((r) => (
-                      <div key={r.author} style={{ display: "grid", gridTemplateColumns: "120px 1fr 52px 52px 1fr", gap: 6, alignItems: "center", padding: "3px 0", opacity: 0.5 }}>
+                      <div key={r.author} style={{ display: "grid", gridTemplateColumns: "140px 1fr 52px 52px", gap: 6, alignItems: "center", padding: "3px 0", opacity: 0.5 }}>
                         <span style={{
                           fontSize: 12,
                           color: dk(darkMode, "rgba(255,255,255,0.6)", OS.secondary),
@@ -2633,9 +2844,8 @@ export function EngStatsView({ darkMode = false }: EngStatsViewProps) {
                           0<span style={{ fontSize: 10, opacity: 0.5 }}>/{r.total}</span>
                         </span>
                         <span style={{ fontSize: 12, fontFamily: OS.mono, color: dk(darkMode, "rgba(255,255,255,0.4)", OS.muted), textAlign: "right" }}>
-                          {r.avgCycleHours != null ? fmtHours(r.avgCycleHours) : "—"}
+                          {r.avgCycleHours != null ? fmtDays(r.avgCycleHours) : "—"}
                         </span>
-                        <span style={{ fontSize: 11, color: dk(darkMode, "rgba(255,255,255,0.3)", OS.muted), textAlign: "right" }}>—</span>
                       </div>
                     ))}
                     {/* Low confidence footnote */}
@@ -2648,52 +2858,50 @@ export function EngStatsView({ darkMode = false }: EngStatsViewProps) {
                 )}
               </div>
 
-              {/* ─── AI Reviews section ─── */}
-              <div style={{ padding: "14px 16px", borderRadius: 10, border: cardBorder, background: cardBg }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 2 }}>
-                  <div style={{ fontSize: 12, fontWeight: 600, color: dk(darkMode, "rgba(255,255,255,0.8)", OS.secondary) }}>AI Reviews ({timeRange}d)</div>
-                  <span style={{ fontSize: 20, fontWeight: 700, fontFamily: OS.mono, color: dk(darkMode, "#fff", OS.text) }}>
-                    {aiReviewStats.pct}%
-                  </span>
-                </div>
-                <div style={{ fontSize: 11, color: dk(darkMode, "rgba(255,255,255,0.5)", OS.muted), marginBottom: 12 }}>
-                  {aiReviewStats.reviewedByAI} of {metrics.length} PRs reviewed by AI tools
-                </div>
-                {aiReviewStats.toolEntries.length > 0 ? (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                    {aiReviewStats.toolEntries.map(([tool, count]) => {
-                      const maxCount = aiReviewStats.toolEntries[0][1];
-                      const reviewColors: Record<string, string> = {
-                        coderabbit: "#0891B2",
-                        copilot: "#2EA043",
-                        "amazon-q": "#FF9900",
-                        cursor: "#7C3AED",
-                        devin: "#EC4899",
-                        tabnine: "#4B83CD",
-                        sonarcloud: "#F97316",
-                        codeclimate: "#10B981",
-                        windsurf: "#06B6D4",
-                      };
-                      return (
-                        <div key={tool} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                          <span style={{ fontSize: 12, color: dk(darkMode, "rgba(255,255,255,0.7)", OS.secondary), width: 100, flexShrink: 0, textTransform: "capitalize" }}>{tool}</span>
-                          <div style={{ flex: 1, height: 14, borderRadius: 3, background: dk(darkMode, "rgba(255,255,255,0.06)", OS.border), overflow: "hidden" }}>
-                            <div style={{ height: "100%", width: `${Math.round((count / maxCount) * 100)}%`, background: reviewColors[tool.toLowerCase()] ?? dk(darkMode, "rgba(255,255,255,0.2)", OS.faint), borderRadius: 3, minWidth: 2 }} />
+              {/* ─── AI Reviews section — hidden when 0% ─── */}
+              {aiReviewStats.pct > 0 && (
+                <div style={{ padding: "14px 16px", borderRadius: 10, border: cardBorder, background: cardBg }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 2 }}>
+                    <div style={{ fontSize: 14, fontWeight: 500, color: dk(darkMode, "rgba(255,255,255,0.85)", OS.text) }}>AI Reviews</div>
+                    <span style={{ fontSize: 20, fontWeight: 700, fontFamily: OS.mono, color: dk(darkMode, "#fff", OS.text) }}>
+                      {aiReviewStats.pct}%
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 12, color: dk(darkMode, "rgba(255,255,255,0.5)", OS.muted), marginBottom: 12 }}>
+                    {aiReviewStats.reviewedByAI} of {metrics.length} PRs reviewed by AI tools ({timeRange}d)
+                  </div>
+                  {aiReviewStats.toolEntries.length > 0 && (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      {aiReviewStats.toolEntries.map(([tool, count]) => {
+                        const maxCount = aiReviewStats.toolEntries[0][1];
+                        const reviewColors: Record<string, string> = {
+                          coderabbit: "#0891B2",
+                          copilot: "#2EA043",
+                          "amazon-q": "#FF9900",
+                          cursor: "#7C3AED",
+                          devin: "#EC4899",
+                          tabnine: "#4B83CD",
+                          sonarcloud: "#F97316",
+                          codeclimate: "#10B981",
+                          windsurf: "#06B6D4",
+                        };
+                        return (
+                          <div key={tool} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            <span style={{ fontSize: 12, color: dk(darkMode, "rgba(255,255,255,0.7)", OS.secondary), width: 100, flexShrink: 0, textTransform: "capitalize" }}>{tool}</span>
+                            <div style={{ flex: 1, height: 14, borderRadius: 3, background: dk(darkMode, "rgba(255,255,255,0.06)", OS.border), overflow: "hidden" }}>
+                              <div style={{ height: "100%", width: `${Math.round((count / maxCount) * 100)}%`, background: reviewColors[tool.toLowerCase()] ?? dk(darkMode, "rgba(255,255,255,0.2)", OS.faint), borderRadius: 3, minWidth: 2 }} />
+                            </div>
+                            <span style={{ fontSize: 12, fontFamily: OS.mono, color: dk(darkMode, "rgba(255,255,255,0.6)", OS.secondary), minWidth: 36, textAlign: "right" }}>
+                              {count} <span style={{ fontSize: 10, opacity: 0.5 }}>PRs</span>
+                            </span>
                           </div>
-                          <span style={{ fontSize: 12, fontFamily: OS.mono, color: dk(darkMode, "rgba(255,255,255,0.6)", OS.secondary), minWidth: 36, textAlign: "right" }}>
-                            {count} <span style={{ fontSize: 10, opacity: 0.5 }}>PRs</span>
-                          </span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <div style={{ fontSize: 12, color: dk(darkMode, "rgba(255,255,255,0.4)", OS.muted) }}>
-                    No AI review tools detected yet. Data populates on next sync.
-                  </div>
-                )}
-              </div>
-            </>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           )}
 
           {/* ─── Teams View ─── */}
