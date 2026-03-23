@@ -30,6 +30,7 @@ import type {
   CopilotDailyMetric,
   JiraTicket,
   PRJiraLink,
+  FocusSession,
 } from "./types";
 
 class ClydeDB extends Dexie {
@@ -63,6 +64,7 @@ class ClydeDB extends Dexie {
   copilot_metrics!: EntityTable<CopilotDailyMetric, "id">;
   jira_tickets!: EntityTable<JiraTicket, "id">;
   pr_jira_links!: EntityTable<PRJiraLink, "id">;
+  focus_sessions!: EntityTable<FocusSession, "id">;
 
   constructor() {
     super("CommitmentTracker");
@@ -242,6 +244,11 @@ class ClydeDB extends Dexie {
       return tx.table("pr_metrics").toCollection().modify((pr) => {
         if (pr.branch === undefined) pr.branch = null;
       });
+    });
+
+    // Focus Sessions: timed deep work sessions linked to commitments
+    this.version(20).stores({
+      focus_sessions: "++id, commitmentId, status, startedAt, createdAt",
     });
   }
 }

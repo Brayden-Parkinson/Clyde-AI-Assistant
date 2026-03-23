@@ -686,6 +686,30 @@ export interface PRJiraLink {
   linkedAt: string;
 }
 
+// ─── Focus Sessions ───
+
+/** Status of a focus session */
+export type FocusSessionStatus = "active" | "completed" | "abandoned";
+
+/** A timed focus session linked to a commitment */
+export interface FocusSession {
+  id?: number;
+  /** FK to commitments.id (null for unlinked sessions) */
+  commitmentId: number | null;
+  /** Session duration target in minutes (e.g. 25, 50) */
+  targetMinutes: number;
+  /** ISO timestamp when the session started */
+  startedAt: string;
+  /** ISO timestamp when the session ended (null if active) */
+  endedAt: string | null;
+  /** Actual minutes focused (computed on completion) */
+  actualMinutes: number | null;
+  status: FocusSessionStatus;
+  /** Optional note about what was accomplished */
+  note: string | null;
+  createdAt: string;
+}
+
 /** Daily Copilot usage snapshot from the GitHub org metrics API */
 export interface CopilotDailyMetric {
   id?: number;

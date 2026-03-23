@@ -18,6 +18,7 @@ import {
   DRAFT_TTL_MS,
   FOLLOW_UP_RULE_TTL_MS,
   SYNC_OUTBOX_TTL_MS,
+  FOCUS_SESSION_TTL_MS,
 } from "@shared/constants";
 import type { SlackMessagePayload, GmailMessagePayload } from "@shared/types";
 import { logStatus, updateStatus } from "@shared/status";
@@ -166,6 +167,13 @@ async function runCleanup(): Promise<void> {
   // Sync outbox: 7 days
   const syncCutoff = new Date(now - SYNC_OUTBOX_TTL_MS).toISOString();
   await db.sync_outbox.where("timestamp").below(syncCutoff).delete();
+
+  // Focus sessions: 90 days for completed/abandoned
+  const focusCutoff = new Date(now - FOCUS_SESSION_TTL_MS).toISOString();
+  await db.focus_sessions
+    .where("status").anyOf("completed", "abandoned")
+    .filter((s) => s.createdAt < focusCutoff)
+    .delete();
 
   await logStatus("info", "worker", "Daily cleanup completed");
 
@@ -741,6 +749,68 @@ chrome.runtime.onMessage.addListener(
         sendResponse(result);
       })().catch((err) => sendResponse({ ok: false, message: err instanceof Error ? err.message : String(err) }));
       return true;
+    } else if (message.type === "FOCUS_START") {
+      const { commitmentId, targetMinutes } = (message as unknown) as { commitmentId: number | null; targetMinutes: number; type: string };
+      (async () => {
+        // Abandon any existing active session
+        const existing = await db.focus_sessions.where("status").equals("active").first();
+        if (existing?.id) {
+          const elapsed = Math.round((Date.now() - new Date(existing.startedAt).getTime()) / 60_000);
+          await db.focus_sessions.update(existing.id, {
+            status: "abandoned",
+            endedAt: new Date().toISOString(),
+            actualMinutes: elapsed,
+          });
+        }
+        const now = new Date().toISOString();
+        const id = await db.focus_sessions.add({
+          commitmentId,
+          targetMinutes,
+          startedAt: now,
+          endedAt: null,
+          actualMinutes: null,
+          status: "active",
+          note: null,
+          createdAt: now,
+        });
+        // Set alarm for when session ends
+        chrome.alarms.create(ALARMS.FOCUS_TIMER, { delayInMinutes: targetMinutes });
+        logStatus("info", "worker", `Focus session started: ${targetMinutes}min${commitmentId ? ` (commitment ${commitmentId})` : ""}`);
+        sendResponse({ ok: true, sessionId: id });
+      })().catch((err) => sendResponse({ ok: false, error: String(err) }));
+      return true;
+    } else if (message.type === "FOCUS_STOP") {
+      const { note } = (message as unknown) as { note?: string; type: string };
+      (async () => {
+        const active = await db.focus_sessions.where("status").equals("active").first();
+        if (!active?.id) { sendResponse({ ok: false, error: "No active session" }); return; }
+        const elapsed = Math.round((Date.now() - new Date(active.startedAt).getTime()) / 60_000);
+        await db.focus_sessions.update(active.id, {
+          status: "completed",
+          endedAt: new Date().toISOString(),
+          actualMinutes: Math.min(elapsed, active.targetMinutes),
+          note: note || null,
+        });
+        chrome.alarms.clear(ALARMS.FOCUS_TIMER);
+        logStatus("info", "worker", `Focus session stopped after ${elapsed}min`);
+        sendResponse({ ok: true, actualMinutes: elapsed });
+      })().catch((err) => sendResponse({ ok: false, error: String(err) }));
+      return true;
+    } else if (message.type === "FOCUS_ABANDON") {
+      (async () => {
+        const active = await db.focus_sessions.where("status").equals("active").first();
+        if (!active?.id) { sendResponse({ ok: false, error: "No active session" }); return; }
+        const elapsed = Math.round((Date.now() - new Date(active.startedAt).getTime()) / 60_000);
+        await db.focus_sessions.update(active.id, {
+          status: "abandoned",
+          endedAt: new Date().toISOString(),
+          actualMinutes: elapsed,
+        });
+        chrome.alarms.clear(ALARMS.FOCUS_TIMER);
+        logStatus("info", "worker", `Focus session abandoned after ${elapsed}min`);
+        sendResponse({ ok: true });
+      })().catch((err) => sendResponse({ ok: false, error: String(err) }));
+      return true;
     }
     return false;
   },
@@ -806,6 +876,28 @@ chrome.alarms.onAlarm.addListener((alarm) => {
     case ALARMS.JIRA_SYNC:
       syncJiraData()
         .catch((err) => console.warn("[CT:worker] Jira sync failed:", err));
+      break;
+    case ALARMS.FOCUS_TIMER:
+      // Focus session timer expired — complete the active session
+      (async () => {
+        const active = await db.focus_sessions.where("status").equals("active").first();
+        if (!active || !active.id) return;
+        const now = new Date().toISOString();
+        await db.focus_sessions.update(active.id, {
+          status: "completed",
+          endedAt: now,
+          actualMinutes: active.targetMinutes,
+        });
+        // Notify user
+        chrome.notifications.create(`focus-done-${active.id}`, {
+          type: "basic",
+          iconUrl: chrome.runtime.getURL("assets/icon-128.png"),
+          title: "Focus session complete",
+          message: `${active.targetMinutes} minutes of deep work — nice!`,
+          priority: 2,
+        });
+        logStatus("info", "worker", `Focus session ${active.id} completed (${active.targetMinutes}min)`);
+      })().catch((err) => console.warn("[CT:worker] Focus timer handler failed:", err));
       break;
     default:
       if (alarm.name.startsWith(ALARMS.SNOOZE_PREFIX)) {
