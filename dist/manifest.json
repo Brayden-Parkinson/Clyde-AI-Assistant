@@ -22,7 +22,9 @@
     "https://www.googleapis.com/*",
     "https://accounts.google.com/*",
     "https://slack.com/api/*",
-    "https://gmail.googleapis.com/*"
+    "https://gmail.googleapis.com/*",
+    "https://api.github.com/*",
+    "https://*.atlassian.net/*"
   ],
   "background": {
     "service_worker": "service-worker-loader.js",
@@ -50,7 +52,7 @@
     },
     {
       "js": [
-        "assets/gmail.ts-loader-CXRvZMms.js"
+        "assets/gmail.ts-loader-BWkWigrT.js"
       ],
       "matches": [
         "https://mail.google.com/*"
@@ -108,8 +110,8 @@
         "https://mail.google.com/*"
       ],
       "resources": [
-        "assets/constants-8qxrAJNn.js",
-        "assets/gmail.ts-BvbflQKW.js"
+        "assets/constants-CsbspM7V.js",
+        "assets/gmail.ts-CU33q6Nk.js"
       ],
       "use_dynamic_url": false
     }

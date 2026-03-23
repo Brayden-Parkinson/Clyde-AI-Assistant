@@ -209,11 +209,18 @@ const AI_PATTERNS: Array<{ tool: string; patterns: RegExp[] }> = [
     ],
   },
   {
-    tool: "ai",
+    tool: "tabnine",
     patterns: [
-      /co-authored-by:.*\bai\b/i,
-      /\[ai\]/i,
-      /ai-generated/i,
+      /co-authored-by:.*tabnine/i,
+      /tabnine/i,
+    ],
+  },
+  {
+    tool: "windsurf",
+    patterns: [
+      /co-authored-by:.*windsurf/i,
+      /codeium/i,
+      /windsurf/i,
     ],
   },
 ];
