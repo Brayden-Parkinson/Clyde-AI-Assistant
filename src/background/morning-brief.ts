@@ -1,6 +1,6 @@
 import { db } from "@shared/db";
 import { CLAUDE_MODEL_FAST, API_TIMEOUT_MS, API_MAX_RETRIES, API_RETRY_DELAY_MS } from "@shared/constants";
-import type { MorningBrief, BriefPriority, BriefSuggestedMove, CalendarEvent as GoogleCalendarEvent } from "@shared/types";
+import type { MorningBrief, BriefPriority, BriefSuggestedMove, BriefPersonContext, CalendarEvent as GoogleCalendarEvent } from "@shared/types";
 import { logStatus } from "@shared/status";
 import { getUserProfile } from "@shared/user-profile";
 import { getCachedEvents } from "./google-calendar";
@@ -455,6 +455,28 @@ Return ONLY valid JSON (no markdown fences):
       reason: m.reason,
     }));
 
+    // Build people context for brief
+    let briefPeopleContext: BriefPersonContext[] | undefined;
+    try {
+      const contextRecords = await db.people_context.toArray();
+      const contextMap = new Map(contextRecords.map(c => [c.personId, c]));
+      if (topPeople.length > 0 && contextRecords.length > 0) {
+        briefPeopleContext = topPeople
+          .filter(p => p.id != null && contextMap.has(p.id))
+          .map(p => {
+            const ctx = contextMap.get(p.id!)!;
+            return {
+              name: p.name,
+              relationship: p.relationship,
+              meetingTitle: null,
+              openCommitments: ctx.openCommitments,
+              completionRate: ctx.completionRate,
+              overdueRate: ctx.overdueRate,
+            };
+          });
+      }
+    } catch { /* non-critical */ }
+
     const brief: MorningBrief = {
       date: today,
       greeting: rawResponse.greeting ?? dateStr,
@@ -465,6 +487,7 @@ Return ONLY valid JSON (no markdown fences):
       dismissed: false,
       snoozedUntil: null,
       calendarEvents: calendarEvents.length > 0 ? calendarEvents : undefined,
+      peopleContext: briefPeopleContext,
       createdAt: new Date().toISOString(),
     };
 

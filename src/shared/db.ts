@@ -14,6 +14,7 @@ import type {
   Tag,
   CalendarEvent,
   Person,
+  PersonContext,
   ChatSession,
   ChatMessageRecord,
   DailyReview,
@@ -63,6 +64,7 @@ class ClydeDB extends Dexie {
   copilot_metrics!: EntityTable<CopilotDailyMetric, "id">;
   jira_tickets!: EntityTable<JiraTicket, "id">;
   pr_jira_links!: EntityTable<PRJiraLink, "id">;
+  people_context!: EntityTable<PersonContext, "personId">;
 
   constructor() {
     super("CommitmentTracker");
@@ -242,6 +244,11 @@ class ClydeDB extends Dexie {
       return tx.table("pr_metrics").toCollection().modify((pr) => {
         if (pr.branch === undefined) pr.branch = null;
       });
+    });
+
+    // People Context: computed person insights derived from commitment data
+    this.version(20).stores({
+      people_context: "&personId, computedAt",
     });
   }
 }

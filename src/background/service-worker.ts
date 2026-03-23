@@ -30,6 +30,7 @@ import { restoreFromBackup, executeBackupSave, requestBackupSave, BACKUP_SAVE_AL
 import { generateMorningBrief } from "./morning-brief";
 import { backfillTags } from "./tag-backfill";
 import { backfillPeopleFromHistory } from "./people-extractor";
+import { computePeopleContext } from "./people-context";
 import { runConfidenceTuner } from "./confidence-tuner";
 import { extractMemories, decayMemories } from "./memory-engine";
 import { detectPatterns } from "./pattern-detector";
@@ -166,6 +167,14 @@ async function runCleanup(): Promise<void> {
   // Sync outbox: 7 days
   const syncCutoff = new Date(now - SYNC_OUTBOX_TTL_MS).toISOString();
   await db.sync_outbox.where("timestamp").below(syncCutoff).delete();
+
+  // People context: remove entries for deleted people
+  const allPeopleIds = new Set((await db.people.toArray()).map(p => p.id).filter((id): id is number => id != null));
+  const allContexts = await db.people_context.toArray();
+  const orphanedContextIds = allContexts.filter(c => !allPeopleIds.has(c.personId)).map(c => c.personId);
+  if (orphanedContextIds.length > 0) {
+    await db.people_context.bulkDelete(orphanedContextIds);
+  }
 
   await logStatus("info", "worker", "Daily cleanup completed");
 
@@ -409,6 +418,12 @@ chrome.runtime.onInstalled.addListener(async () => {
     }
   });
 
+  // People Context: compute every 4 hours
+  chrome.alarms.create(ALARMS.PEOPLE_CONTEXT, {
+    delayInMinutes: 20,
+    periodInMinutes: 240,
+  });
+
   await scheduleMorningDigestAlarm();
   updateBadge();
 
@@ -430,9 +445,9 @@ chrome.runtime.onInstalled.addListener(async () => {
   );
 
   // Seed the people table from commitment history (non-blocking, idempotent via name-match upsert)
-  backfillPeopleFromHistory().catch((err) =>
-    console.warn("[CT:worker] People backfill failed:", err),
-  );
+  backfillPeopleFromHistory()
+    .then(() => computePeopleContext())
+    .catch((err) => console.warn("[CT:worker] People backfill failed:", err));
 });
 
 chrome.runtime.onStartup.addListener(async () => {
@@ -479,6 +494,8 @@ chrome.runtime.onStartup.addListener(async () => {
       chrome.alarms.create(ALARMS.REVIEW_BACKFILL, { delayInMinutes: 2 });
     }
   });
+  // People Context: compute every 4 hours
+  chrome.alarms.create(ALARMS.PEOPLE_CONTEXT, { delayInMinutes: 20, periodInMinutes: 240 });
   await scheduleMorningDigestAlarm();
 
   initSyncHooks();
@@ -653,6 +670,7 @@ chrome.runtime.onMessage.addListener(
       return true;
     } else if (message.type === "SCAN_PEOPLE") {
       backfillPeopleFromHistory()
+        .then(() => computePeopleContext())
         .then(() => sendResponse({ ok: true }))
         .catch((err) => sendResponse({ ok: false, error: err instanceof Error ? err.message : String(err) }));
       return true;
@@ -831,6 +849,10 @@ chrome.alarms.onAlarm.addListener((alarm) => {
     case ALARMS.JIRA_SYNC:
       syncJiraData()
         .catch((err) => console.warn("[CT:worker] Jira sync failed:", err));
+      break;
+    case ALARMS.PEOPLE_CONTEXT:
+      computePeopleContext()
+        .catch((err) => console.warn("[CT:worker] People context computation failed:", err));
       break;
     default:
       if (alarm.name.startsWith(ALARMS.SNOOZE_PREFIX)) {

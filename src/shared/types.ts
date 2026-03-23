@@ -349,6 +349,32 @@ export interface BriefPersonContext {
   relationship: string | null;
   meetingTitle: string | null;
   openCommitments: number;
+  /** Fraction of commitments completed (0-1) */
+  completionRate?: number | null;
+  /** Fraction of commitments that went past deadline (0-1) */
+  overdueRate?: number | null;
+}
+
+/** Computed context about a person, derived from commitment data */
+export interface PersonContext {
+  /** FK to people.id */
+  personId: number;
+  /** Fraction of commitments in "done" state (0-1) */
+  completionRate: number;
+  /** Fraction that went past deadline (0-1) */
+  overdueRate: number;
+  /** Avg days from commitment creation to first status change */
+  avgResponseDays: number | null;
+  totalCommitments: number;
+  openCommitments: number;
+  completedCommitments: number;
+  dismissedCommitments: number;
+  /** Top 3 channels by frequency */
+  topChannels: string[];
+  /** Most recent commitment text */
+  lastInteractionSummary: string | null;
+  /** ISO timestamp when this was computed */
+  computedAt: string;
 }
 
 /** Cached Google Calendar event */

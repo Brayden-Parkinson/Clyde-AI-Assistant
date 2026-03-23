@@ -37,6 +37,7 @@ export const ALARMS = {
   GITHUB_SYNC: "github-sync",
   JIRA_SYNC: "jira-sync",
   REVIEW_BACKFILL: "review-backfill",
+  PEOPLE_CONTEXT: "people-context",
 } as const;
 
 /** How long to keep raw messages (7 days in ms) */
