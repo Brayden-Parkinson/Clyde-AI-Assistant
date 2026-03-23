@@ -30,13 +30,14 @@ import { SettingsPanel } from "../options/Options";
 import { ClydeChat } from "./components/ClydeChat";
 import { DraftComposer } from "./components/DraftComposer";
 import { PeoplePanel } from "./components/PeoplePanel";
+import { EngStatsView } from "./components/EngStatsView";
 import {
   IconSettings, IconWarning, IconX, IconRefresh, IconLoader, IconCheck,
   IconChevronUp, IconChevronDown, IconArrowRight, IconClock, IconPeople,
   InlineIcon,
 } from "./components/Icons";
 
-type ViewMode = "board" | "people" | "devlog" | "settings" | "draft";
+type ViewMode = "board" | "people" | "eng-stats" | "devlog" | "settings" | "draft";
 
 // ─── Display settings (persisted in chrome.storage.local) ───
 
@@ -1420,6 +1421,7 @@ function TopBar({
   const navItems: Array<{ key: ViewMode; label: string; show: boolean }> = [
     { key: "board", label: "Board", show: true },
     { key: "people", label: "People", show: true },
+    { key: "eng-stats", label: "Eng Stats", show: true },
     { key: "devlog", label: "Dev Log", show: developerMode },
   ];
 
@@ -1936,7 +1938,7 @@ export default function App() {
 
       <div style={{ flex: 1, overflowY: "auto", display: "flex" }}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ padding: (viewMode === "board" || viewMode === "devlog") ? "12px 16px" : 0 }}>
+          <div style={{ padding: (viewMode === "board" || viewMode === "devlog" || viewMode === "eng-stats") ? "12px 16px" : 0 }}>
 
             {/* Board view */}
             {viewMode === "board" && (
@@ -2013,6 +2015,9 @@ export default function App() {
                 onSelectCommitment={(id) => setSelectedId(id)}
               />
             )}
+
+            {/* Eng Stats view */}
+            {viewMode === "eng-stats" && <EngStatsView darkMode={darkMode} />}
 
             {/* Dev Log view */}
             {viewMode === "devlog" && <DevLogView demoMode={demoMode} demoEntries={demoMode ? DEMO_DECISION_LOG : undefined} />}

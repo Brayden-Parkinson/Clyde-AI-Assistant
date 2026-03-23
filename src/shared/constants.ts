@@ -36,6 +36,7 @@ export const ALARMS = {
   FOLLOW_UP_CHECK: "follow-up-check",
   GITHUB_SYNC: "github-sync",
   JIRA_SYNC: "jira-sync",
+  REVIEW_BACKFILL: "review-backfill",
 } as const;
 
 /** How long to keep raw messages (7 days in ms) */

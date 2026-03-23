@@ -26,6 +26,23 @@ export interface GHPRDetail {
 export interface GHReview {
   submitted_at: string;
   state: string;
+  user: { login: string; type: string } | null;
+  author_association: string;
+}
+
+const KNOWN_BOT_LOGINS = new Set([
+  "dependabot", "renovate", "codecov", "sonarcloud", "coderabbitai",
+  "github-actions", "mergify", "snyk-bot", "depfu", "greenkeeper",
+  "imgbot", "allcontributors", "stale", "netlify", "vercel",
+]);
+
+/** Returns true if a review was submitted by a bot account */
+export function isBot(review: GHReview): boolean {
+  if (!review.user) return false;
+  if (review.user.type === "Bot") return true;
+  const login = review.user.login.toLowerCase();
+  if (login.endsWith("[bot]")) return true;
+  return KNOWN_BOT_LOGINS.has(login);
 }
 
 export interface GHCommit {

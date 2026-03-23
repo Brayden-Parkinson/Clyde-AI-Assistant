@@ -13,13 +13,12 @@ import {
   fetchReleases,
   fetchCopilotMetrics,
   detectAITools,
+  isBot,
 } from "./githubClient";
 
-/** How far back to look for PRs on a fresh sync (90 days) */
-const DEFAULT_LOOKBACK_DAYS = 90;
+/** How far back to look for PRs on a fresh sync (360 days) */
+const DEFAULT_LOOKBACK_DAYS = 360;
 
-/** Max PRs to enrich with detail/review/commit calls per sync (keeps it fast) */
-const MAX_ENRICH_PER_SYNC = 30;
 
 function daysAgoISO(days: number): string {
   const d = new Date();
@@ -75,10 +74,17 @@ export async function syncGitHubData(): Promise<{
         if (!existing) newPulls.push(pull);
       }
 
-      // Cap enrichment calls to keep sync fast
-      const toEnrich = newPulls.slice(0, MAX_ENRICH_PER_SYNC);
-
-      for (const pull of toEnrich) {
+      // Enrich all new PRs — rate-limit bail-out is the only cap
+      const enrichTotal = newPulls.length;
+      let enrichCurrent = 0;
+      for (const pull of newPulls) {
+        enrichCurrent++;
+        chrome.runtime.sendMessage({
+          type: "GITHUB_SYNC_PROGRESS",
+          current: enrichCurrent,
+          total: enrichTotal,
+          repo,
+        }).catch(() => {}); // no listener is fine
         try {
           // Fetch detail + reviews + commits in parallel
           const [detail, reviews, commits] = await Promise.all([
@@ -96,7 +102,9 @@ export async function syncGitHubData(): Promise<{
                 (1000 * 60 * 60)
               : null;
 
-          const reviewTimes = reviews
+          const humanReviews = reviews.filter((r) => !isBot(r));
+
+          const reviewTimes = humanReviews
             .map((r) => new Date(r.submitted_at).getTime())
             .filter((t) => !isNaN(t));
           const firstReviewMs =
@@ -108,7 +116,7 @@ export async function syncGitHubData(): Promise<{
               : null;
 
           const reviewDays = new Set(
-            reviews.map((r) => r.submitted_at.slice(0, 10)),
+            humanReviews.map((r) => r.submitted_at.slice(0, 10)),
           );
 
           const commitMessages = commits.map((c) => c.commit.message);
@@ -136,46 +144,11 @@ export async function syncGitHubData(): Promise<{
           synced++;
         } catch (prErr) {
           errors.push(`PR #${pull.number}: ${String(prErr)}`);
-          // Stop enriching if we hit rate limits
+          // Stop enriching if we hit rate limits — next sync picks up where we left off
           if (String(prErr).includes("403") || String(prErr).includes("429")) {
             errors.push("Rate limited — will continue on next sync");
             break;
           }
-        }
-      }
-
-      // For PRs beyond the enrichment cap, store basic metrics from the list data
-      // (cycle time is still computable — just no size/review/AI data)
-      for (const pull of newPulls.slice(MAX_ENRICH_PER_SYNC)) {
-        try {
-          const createdAt = pull.created_at;
-          const mergedAt = pull.merged_at;
-          const cycleTimeHours =
-            mergedAt
-              ? (new Date(mergedAt).getTime() - new Date(createdAt).getTime()) /
-                (1000 * 60 * 60)
-              : null;
-
-          await db.pr_metrics.add({
-            repo,
-            prNumber: pull.number,
-            title: pull.title,
-            branch: pull.head?.ref ?? null,
-            createdAt,
-            mergedAt,
-            cycleTimeHours,
-            timeToFirstReviewHours: null,
-            reviewRounds: 0,
-            additions: 0,
-            deletions: 0,
-            changedFiles: 0,
-            aiAssisted: false,
-            aiTools: [],
-            syncedAt,
-          });
-          synced++;
-        } catch {
-          // duplicate or other write error — skip silently
         }
       }
     } catch (repoErr) {

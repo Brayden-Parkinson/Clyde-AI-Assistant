@@ -402,6 +402,13 @@ chrome.runtime.onInstalled.addListener(async () => {
     periodInMinutes: 360,
   });
 
+  // Eng Stats: Review backfill — kick off if not already done
+  chrome.storage.local.get("botFilterBackfillDone").then((r) => {
+    if (!r.botFilterBackfillDone) {
+      chrome.alarms.create(ALARMS.REVIEW_BACKFILL, { delayInMinutes: 2 });
+    }
+  });
+
   await scheduleMorningDigestAlarm();
   updateBadge();
 
@@ -466,6 +473,12 @@ chrome.runtime.onStartup.addListener(async () => {
   chrome.alarms.create(ALARMS.GITHUB_SYNC, { delayInMinutes: 10, periodInMinutes: 360 });
   // Eng Stats: Jira sync every 6 hours
   chrome.alarms.create(ALARMS.JIRA_SYNC, { delayInMinutes: 15, periodInMinutes: 360 });
+  // Eng Stats: Review backfill — resume if not done
+  chrome.storage.local.get("botFilterBackfillDone").then((r) => {
+    if (!r.botFilterBackfillDone) {
+      chrome.alarms.create(ALARMS.REVIEW_BACKFILL, { delayInMinutes: 2 });
+    }
+  });
   await scheduleMorningDigestAlarm();
 
   initSyncHooks();
@@ -712,14 +725,26 @@ chrome.runtime.onMessage.addListener(
         .catch((err) => sendResponse({ ok: false, error: String(err) }));
       return true;
     } else if (message.type === "GITHUB_SYNC") {
+      // Acknowledge immediately — sync runs in background and broadcasts completion
+      sendResponse({ ok: true, started: true });
       syncGitHubData()
         .then((result) => {
-          // After GitHub sync, run the PR-Jira linker too
           linkPRsToJira().catch(() => {});
-          sendResponse({ ok: true, ...result });
+          chrome.runtime.sendMessage({
+            type: "GITHUB_SYNC_COMPLETE",
+            ...result,
+          }).catch(() => {});
         })
-        .catch((err) => sendResponse({ ok: false, error: String(err) }));
-      return true;
+        .catch((err) => {
+          chrome.runtime.sendMessage({
+            type: "GITHUB_SYNC_COMPLETE",
+            error: String(err),
+            synced: 0,
+            total: 0,
+            errors: [String(err)],
+          }).catch(() => {});
+        });
+      return false;
     } else if (message.type === "JIRA_SYNC") {
       syncJiraData()
         .then((result) => sendResponse({ ok: true, ...result }))
