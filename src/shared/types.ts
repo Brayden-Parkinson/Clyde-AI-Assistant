@@ -349,6 +349,32 @@ export interface BriefPersonContext {
   relationship: string | null;
   meetingTitle: string | null;
   openCommitments: number;
+  /** Fraction of commitments completed (0-1) */
+  completionRate?: number | null;
+  /** Fraction of commitments that went past deadline (0-1) */
+  overdueRate?: number | null;
+}
+
+/** Computed context about a person, derived from commitment data */
+export interface PersonContext {
+  /** FK to people.id */
+  personId: number;
+  /** Fraction of commitments in "done" state (0-1) */
+  completionRate: number;
+  /** Fraction that went past deadline (0-1) */
+  overdueRate: number;
+  /** Avg days from commitment creation to first status change */
+  avgResponseDays: number | null;
+  totalCommitments: number;
+  openCommitments: number;
+  completedCommitments: number;
+  dismissedCommitments: number;
+  /** Top 3 channels by frequency */
+  topChannels: string[];
+  /** Most recent commitment text */
+  lastInteractionSummary: string | null;
+  /** ISO timestamp when this was computed */
+  computedAt: string;
 }
 
 /** Cached Google Calendar event */
@@ -623,5 +649,79 @@ export interface FollowUpRule {
   /** "active" = monitoring, "paused" = suppressed, "completed" = commitment done */
   status: "active" | "paused" | "completed";
   createdAt: string;
+}
+
+// ─── Eng Stats: GitHub PR Metrics ───
+
+/** Aggregated metrics for a single merged PR */
+export interface PRMetric {
+  id?: number;
+  repo: string;
+  prNumber: number;
+  title: string;
+  /** Head branch name (for Jira ticket extraction) */
+  branch: string | null;
+  /** GitHub login of the PR author */
+  author: string | null;
+  createdAt: string;
+  mergedAt: string | null;
+  /** Hours from PR creation to merge */
+  cycleTimeHours: number | null;
+  /** Hours from PR creation to first review submitted */
+  timeToFirstReviewHours: number | null;
+  reviewRounds: number;
+  additions: number;
+  deletions: number;
+  changedFiles: number;
+  /** true if any AI co-author/signature was detected */
+  aiAssisted: boolean;
+  /** e.g. ["claude", "cursor", "copilot"] */
+  aiTools: string[];
+  syncedAt: string;
+}
+
+// ─── Eng Stats: Jira Integration ───
+
+/** A Jira ticket synced from the REST API */
+export interface JiraTicket {
+  id?: number;
+  /** e.g. "RAD-1292" */
+  key: string;
+  summary: string;
+  /** e.g. "Backlog", "Code Review", "Merged", "Done" */
+  status: string;
+  statusCategory: "todo" | "in_progress" | "done";
+  /** e.g. "Story", "Bug", "Task", "New Feature", "Epic" */
+  issueType: string;
+  /** Team identifier — Jira component, e.g. "BE Guild", "Collab App" */
+  component: string | null;
+  priority: string;
+  /** Parent epic key for roadmap grouping */
+  epicKey: string | null;
+  projectKey: string;
+  createdAt: string;
+  updatedAt: string;
+  resolvedAt: string | null;
+  syncedAt: string;
+}
+
+/** Link between a PR and a Jira ticket */
+export interface PRJiraLink {
+  id?: number;
+  prMetricId: number;
+  jiraTicketKey: string;
+  source: "title" | "branch";
+  linkedAt: string;
+}
+
+/** Daily Copilot usage snapshot from the GitHub org metrics API */
+export interface CopilotDailyMetric {
+  id?: number;
+  /** YYYY-MM-DD */
+  date: string;
+  totalActiveUsers: number;
+  totalEngagedUsers: number;
+  totalChats: number;
+  syncedAt: string;
 }
 

@@ -305,6 +305,36 @@ const TOOLS: ToolDefinition[] = [
       required: ["commitment_id"],
     },
   },
+  {
+    name: "query_eng_metrics",
+    description: "Query engineering metrics: PR cycle time, review time, throughput, AI adoption, and size distribution. Use for questions about eng velocity, PRs, or development speed.",
+    input_schema: {
+      type: "object",
+      properties: {
+        start_date: { type: "string", description: "ISO date for range start. Defaults to 30 days ago." },
+        end_date: { type: "string", description: "ISO date for range end. Defaults to today." },
+        repo: { type: "string", description: "Filter by repo name (partial match)" },
+        team: { type: "string", description: "Filter by Jira component / team name" },
+        include_weekly: { type: "boolean", description: "Include weekly breakdown buckets (max 12)" },
+        include_top_prs: { type: "boolean", description: "Include top 5 slowest PRs" },
+        include_team_breakdown: { type: "boolean", description: "Include per-team stats (max 10)" },
+      },
+    },
+  },
+  {
+    name: "query_jira_stats",
+    description: "Query Jira ticket statistics: status distribution, lead times, work type breakdown. Use for questions about tickets, backlog, or work progress.",
+    input_schema: {
+      type: "object",
+      properties: {
+        start_date: { type: "string", description: "ISO date for range start. Defaults to 30 days ago." },
+        end_date: { type: "string", description: "ISO date for range end. Defaults to today." },
+        team: { type: "string", description: "Filter by Jira component / team name" },
+        issue_type: { type: "string", description: "Filter by issue type (Story, Bug, Task, etc.)" },
+        status_category: { type: "string", enum: ["todo", "in_progress", "done"], description: "Filter by status category" },
+      },
+    },
+  },
 ];
 
 // ─── Tool Executors ───
@@ -599,9 +629,24 @@ async function executeSearchPeople(input: { query: string }): Promise<string> {
   const all = await db.people.toArray();
   const matches = all.filter(p => p.name.toLowerCase().includes(input.query.toLowerCase()));
   if (matches.length === 0) return "No people found matching that name.";
-  return matches.slice(0, 10).map(p =>
-    `${p.name}${p.relationship ? ` (${p.relationship})` : ""}${p.email ? ` — ${p.email}` : ""} — ${p.commitmentCount} commitments, last seen ${p.lastSeenAt}`
-  ).join("\n");
+
+  // Enrich with context data
+  const contextMap = new Map<number, import("@shared/types").PersonContext>();
+  try {
+    const contexts = await db.people_context.toArray();
+    for (const ctx of contexts) contextMap.set(ctx.personId, ctx);
+  } catch { /* table may not exist yet */ }
+
+  return matches.slice(0, 10).map(p => {
+    let line = `${p.name}${p.relationship ? ` (${p.relationship})` : ""}${p.email ? ` — ${p.email}` : ""} — ${p.commitmentCount} commitments, last seen ${p.lastSeenAt}`;
+    const ctx = p.id != null ? contextMap.get(p.id) : undefined;
+    if (ctx) {
+      line += ` | completion: ${Math.round(ctx.completionRate * 100)}%, overdue: ${Math.round(ctx.overdueRate * 100)}%`;
+      if (ctx.avgResponseDays != null) line += `, avg response: ${ctx.avgResponseDays}d`;
+      if (ctx.topChannels.length > 0) line += ` | channels: ${ctx.topChannels.join(", ")}`;
+    }
+    return line;
+  }).join("\n");
 }
 
 async function executeGetCalendar(input: { date?: string }): Promise<string> {
@@ -791,6 +836,229 @@ async function executeBlockTime(
   return JSON.stringify({ success: true, proposalId, message: "Time block queued — approve in Actions queue" });
 }
 
+// ─── Eng Stats Tool Executors ───
+
+async function executeQueryEngMetrics(input: {
+  start_date?: string;
+  end_date?: string;
+  repo?: string;
+  team?: string;
+  include_weekly?: boolean;
+  include_top_prs?: boolean;
+  include_team_breakdown?: boolean;
+}): Promise<string> {
+  const endDate = input.end_date || new Date().toISOString().slice(0, 10);
+  const startDate = input.start_date || new Date(Date.now() - 30 * 86400_000).toISOString().slice(0, 10);
+
+  let prs = await db.pr_metrics.toArray();
+  // Filter by date range (use mergedAt for merged PRs, createdAt as fallback)
+  prs = prs.filter(pr => {
+    const date = (pr.mergedAt || pr.createdAt).slice(0, 10);
+    return date >= startDate && date <= endDate;
+  });
+  if (input.repo) {
+    const repo = input.repo.toLowerCase();
+    prs = prs.filter(pr => pr.repo.toLowerCase().includes(repo));
+  }
+
+  // Team filtering via PR-Jira links
+  let teamFilter: Set<number> | null = null;
+  if (input.team) {
+    const team = input.team.toLowerCase();
+    const tickets = await db.jira_tickets.toArray();
+    const teamTicketKeys = new Set(tickets.filter(t => (t.component || "").toLowerCase().includes(team)).map(t => t.key));
+    const links = await db.pr_jira_links.toArray();
+    teamFilter = new Set(links.filter(l => teamTicketKeys.has(l.jiraTicketKey)).map(l => l.prMetricId));
+    prs = prs.filter(pr => pr.id != null && teamFilter!.has(pr.id));
+  }
+
+  const merged = prs.filter(pr => pr.mergedAt);
+  const cycleTimes = merged.filter(pr => pr.cycleTimeHours != null).map(pr => pr.cycleTimeHours!);
+  const reviewTimes = merged.filter(pr => pr.timeToFirstReviewHours != null).map(pr => pr.timeToFirstReviewHours!);
+  const aiCount = prs.filter(pr => pr.aiAssisted).length;
+
+  const avg = (arr: number[]) => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null;
+  const median = (arr: number[]) => {
+    if (!arr.length) return null;
+    const sorted = [...arr].sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+  };
+
+  const result: Record<string, unknown> = {
+    period: `${startDate} to ${endDate}`,
+    total_prs: prs.length,
+    merged_prs: merged.length,
+    avg_cycle_time_hours: avg(cycleTimes) != null ? Math.round(avg(cycleTimes)! * 10) / 10 : null,
+    median_cycle_time_hours: median(cycleTimes) != null ? Math.round(median(cycleTimes)! * 10) / 10 : null,
+    avg_time_to_first_review_hours: avg(reviewTimes) != null ? Math.round(avg(reviewTimes)! * 10) / 10 : null,
+    ai_assisted_prs: aiCount,
+    ai_adoption_rate: prs.length ? Math.round((aiCount / prs.length) * 100) : 0,
+    size_distribution: {
+      xs: prs.filter(pr => (pr.additions + pr.deletions) < 10).length,
+      s: prs.filter(pr => { const s = pr.additions + pr.deletions; return s >= 10 && s < 100; }).length,
+      m: prs.filter(pr => { const s = pr.additions + pr.deletions; return s >= 100 && s < 500; }).length,
+      l: prs.filter(pr => { const s = pr.additions + pr.deletions; return s >= 500 && s < 1000; }).length,
+      xl: prs.filter(pr => (pr.additions + pr.deletions) >= 1000).length,
+    },
+  };
+
+  if (input.include_weekly) {
+    const weeks: Record<string, { count: number; merged: number; cycleTimes: number[] }> = {};
+    for (const pr of prs) {
+      const d = new Date(pr.mergedAt || pr.createdAt);
+      const weekStart = new Date(d);
+      weekStart.setDate(d.getDate() - d.getDay());
+      const key = weekStart.toISOString().slice(0, 10);
+      if (!weeks[key]) weeks[key] = { count: 0, merged: 0, cycleTimes: [] };
+      weeks[key].count++;
+      if (pr.mergedAt) weeks[key].merged++;
+      if (pr.cycleTimeHours != null) weeks[key].cycleTimes.push(pr.cycleTimeHours);
+    }
+    result.weekly = Object.entries(weeks).sort(([a], [b]) => a.localeCompare(b)).slice(-12).map(([week, data]) => ({
+      week,
+      prs: data.count,
+      merged: data.merged,
+      avg_cycle_hours: avg(data.cycleTimes) != null ? Math.round(avg(data.cycleTimes)! * 10) / 10 : null,
+    }));
+  }
+
+  if (input.include_top_prs) {
+    result.top_slowest_prs = [...merged]
+      .filter(pr => pr.cycleTimeHours != null)
+      .sort((a, b) => (b.cycleTimeHours ?? 0) - (a.cycleTimeHours ?? 0))
+      .slice(0, 5)
+      .map(pr => ({
+        repo: pr.repo,
+        pr_number: pr.prNumber,
+        title: pr.title.slice(0, 60),
+        cycle_time_hours: Math.round((pr.cycleTimeHours ?? 0) * 10) / 10,
+        additions: pr.additions,
+        deletions: pr.deletions,
+      }));
+  }
+
+  if (input.include_team_breakdown) {
+    const links = await db.pr_jira_links.toArray();
+    const tickets = await db.jira_tickets.toArray();
+    const ticketComponentMap = new Map(tickets.map(t => [t.key, t.component || "Unknown"]));
+    const prTeamMap = new Map<number, string>();
+    for (const link of links) {
+      prTeamMap.set(link.prMetricId, ticketComponentMap.get(link.jiraTicketKey) || "Unknown");
+    }
+    const teamStats = new Map<string, { count: number; cycleTimes: number[]; aiCount: number }>();
+    for (const pr of merged) {
+      const team = pr.id != null ? (prTeamMap.get(pr.id) || "Unlinked") : "Unlinked";
+      if (!teamStats.has(team)) teamStats.set(team, { count: 0, cycleTimes: [], aiCount: 0 });
+      const stats = teamStats.get(team)!;
+      stats.count++;
+      if (pr.cycleTimeHours != null) stats.cycleTimes.push(pr.cycleTimeHours);
+      if (pr.aiAssisted) stats.aiCount++;
+    }
+    result.team_breakdown = [...teamStats.entries()]
+      .sort((a, b) => b[1].count - a[1].count)
+      .slice(0, 10)
+      .map(([team, stats]) => ({
+        team,
+        prs: stats.count,
+        avg_cycle_hours: avg(stats.cycleTimes) != null ? Math.round(avg(stats.cycleTimes)! * 10) / 10 : null,
+        ai_assisted: stats.aiCount,
+      }));
+  }
+
+  return JSON.stringify(result);
+}
+
+async function executeQueryJiraStats(input: {
+  start_date?: string;
+  end_date?: string;
+  team?: string;
+  issue_type?: string;
+  status_category?: string;
+}): Promise<string> {
+  const endDate = input.end_date || new Date().toISOString().slice(0, 10);
+  const startDate = input.start_date || new Date(Date.now() - 30 * 86400_000).toISOString().slice(0, 10);
+
+  let tickets = await db.jira_tickets.toArray();
+  tickets = tickets.filter(t => {
+    const date = t.createdAt.slice(0, 10);
+    return date >= startDate && date <= endDate;
+  });
+  if (input.team) {
+    const team = input.team.toLowerCase();
+    tickets = tickets.filter(t => (t.component || "").toLowerCase().includes(team));
+  }
+  if (input.issue_type) {
+    const issueType = input.issue_type.toLowerCase();
+    tickets = tickets.filter(t => t.issueType.toLowerCase().includes(issueType));
+  }
+  if (input.status_category) {
+    tickets = tickets.filter(t => t.statusCategory === input.status_category);
+  }
+
+  // Status distribution
+  const statusDist: Record<string, number> = {};
+  for (const t of tickets) {
+    statusDist[t.status] = (statusDist[t.status] || 0) + 1;
+  }
+
+  // Type distribution
+  const typeDist: Record<string, number> = {};
+  for (const t of tickets) {
+    typeDist[t.issueType] = (typeDist[t.issueType] || 0) + 1;
+  }
+
+  // Category distribution
+  const categoryDist = {
+    todo: tickets.filter(t => t.statusCategory === "todo").length,
+    in_progress: tickets.filter(t => t.statusCategory === "in_progress").length,
+    done: tickets.filter(t => t.statusCategory === "done").length,
+  };
+
+  // Lead time for resolved tickets
+  const resolved = tickets.filter(t => t.resolvedAt);
+  const leadTimes = resolved.map(t => {
+    const created = new Date(t.createdAt).getTime();
+    const resolvedAt = new Date(t.resolvedAt!).getTime();
+    return (resolvedAt - created) / (1000 * 60 * 60 * 24); // days
+  });
+  const avgLeadTime = leadTimes.length ? Math.round((leadTimes.reduce((a, b) => a + b, 0) / leadTimes.length) * 10) / 10 : null;
+  const sortedLead = [...leadTimes].sort((a, b) => a - b);
+  const medianLeadTime = sortedLead.length
+    ? sortedLead.length % 2
+      ? Math.round(sortedLead[Math.floor(sortedLead.length / 2)] * 10) / 10
+      : Math.round(((sortedLead[sortedLead.length / 2 - 1] + sortedLead[sortedLead.length / 2]) / 2) * 10) / 10
+    : null;
+
+  // Team breakdown
+  const teamMap = new Map<string, { total: number; done: number; in_progress: number }>();
+  for (const t of tickets) {
+    const team = t.component || "Unassigned";
+    if (!teamMap.has(team)) teamMap.set(team, { total: 0, done: 0, in_progress: 0 });
+    const stats = teamMap.get(team)!;
+    stats.total++;
+    if (t.statusCategory === "done") stats.done++;
+    if (t.statusCategory === "in_progress") stats.in_progress++;
+  }
+
+  return JSON.stringify({
+    period: `${startDate} to ${endDate}`,
+    total_tickets: tickets.length,
+    status_distribution: statusDist,
+    type_distribution: typeDist,
+    category_summary: categoryDist,
+    lead_time_days: {
+      avg: avgLeadTime,
+      median: medianLeadTime,
+      resolved_count: resolved.length,
+    },
+    team_breakdown: [...teamMap.entries()]
+      .sort((a, b) => b[1].total - a[1].total)
+      .slice(0, 10)
+      .map(([team, stats]) => ({ team, ...stats })),
+  });
+}
+
 // ─── Tool Dispatcher ───
 
 async function executeTool(name: string, input: Record<string, unknown>, callbacks?: { onNavigateToDraft?: (draftId: number) => void }): Promise<string> {
@@ -839,6 +1107,11 @@ async function executeTool(name: string, input: Record<string, unknown>, callbac
       return executeCreateFollowUp(input as { commitment_id: number; check_at?: string });
     case "block_time":
       return executeBlockTime(input as { commitment_id: number; duration_minutes?: number; deadline?: string });
+    // Eng Stats tools
+    case "query_eng_metrics":
+      return executeQueryEngMetrics(input as Parameters<typeof executeQueryEngMetrics>[0]);
+    case "query_jira_stats":
+      return executeQueryJiraStats(input as Parameters<typeof executeQueryJiraStats>[0]);
     default:
       return JSON.stringify({ error: `Unknown tool: ${name}` });
   }
@@ -846,9 +1119,9 @@ async function executeTool(name: string, input: Record<string, unknown>, callbac
 
 // ─── Claude API ───
 
-const SYSTEM_PROMPT = `You are Clyde, a personal assistant that manages commitments, calendar, and contacts.
+const SYSTEM_PROMPT = `You are Clyde, a personal assistant that manages commitments, calendar, contacts, and engineering metrics.
 You have access to the user's calendar events, contact graph (people they interact with),
-and daily planning tools. Use these proactively when relevant.
+daily planning tools, and engineering stats (PR metrics, Jira data). Use these proactively when relevant.
 
 Rules:
 - Always use tools for actions — never just describe what you'd do
@@ -858,7 +1131,8 @@ Rules:
 - Be concise — 1-2 sentences max for responses
 - When voice input is ambiguous, lean toward creating a task
 - When returning commitment results, respond with ONLY a short summary line like "5 overdue items:" or "Found 3 tasks matching that." — never list them in text. The UI renders them as cards automatically.
-- For non-list responses (confirmations, answers, errors) write normally`;
+- For non-list responses (confirmations, answers, errors) write normally
+- For eng metrics questions, query the data first, then provide insight. Mention specific numbers. Use weekly breakdowns for trend questions.`;
 
 async function buildContextMessage(): Promise<string> {
   const active = await db.commitments

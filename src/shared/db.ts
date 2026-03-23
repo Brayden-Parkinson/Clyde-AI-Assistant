@@ -14,6 +14,7 @@ import type {
   Tag,
   CalendarEvent,
   Person,
+  PersonContext,
   ChatSession,
   ChatMessageRecord,
   DailyReview,
@@ -26,6 +27,10 @@ import type {
   ActionProposal,
   DraftMessage,
   FollowUpRule,
+  PRMetric,
+  CopilotDailyMetric,
+  JiraTicket,
+  PRJiraLink,
 } from "./types";
 
 class ClydeDB extends Dexie {
@@ -55,6 +60,11 @@ class ClydeDB extends Dexie {
   action_proposals!: EntityTable<ActionProposal, "id">;
   drafts!: EntityTable<DraftMessage, "id">;
   follow_up_rules!: EntityTable<FollowUpRule, "id">;
+  pr_metrics!: EntityTable<PRMetric, "id">;
+  copilot_metrics!: EntityTable<CopilotDailyMetric, "id">;
+  jira_tickets!: EntityTable<JiraTicket, "id">;
+  pr_jira_links!: EntityTable<PRJiraLink, "id">;
+  people_context!: EntityTable<PersonContext, "personId">;
 
   constructor() {
     super("CommitmentTracker");
@@ -217,6 +227,37 @@ class ClydeDB extends Dexie {
     this.version(17).stores({
       raw_messages: "++id, source_type, sourceId, capturedAt, context",
       work_patterns: "++id, type, sentiment, acknowledged, detectedWeek, createdAt",
+    });
+
+    // Eng Stats: GitHub PR metrics + Copilot daily metrics
+    this.version(18).stores({
+      pr_metrics: "++id, [repo+prNumber], repo, prNumber, mergedAt, syncedAt",
+      copilot_metrics: "++id, &date, syncedAt",
+    });
+
+    // Eng Stats: Jira integration — tickets + PR-ticket links
+    this.version(19).stores({
+      jira_tickets: "++id, &key, component, projectKey, status, issueType, syncedAt",
+      pr_jira_links: "++id, prMetricId, jiraTicketKey, linkedAt",
+    }).upgrade((tx) => {
+      // Add branch field to existing PR metrics
+      return tx.table("pr_metrics").toCollection().modify((pr) => {
+        if (pr.branch === undefined) pr.branch = null;
+      });
+    });
+
+    // People Context: computed person insights derived from commitment data
+    this.version(20).stores({
+      people_context: "&personId, computedAt",
+    });
+
+    // Add author field to PR metrics + index for per-person queries
+    this.version(21).stores({
+      pr_metrics: "++id, [repo+prNumber], repo, prNumber, mergedAt, author, syncedAt",
+    }).upgrade((tx) => {
+      return tx.table("pr_metrics").toCollection().modify((pr) => {
+        if (pr.author === undefined) pr.author = null;
+      });
     });
   }
 }

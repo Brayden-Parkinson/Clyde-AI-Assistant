@@ -2,8 +2,8 @@ import React, { useState, useEffect, useMemo } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { OS } from "@shared/tokens";
 import { db } from "@shared/db";
-import type { Person, Commitment } from "@shared/types";
-import { DEMO_PEOPLE, DEMO_ACTIVE } from "@shared/demo-data";
+import type { Person, Commitment, PersonContext } from "@shared/types";
+import { DEMO_PEOPLE, DEMO_ACTIVE, DEMO_PEOPLE_CONTEXT } from "@shared/demo-data";
 import { useDarkMode, dk } from "../DarkModeContext";
 
 // ─── Helpers ───
@@ -101,6 +101,18 @@ export function PeoplePanel({ demoMode, showToast, onNavigateToDraft, onSelectCo
     () => demoMode ? Promise.resolve([] as Commitment[]) : db.commitments.toArray(),
     [demoMode]
   ) ?? [];
+
+  const liveContextMap = useLiveQuery(async () => {
+    if (demoMode) {
+      const map = new Map<number, PersonContext>();
+      for (const ctx of DEMO_PEOPLE_CONTEXT) map.set(ctx.personId, ctx);
+      return map;
+    }
+    const all = await db.people_context.toArray();
+    const map = new Map<number, PersonContext>();
+    for (const ctx of all) map.set(ctx.personId, ctx);
+    return map;
+  }, [demoMode]) ?? new Map<number, PersonContext>();
 
   // Load user name to filter self out of display
   const [selfName, setSelfName] = useState("");
@@ -569,6 +581,61 @@ export function PeoplePanel({ demoMode, showToast, onNavigateToDraft, onSelectCo
             style={{ marginLeft: 38, paddingBottom: 12, paddingRight: 16 }}
             onClick={(e) => e.stopPropagation()}
           >
+            {/* Context insights row */}
+            {(() => {
+              const ctx = person.id != null ? liveContextMap.get(person.id) : undefined;
+              if (!ctx) return null;
+              const completionColor = ctx.completionRate >= 0.70
+                ? dk(darkMode, "#4ADE80", "#16A34A")
+                : ctx.completionRate >= 0.40
+                  ? dk(darkMode, "rgba(255,255,255,0.55)", OS.secondary)
+                  : dk(darkMode, "#FBBF24", "#D97706");
+              const overdueColor = ctx.overdueRate > 0.20
+                ? dk(darkMode, "#FBBF24", "#D97706")
+                : dk(darkMode, "rgba(255,255,255,0.55)", OS.secondary);
+              return (
+                <div style={{ marginBottom: 10, marginTop: 4 }}>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 4 }}>
+                    <span style={{
+                      fontSize: 11, fontWeight: 500, padding: "2px 8px", borderRadius: 999,
+                      background: dk(darkMode, "rgba(255,255,255,0.06)", OS.bg),
+                      border: `0.5px solid ${dk(darkMode, "rgba(255,255,255,0.10)", OS.border)}`,
+                      color: completionColor,
+                    }}>
+                      Completion {Math.round(ctx.completionRate * 100)}%
+                    </span>
+                    {ctx.avgResponseDays != null && (
+                      <span style={{
+                        fontSize: 11, fontWeight: 500, padding: "2px 8px", borderRadius: 999,
+                        background: dk(darkMode, "rgba(255,255,255,0.06)", OS.bg),
+                        border: `0.5px solid ${dk(darkMode, "rgba(255,255,255,0.10)", OS.border)}`,
+                        color: dk(darkMode, "rgba(255,255,255,0.55)", OS.secondary),
+                      }}>
+                        Response ~{ctx.avgResponseDays}d
+                      </span>
+                    )}
+                    <span style={{
+                      fontSize: 11, fontWeight: 500, padding: "2px 8px", borderRadius: 999,
+                      background: dk(darkMode, "rgba(255,255,255,0.06)", OS.bg),
+                      border: `0.5px solid ${dk(darkMode, "rgba(255,255,255,0.10)", OS.border)}`,
+                      color: overdueColor,
+                    }}>
+                      Overdue {Math.round(ctx.overdueRate * 100)}%
+                    </span>
+                  </div>
+                  {ctx.topChannels.length > 0 && (
+                    <div style={{
+                      fontSize: 11,
+                      color: dk(darkMode, "rgba(255,255,255,0.35)", OS.muted),
+                      marginTop: 2,
+                    }}>
+                      Active in: {ctx.topChannels.join(", ")}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
             {/* Relationship select */}
             <div style={{ marginBottom: 8, marginTop: 6 }}>
               <label style={{

@@ -30,6 +30,7 @@ import { restoreFromBackup, executeBackupSave, requestBackupSave, BACKUP_SAVE_AL
 import { generateMorningBrief } from "./morning-brief";
 import { backfillTags } from "./tag-backfill";
 import { backfillPeopleFromHistory } from "./people-extractor";
+import { computePeopleContext } from "./people-context";
 import { runConfidenceTuner } from "./confidence-tuner";
 import { extractMemories, decayMemories } from "./memory-engine";
 import { detectPatterns } from "./pattern-detector";
@@ -37,6 +38,8 @@ import { generateWeeklyDigest } from "./weekly-digest";
 import { initSyncHooks, syncPush } from "./sync-engine";
 import { fetchAndCacheCalendarEvents } from "./google-calendar";
 import { initiateGoogleOAuth, disconnectGoogle } from "./google-auth";
+import { syncGitHubData, backfillPRAuthors } from "./githubSync";
+import { syncJiraData, linkPRsToJira } from "./jiraSync";
 
 // ─── Badge ───
 
@@ -164,6 +167,14 @@ async function runCleanup(): Promise<void> {
   // Sync outbox: 7 days
   const syncCutoff = new Date(now - SYNC_OUTBOX_TTL_MS).toISOString();
   await db.sync_outbox.where("timestamp").below(syncCutoff).delete();
+
+  // People context: remove entries for deleted people
+  const allPeopleIds = new Set((await db.people.toArray()).map(p => p.id).filter((id): id is number => id != null));
+  const allContexts = await db.people_context.toArray();
+  const orphanedContextIds = allContexts.filter(c => !allPeopleIds.has(c.personId)).map(c => c.personId);
+  if (orphanedContextIds.length > 0) {
+    await db.people_context.bulkDelete(orphanedContextIds);
+  }
 
   await logStatus("info", "worker", "Daily cleanup completed");
 
@@ -389,6 +400,36 @@ chrome.runtime.onInstalled.addListener(async () => {
     periodInMinutes: 120,
   });
 
+  // Eng Stats: GitHub sync every 6 hours
+  chrome.alarms.create(ALARMS.GITHUB_SYNC, {
+    delayInMinutes: 10,
+    periodInMinutes: 360,
+  });
+  // Eng Stats: Jira sync every 6 hours
+  chrome.alarms.create(ALARMS.JIRA_SYNC, {
+    delayInMinutes: 15,
+    periodInMinutes: 360,
+  });
+
+  // Eng Stats: Review backfill — kick off if not already done
+  chrome.storage.local.get("botFilterBackfillDone").then((r) => {
+    if (!r.botFilterBackfillDone) {
+      chrome.alarms.create(ALARMS.REVIEW_BACKFILL, { delayInMinutes: 2 });
+    }
+  });
+  // Eng Stats: Author backfill — kick off if not already done
+  chrome.storage.local.get("authorBackfillDone").then((r) => {
+    if (!r.authorBackfillDone) {
+      chrome.alarms.create(ALARMS.AUTHOR_BACKFILL, { delayInMinutes: 3 });
+    }
+  });
+
+  // People Context: compute every 4 hours
+  chrome.alarms.create(ALARMS.PEOPLE_CONTEXT, {
+    delayInMinutes: 20,
+    periodInMinutes: 240,
+  });
+
   await scheduleMorningDigestAlarm();
   updateBadge();
 
@@ -410,9 +451,9 @@ chrome.runtime.onInstalled.addListener(async () => {
   );
 
   // Seed the people table from commitment history (non-blocking, idempotent via name-match upsert)
-  backfillPeopleFromHistory().catch((err) =>
-    console.warn("[CT:worker] People backfill failed:", err),
-  );
+  backfillPeopleFromHistory()
+    .then(() => computePeopleContext())
+    .catch((err) => console.warn("[CT:worker] People backfill failed:", err));
 });
 
 chrome.runtime.onStartup.addListener(async () => {
@@ -449,6 +490,24 @@ chrome.runtime.onStartup.addListener(async () => {
   chrome.alarms.create(ALARMS.WEEKLY_DIGEST, { delayInMinutes: 180, periodInMinutes: 7 * 24 * 60 });
   // Phase 2: Follow-up check every 2 hours
   chrome.alarms.create(ALARMS.FOLLOW_UP_CHECK, { delayInMinutes: 5, periodInMinutes: 120 });
+  // Eng Stats: GitHub sync every 6 hours
+  chrome.alarms.create(ALARMS.GITHUB_SYNC, { delayInMinutes: 10, periodInMinutes: 360 });
+  // Eng Stats: Jira sync every 6 hours
+  chrome.alarms.create(ALARMS.JIRA_SYNC, { delayInMinutes: 15, periodInMinutes: 360 });
+  // Eng Stats: Review backfill — resume if not done
+  chrome.storage.local.get("botFilterBackfillDone").then((r) => {
+    if (!r.botFilterBackfillDone) {
+      chrome.alarms.create(ALARMS.REVIEW_BACKFILL, { delayInMinutes: 2 });
+    }
+  });
+  // Eng Stats: Author backfill — resume if not done
+  chrome.storage.local.get("authorBackfillDone").then((r) => {
+    if (!r.authorBackfillDone) {
+      chrome.alarms.create(ALARMS.AUTHOR_BACKFILL, { delayInMinutes: 3 });
+    }
+  });
+  // People Context: compute every 4 hours
+  chrome.alarms.create(ALARMS.PEOPLE_CONTEXT, { delayInMinutes: 20, periodInMinutes: 240 });
   await scheduleMorningDigestAlarm();
 
   initSyncHooks();
@@ -571,7 +630,7 @@ chrome.runtime.onMessage.addListener(
             // Restore chrome.storage settings — strip sensitive keys to prevent backup poisoning
             const chromeStorage = state.chrome_storage as Record<string, unknown> | undefined;
             if (chromeStorage) {
-              const SENSITIVE_KEYS = new Set(["anthropicApiKey", "slackBotToken", "googleAuthTokens"]);
+              const SENSITIVE_KEYS = new Set(["anthropicApiKey", "slackBotToken", "googleAuthTokens", "githubToken"]);
               const safeStorage: Record<string, unknown> = {};
               for (const [k, v] of Object.entries(chromeStorage)) {
                 if (!SENSITIVE_KEYS.has(k)) safeStorage[k] = v;
@@ -623,6 +682,7 @@ chrome.runtime.onMessage.addListener(
       return true;
     } else if (message.type === "SCAN_PEOPLE") {
       backfillPeopleFromHistory()
+        .then(() => computePeopleContext())
         .then(() => sendResponse({ ok: true }))
         .catch((err) => sendResponse({ ok: false, error: err instanceof Error ? err.message : String(err) }));
       return true;
@@ -692,6 +752,32 @@ chrome.runtime.onMessage.addListener(
       const { commitmentId, checkAt } = (message as unknown) as { commitmentId: number; checkAt?: string; type: string };
       import("./follow-up-engine").then(({ setFollowUpRule }) => setFollowUpRule(commitmentId, checkAt))
         .then((ruleId) => sendResponse({ ok: true, ruleId }))
+        .catch((err) => sendResponse({ ok: false, error: String(err) }));
+      return true;
+    } else if (message.type === "GITHUB_SYNC") {
+      // Acknowledge immediately — sync runs in background and broadcasts completion
+      sendResponse({ ok: true, started: true });
+      syncGitHubData()
+        .then((result) => {
+          linkPRsToJira().catch(() => {});
+          chrome.runtime.sendMessage({
+            type: "GITHUB_SYNC_COMPLETE",
+            ...result,
+          }).catch(() => {});
+        })
+        .catch((err) => {
+          chrome.runtime.sendMessage({
+            type: "GITHUB_SYNC_COMPLETE",
+            error: String(err),
+            synced: 0,
+            total: 0,
+            errors: [String(err)],
+          }).catch(() => {});
+        });
+      return false;
+    } else if (message.type === "JIRA_SYNC") {
+      syncJiraData()
+        .then((result) => sendResponse({ ok: true, ...result }))
         .catch((err) => sendResponse({ ok: false, error: String(err) }));
       return true;
     } else if (message.type === "SEND_DRAFT") {
@@ -766,6 +852,23 @@ chrome.alarms.onAlarm.addListener((alarm) => {
     case ALARMS.FOLLOW_UP_CHECK:
       import("./follow-up-engine").then(({ runFollowUpCheck }) => runFollowUpCheck())
         .catch((err) => console.warn("[CT:worker] Follow-up check failed:", err));
+      break;
+    case ALARMS.GITHUB_SYNC:
+      syncGitHubData()
+        .then(() => linkPRsToJira())
+        .catch((err) => console.warn("[CT:worker] GitHub sync failed:", err));
+      break;
+    case ALARMS.JIRA_SYNC:
+      syncJiraData()
+        .catch((err) => console.warn("[CT:worker] Jira sync failed:", err));
+      break;
+    case ALARMS.PEOPLE_CONTEXT:
+      computePeopleContext()
+        .catch((err) => console.warn("[CT:worker] People context computation failed:", err));
+      break;
+    case ALARMS.AUTHOR_BACKFILL:
+      backfillPRAuthors()
+        .catch((err) => console.warn("[CT:worker] Author backfill failed:", err));
       break;
     default:
       if (alarm.name.startsWith(ALARMS.SNOOZE_PREFIX)) {

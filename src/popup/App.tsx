@@ -30,13 +30,14 @@ import { SettingsPanel } from "../options/Options";
 import { ClydeChat } from "./components/ClydeChat";
 import { DraftComposer } from "./components/DraftComposer";
 import { PeoplePanel } from "./components/PeoplePanel";
+import { EngStatsView } from "./components/EngStatsView";
 import {
   IconSettings, IconWarning, IconX, IconRefresh, IconLoader, IconCheck,
   IconChevronUp, IconChevronDown, IconArrowRight, IconClock, IconPeople,
   InlineIcon,
 } from "./components/Icons";
 
-type ViewMode = "board" | "people" | "devlog" | "settings" | "draft";
+type ViewMode = "board" | "people" | "eng-stats" | "devlog" | "settings" | "draft";
 
 // ─── Display settings (persisted in chrome.storage.local) ───
 
@@ -1387,6 +1388,7 @@ function TopBar({
   viewMode,
   setViewMode,
   developerMode,
+  engStatsEnabled,
   onOpenSettings,
   scanning,
   onRescan,
@@ -1402,6 +1404,7 @@ function TopBar({
   viewMode: ViewMode;
   setViewMode: (v: ViewMode) => void;
   developerMode: boolean;
+  engStatsEnabled: boolean;
   onOpenSettings: () => void;
   scanning: boolean;
   onRescan: () => void;
@@ -1420,6 +1423,7 @@ function TopBar({
   const navItems: Array<{ key: ViewMode; label: string; show: boolean }> = [
     { key: "board", label: "Board", show: true },
     { key: "people", label: "People", show: true },
+    { key: "eng-stats", label: "Eng Stats", show: engStatsEnabled },
     { key: "devlog", label: "Dev Log", show: developerMode },
   ];
 
@@ -1434,7 +1438,7 @@ function TopBar({
     if (el) {
       setSlider({ left: el.offsetLeft, width: el.offsetWidth });
     }
-  }, [viewMode, developerMode]);
+  }, [viewMode, developerMode, engStatsEnabled]);
 
   return (
     <div
@@ -1624,6 +1628,7 @@ export default function App() {
     if (viewMode !== "draft") setActiveDraftId(null);
   }, [viewMode]);
   const [developerMode, setDeveloperMode] = useState(false);
+  const [engStatsEnabled, setEngStatsEnabled] = useState(false);
   const [demoMode, setDemoMode] = useState(false);
   const [privacyMode, setPrivacyMode] = useState(false);
   const [scanning, setScanning] = useState(false);
@@ -1656,9 +1661,10 @@ export default function App() {
   ) ?? new Set<number>();
 
   useEffect(() => {
-    chrome.storage.local.get(["anthropicApiKey", "userName", "developerMode", "demoMode"]).then((result) => {
+    chrome.storage.local.get(["anthropicApiKey", "userName", "developerMode", "demoMode", "engStatsEnabled"]).then((result) => {
       setHasApiKey(!!result.anthropicApiKey);
       setDeveloperMode(result.developerMode === true);
+      setEngStatsEnabled(result.engStatsEnabled === true);
       setDemoMode(result.demoMode === true);
       // In demo mode, always show the setup wizard on refresh
       setIsFirstRun(result.demoMode === true || (!result.anthropicApiKey && !result.userName));
@@ -1671,6 +1677,9 @@ export default function App() {
       if (area !== "local") return;
       if (changes.developerMode) {
         setDeveloperMode(changes.developerMode.newValue === true);
+      }
+      if (changes.engStatsEnabled) {
+        setEngStatsEnabled(changes.engStatsEnabled.newValue === true);
       }
       if (changes.demoMode) {
         setDemoMode(changes.demoMode.newValue === true);
@@ -1918,6 +1927,7 @@ export default function App() {
         viewMode={viewMode}
         setViewMode={setViewMode}
         developerMode={developerMode}
+        engStatsEnabled={engStatsEnabled}
         onOpenSettings={() => setViewMode("settings")}
         scanning={scanning}
         onRescan={onRescan}
@@ -1936,7 +1946,7 @@ export default function App() {
 
       <div style={{ flex: 1, overflowY: "auto", display: "flex" }}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ padding: (viewMode === "board" || viewMode === "devlog") ? "12px 16px" : 0 }}>
+          <div style={{ padding: (viewMode === "board" || viewMode === "devlog" || viewMode === "eng-stats") ? "12px 16px" : 0 }}>
 
             {/* Board view */}
             {viewMode === "board" && (
@@ -2013,6 +2023,9 @@ export default function App() {
                 onSelectCommitment={(id) => setSelectedId(id)}
               />
             )}
+
+            {/* Eng Stats view */}
+            {viewMode === "eng-stats" && <EngStatsView darkMode={darkMode} />}
 
             {/* Dev Log view */}
             {viewMode === "devlog" && <DevLogView demoMode={demoMode} demoEntries={demoMode ? DEMO_DECISION_LOG : undefined} />}
