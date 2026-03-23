@@ -661,6 +661,8 @@ export interface PRMetric {
   title: string;
   /** Head branch name (for Jira ticket extraction) */
   branch: string | null;
+  /** GitHub login of the PR author */
+  author: string | null;
   createdAt: string;
   mergedAt: string | null;
   /** Hours from PR creation to merge */

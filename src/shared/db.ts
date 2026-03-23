@@ -250,6 +250,15 @@ class ClydeDB extends Dexie {
     this.version(20).stores({
       people_context: "&personId, computedAt",
     });
+
+    // Add author field to PR metrics + index for per-person queries
+    this.version(21).stores({
+      pr_metrics: "++id, [repo+prNumber], repo, prNumber, mergedAt, author, syncedAt",
+    }).upgrade((tx) => {
+      return tx.table("pr_metrics").toCollection().modify((pr) => {
+        if (pr.author === undefined) pr.author = null;
+      });
+    });
   }
 }
 
