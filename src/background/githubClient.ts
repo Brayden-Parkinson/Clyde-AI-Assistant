@@ -14,6 +14,7 @@ export interface GHPull {
   merged_at: string | null;
   state: string;
   head: { ref: string };
+  user: { login: string; type: string } | null;
 }
 
 export interface GHPRDetail {

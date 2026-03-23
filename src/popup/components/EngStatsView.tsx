@@ -1373,6 +1373,31 @@ export function EngStatsView({ darkMode = false }: EngStatsViewProps) {
     );
   }, [toolEntries]);
 
+  // ─── Per-author AI adoption ───
+  const authorAIRows = useMemo(() => {
+    const authorStats = new Map<string, { total: number; ai: number; tools: Set<string> }>();
+    for (const m of metrics) {
+      const author = m.author || "Unknown";
+      if (!authorStats.has(author)) authorStats.set(author, { total: 0, ai: 0, tools: new Set() });
+      const s = authorStats.get(author)!;
+      s.total++;
+      if (m.aiAssisted) {
+        s.ai++;
+        for (const t of m.aiTools) s.tools.add(t);
+      }
+    }
+    return [...authorStats.entries()]
+      .map(([author, s]) => ({
+        author,
+        total: s.total,
+        ai: s.ai,
+        pct: s.total > 0 ? Math.round((s.ai / s.total) * 100) : 0,
+        tools: [...s.tools].sort(),
+      }))
+      .filter(r => r.total >= 2) // only show authors with 2+ PRs
+      .sort((a, b) => b.ai - a.ai || b.pct - a.pct);
+  }, [metrics]);
+
   // ─── Team breakdown rows (pre-computed) ───
   const teamRows = useMemo(() => {
     const teamStats = new Map<string, PRMetric[]>();
@@ -2385,6 +2410,46 @@ export function EngStatsView({ darkMode = false }: EngStatsViewProps) {
                     ));
                   })()}
                 </div>
+              </div>
+              {/* Per-author AI adoption */}
+              <div style={{ padding: "14px 16px", borderRadius: 10, border: cardBorder, background: cardBg }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: dk(darkMode, "rgba(255,255,255,0.7)", OS.secondary), marginBottom: 10 }}>By Author ({timeRange}d)</div>
+                {authorAIRows.length === 0 ? (
+                  <div style={{ fontSize: 11, color: dk(darkMode, "rgba(255,255,255,0.3)", OS.muted) }}>No authors with 2+ PRs</div>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                    {authorAIRows.slice(0, 15).map((r) => {
+                      const barColor = r.pct > 50 ? OS.green : r.pct > 20 ? OS.warning : dk(darkMode, "rgba(255,255,255,0.15)", OS.faint);
+                      return (
+                        <div key={r.author} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <span style={{
+                            width: 100, fontSize: 11, fontFamily: OS.mono,
+                            color: dk(darkMode, "rgba(255,255,255,0.6)", OS.secondary),
+                            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flexShrink: 0,
+                          }} title={r.author}>{r.author}</span>
+                          <div style={{ flex: 1, height: 12, background: dk(darkMode, "rgba(255,255,255,0.04)", OS.border), borderRadius: 3, overflow: "hidden" }}>
+                            <div style={{ width: `${r.pct}%`, height: "100%", borderRadius: 3, minWidth: r.ai > 0 ? 2 : 0, background: barColor }} />
+                          </div>
+                          <span style={{
+                            width: 60, fontSize: 11, fontFamily: OS.mono, textAlign: "right", whiteSpace: "nowrap",
+                            color: dk(darkMode, "rgba(255,255,255,0.5)", OS.muted),
+                          }}>
+                            {r.pct}%
+                            <span style={{ fontSize: 9, opacity: 0.4 }}> ({r.ai}/{r.total})</span>
+                          </span>
+                          {r.tools.length > 0 && (
+                            <span style={{
+                              fontSize: 9, color: dk(darkMode, "rgba(255,255,255,0.3)", OS.muted),
+                              maxWidth: 80, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                            }} title={r.tools.join(", ")}>
+                              {r.tools.join(", ")}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             </>
           )}

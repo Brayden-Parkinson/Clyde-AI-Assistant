@@ -127,6 +127,7 @@ export async function syncGitHubData(): Promise<{
             prNumber: pull.number,
             title: pull.title,
             branch: pull.head?.ref ?? null,
+            author: pull.user?.login ?? null,
             createdAt,
             mergedAt,
             cycleTimeHours,
