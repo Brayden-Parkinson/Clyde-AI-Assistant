@@ -576,6 +576,9 @@ chrome.runtime.onMessage.addListener(
         updateBadge();
         requestBackupSave();
         sendResponse({ ok: true });
+      }).catch((err) => {
+        logStatus("error", "worker", `Manual scan failed: ${err?.message ?? err}`);
+        sendResponse({ ok: false, error: String(err?.message ?? err) });
       });
       return true;
     } else if (message.type === "GET_STATUS") {
