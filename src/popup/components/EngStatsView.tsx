@@ -11,6 +11,7 @@ import { useLiveQuery } from "dexie-react-hooks";
 import { db } from "@shared/db";
 import { OS } from "@shared/tokens";
 import type { PRMetric, JiraTicket, PRJiraLink, AIReviewComment } from "@shared/types";
+import { isBotAuthor } from "@shared/constants";
 
 // ─── Sub-tab types ───
 type EngStatsTab = "Summary" | "Cycle Time" | "AI Adoption" | "AI Reviews" | "Teams";
@@ -1152,22 +1153,23 @@ export function EngStatsView({ darkMode = false }: EngStatsViewProps) {
   ).length;
 
   // ─── AI adoption ───
-  const BOT_ACCOUNTS = useMemo(() => new Set([
-    "openspace-bot", "dependabot[bot]", "renovate[bot]", "github-actions[bot]",
-  ]), []);
+  // Filter out bot-authored PRs for all human-focused metrics
+  const humanMetrics = useMemo(
+    () => metrics.filter((m) => !m.author || !isBotAuthor(m.author)),
+    [metrics],
+  );
 
-  const aiPRs = metrics.filter((m) => m.aiAssisted).length;
-  const aiPct = metrics.length
-    ? Math.round((aiPRs / metrics.length) * 100)
+  const aiPRs = humanMetrics.filter((m) => m.aiAssisted).length;
+  const aiPct = humanMetrics.length
+    ? Math.round((aiPRs / humanMetrics.length) * 100)
     : 0;
 
   // AI vs non-AI cycle time comparison
   const aiCycleComparison = useMemo(() => {
     const aiCycles: number[] = [];
     const nonAiCycles: number[] = [];
-    for (const m of metrics) {
+    for (const m of humanMetrics) {
       if (m.cycleTimeHours == null || !m.mergedAt) continue;
-      if (m.author && BOT_ACCOUNTS.has(m.author)) continue;
       const biz = toBusinessHours(m.cycleTimeHours, m.createdAt, m.mergedAt);
       if (m.aiAssisted) aiCycles.push(biz);
       else nonAiCycles.push(biz);
@@ -1179,7 +1181,7 @@ export function EngStatsView({ darkMode = false }: EngStatsViewProps) {
     const avgNon = cleanNon.reduce((a, b) => a + b, 0) / cleanNon.length;
     const pctDiff = avgNon > 0 ? Math.round(((avgNon - avgAi) / avgNon) * 100) : 0;
     return { avgAi, avgNon, pctDiff };
-  }, [metrics, BOT_ACCOUNTS]);
+  }, [humanMetrics]);
 
   // Tool breakdown (scoped to selected time range)
   const toolCounts: Record<string, number> = {};
@@ -1551,12 +1553,11 @@ export function EngStatsView({ darkMode = false }: EngStatsViewProps) {
     return aiEntry ? aiEntry[1] : 0;
   }, [toolEntries]);
 
-  // ─── Per-author AI adoption (excludes bots) ───
+  // ─── Per-author AI adoption (excludes bots via shared isBotAuthor) ───
   const authorAIRows = useMemo(() => {
     const authorStats = new Map<string, { total: number; ai: number; toolCounts: Map<string, number>; cycleTimes: number[]; sizes: number[] }>();
-    for (const m of metrics) {
+    for (const m of humanMetrics) {
       if (!m.author) continue;
-      if (BOT_ACCOUNTS.has(m.author)) continue;
       if (!authorStats.has(m.author)) authorStats.set(m.author, { total: 0, ai: 0, toolCounts: new Map(), cycleTimes: [], sizes: [] });
       const s = authorStats.get(m.author)!;
       s.total++;
@@ -1572,8 +1573,9 @@ export function EngStatsView({ darkMode = false }: EngStatsViewProps) {
     }
     return [...authorStats.entries()]
       .map(([author, s]) => {
-        const avgCycle = s.cycleTimes.length > 0
-          ? s.cycleTimes.reduce((a, b) => a + b, 0) / s.cycleTimes.length
+        const cleanCycles = removeOutliers(s.cycleTimes);
+        const avgCycle = cleanCycles.length > 0
+          ? cleanCycles.reduce((a, b) => a + b, 0) / cleanCycles.length
           : null;
         const avgSize = s.sizes.length > 0
           ? Math.round(s.sizes.reduce((a, b) => a + b, 0) / s.sizes.length)
@@ -1591,7 +1593,7 @@ export function EngStatsView({ darkMode = false }: EngStatsViewProps) {
       })
       .filter(r => r.total >= 2)
       .sort((a, b) => b.pct - a.pct || b.ai - a.ai);
-  }, [metrics, BOT_ACCOUNTS]);
+  }, [humanMetrics]);
 
   const activeAuthorRows = useMemo(() => authorAIRows.filter(r => r.ai > 0), [authorAIRows]);
   const zeroAdoptionCount = useMemo(() => authorAIRows.filter(r => r.ai === 0).length, [authorAIRows]);
