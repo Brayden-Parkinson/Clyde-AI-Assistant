@@ -292,15 +292,35 @@ export function detectAITools(
 
 /** Known AI review bot accounts (login → display name) */
 const AI_REVIEW_BOTS = new Map<string, string>([
+  ["coderabbitai[bot]", "coderabbit"],
   ["coderabbitai", "coderabbit"],
-  ["github-actions[bot]", "github-actions"],
+  ["cursor[bot]", "cursor"],
   ["copilot-swe-agent[bot]", "copilot"],
+  ["copilot[bot]", "copilot"],
+  ["claude-code-review[bot]", "claude"],
+  ["github-actions[bot]", "github-actions"],
   ["amazon-q-developer[bot]", "amazon-q"],
   ["devin-ai-integration[bot]", "devin"],
-  ["cursorbot", "cursor"],
   ["sonarcloud[bot]", "sonarcloud"],
   ["codeclimate[bot]", "codeclimate"],
 ]);
+
+/** Check if a login belongs to a known AI review bot. Returns tool name or null. */
+export function getAIReviewTool(login: string): string | null {
+  const lower = login.toLowerCase();
+  const direct = AI_REVIEW_BOTS.get(lower);
+  if (direct) return direct;
+  // Fallback patterns for [bot] accounts
+  if (lower.endsWith("[bot]")) {
+    if (lower.includes("coderabbit")) return "coderabbit";
+    if (lower.includes("cursor")) return "cursor";
+    if (lower.includes("claude")) return "claude";
+    if (lower.includes("copilot")) return "copilot";
+    if (lower.includes("tabnine")) return "tabnine";
+    if (lower.includes("windsurf")) return "windsurf";
+  }
+  return null;
+}
 
 /**
  * Detect which AI tools reviewed a PR based on reviewer logins.
@@ -310,15 +330,75 @@ export function detectAIReviewers(reviews: GHReview[]): string[] {
   const found = new Set<string>();
   for (const r of reviews) {
     if (!r.user) continue;
-    const login = r.user.login.toLowerCase();
-    const tool = AI_REVIEW_BOTS.get(login);
+    const tool = getAIReviewTool(r.user.login);
     if (tool) found.add(tool);
-    // Also catch any [bot] reviewer with "ai" or known tool name in their login
-    if (login.endsWith("[bot]")) {
-      if (login.includes("coderabbit")) found.add("coderabbit");
-      if (login.includes("tabnine")) found.add("tabnine");
-      if (login.includes("windsurf")) found.add("windsurf");
-    }
   }
   return Array.from(found);
+}
+
+// ─── Review comment types ───
+
+export interface GHReviewComment {
+  id: number;
+  user: { login: string; type: string } | null;
+  body: string;
+  path: string;
+  created_at: string;
+}
+
+/** Fetch line-level review comments for a PR. */
+export async function fetchPRReviewComments(
+  token: string,
+  repo: string,
+  prNumber: number,
+): Promise<GHReviewComment[]> {
+  return ghFetch<GHReviewComment>(
+    token,
+    `/repos/${repo}/pulls/${prNumber}/comments?per_page=100`,
+  );
+}
+
+/** Classify a review comment into category + severity. */
+export function classifyReviewComment(
+  tool: string,
+  body: string,
+): { category: string; severity: string } {
+  const lower = body.toLowerCase();
+
+  // ── Tool-specific parsing ──
+
+  // Cursor Bugbot: "**High Severity**", "**Medium Severity**", "**Low Severity**"
+  let severity = "info";
+  if (tool === "cursor") {
+    if (/\*\*high\s+severity\*\*/i.test(body)) severity = "high";
+    else if (/\*\*medium\s+severity\*\*/i.test(body)) severity = "medium";
+    else if (/\*\*low\s+severity\*\*/i.test(body)) severity = "low";
+    else severity = "info";
+  }
+
+  // CodeRabbit: "_🟠 Major_", "_🔴 Critical_", "_🟡 Minor_"
+  if (tool === "coderabbit") {
+    if (lower.includes("critical") || body.includes("🔴")) severity = "high";
+    else if (lower.includes("major") || body.includes("🟠")) severity = "medium";
+    else if (lower.includes("minor") || body.includes("🟡")) severity = "low";
+    else severity = "info";
+  }
+
+  // Copilot / Claude: generic severity detection
+  if (severity === "info" && tool !== "cursor" && tool !== "coderabbit") {
+    if (lower.includes("critical") || lower.includes("vulnerability")) severity = "high";
+    else if (lower.includes("warning") || lower.includes("issue")) severity = "medium";
+    else if (lower.includes("suggestion") || lower.includes("nit")) severity = "low";
+  }
+
+  // ── Category classification (keyword-based) ──
+  let category = "other";
+  if (/security|vulnerab|xss|injection|auth|csrf|secret|credential/i.test(body)) category = "security";
+  else if (/type[- ]?safe|type\s+error|typescript|type\s+mismatch|generic|any\b/i.test(body)) category = "type-safety";
+  else if (/performance|O\(n|complex|slow|optimi[zs]|memo|cache|render/i.test(body)) category = "perf";
+  else if (/bug|error|crash|null|undefined|race\s+condition|deadlock|off[- ]by/i.test(body)) category = "bug";
+  else if (/logic|condition|branch|edge\s+case|incorrect|wrong/i.test(body)) category = "logic";
+  else if (/style|naming|format|convention|readab|lint|spell/i.test(body)) category = "style";
+
+  return { category, severity };
 }

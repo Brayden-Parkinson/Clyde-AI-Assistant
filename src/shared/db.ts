@@ -32,6 +32,7 @@ import type {
   JiraTicket,
   PRJiraLink,
   NewsPost,
+  AIReviewComment,
 } from "./types";
 
 class ClydeDB extends Dexie {
@@ -67,6 +68,7 @@ class ClydeDB extends Dexie {
   pr_jira_links!: EntityTable<PRJiraLink, "id">;
   people_context!: EntityTable<PersonContext, "personId">;
   news_posts!: EntityTable<NewsPost, "id">;
+  ai_review_comments!: EntityTable<AIReviewComment, "id">;
 
   constructor() {
     super("CommitmentTracker");
@@ -272,6 +274,11 @@ class ClydeDB extends Dexie {
     // AI News: scraped + summarized posts from X/Twitter
     this.version(23).stores({
       news_posts: "++id, &tweetId, author, relevanceScore, postedAt, scrapedAt",
+    });
+
+    // Add AI review comments table
+    this.version(24).stores({
+      ai_review_comments: "++id, [repo+prNumber], repo, tool, category, severity, createdAt, syncedAt",
     });
   }
 }

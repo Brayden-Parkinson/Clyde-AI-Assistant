@@ -4,16 +4,19 @@
  */
 
 import { db } from "@shared/db";
-import type { PRMetric, CopilotDailyMetric } from "@shared/types";
+import type { PRMetric, CopilotDailyMetric, AIReviewComment } from "@shared/types";
 import {
   fetchMergedPRs,
   fetchPRDetails,
   fetchPRReviews,
   fetchPRCommits,
+  fetchPRReviewComments,
   fetchReleases,
   fetchCopilotMetrics,
   detectAITools,
   detectAIReviewers,
+  getAIReviewTool,
+  classifyReviewComment,
   isBot,
 } from "./githubClient";
 
@@ -145,6 +148,39 @@ export async function syncGitHubData(): Promise<{
 
           await db.pr_metrics.add(metric);
           synced++;
+
+          // Fetch and store AI review comments (best-effort, don't block sync)
+          if (aiReviewers.length > 0) {
+            try {
+              const reviewComments = await fetchPRReviewComments(token, repo, pull.number);
+              const aiComments: AIReviewComment[] = [];
+              for (const rc of reviewComments) {
+                if (!rc.user) continue;
+                const tool = getAIReviewTool(rc.user.login);
+                if (!tool) continue;
+                // Skip empty/trivial comments
+                if (!rc.body || rc.body.length < 20) continue;
+                const { category, severity } = classifyReviewComment(tool, rc.body);
+                aiComments.push({
+                  repo,
+                  prNumber: pull.number,
+                  prAuthor: pull.user?.login ?? null,
+                  tool,
+                  body: rc.body.slice(0, 2000), // cap storage size
+                  category,
+                  severity,
+                  filePath: rc.path ?? null,
+                  createdAt: rc.created_at,
+                  syncedAt,
+                });
+              }
+              if (aiComments.length > 0) {
+                await db.ai_review_comments.bulkAdd(aiComments);
+              }
+            } catch (_rcErr) {
+              // Non-fatal — review comments are supplemental
+            }
+          }
         } catch (prErr) {
           errors.push(`PR #${pull.number}: ${String(prErr)}`);
           // Stop enriching if we hit rate limits — next sync picks up where we left off
