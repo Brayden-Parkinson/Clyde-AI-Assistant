@@ -116,6 +116,15 @@ export const EXTERNAL_TASK_LINK_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 /** How long to keep sync outbox entries (7 days in ms) */
 export const SYNC_OUTBOX_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
+/** How long to keep news posts (30 days in ms) */
+export const NEWS_POST_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+/** Max time to wait for X page scrape (30 seconds) */
+export const NEWS_SCRAPE_TIMEOUT_MS = 30_000;
+
+/** Default X accounts to scrape for AI news */
+export const NEWS_DEFAULT_ACCOUNTS = ["bcherny"];
+
 /** Google OAuth configuration */
 export const GOOGLE_OAUTH = {
   AUTH_URL: "https://accounts.google.com/o/oauth2/v2/auth",

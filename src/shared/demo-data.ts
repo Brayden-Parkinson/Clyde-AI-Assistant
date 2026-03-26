@@ -25,6 +25,7 @@ import type {
   FollowUpRule,
   JiraTicket,
   PRJiraLink,
+  NewsPost,
 } from "./types";
 
 // ─── Date helpers ───
@@ -1479,6 +1480,76 @@ export const DEMO_PEOPLE_CONTEXT: PersonContext[] = [
     topChannels: ["#engineering"],
     lastInteractionSummary: "Set up staging environment for load tests",
     computedAt: hoursAgo(2),
+  },
+];
+
+// ─── AI News Demo Posts ───
+
+export const DEMO_NEWS_POSTS: NewsPost[] = [
+  {
+    id: -100,
+    tweetId: "demo_1",
+    author: "bcherny",
+    authorDisplayName: "Boris Cherney",
+    rawText: "Just published a deep dive on how we're using TypeScript's type system to enforce API contracts at compile time. No more runtime surprises when your backend changes a field name. Thread 🧵",
+    summary: "Boris shares a technique for using TypeScript's type system to enforce API contracts at compile time, preventing runtime errors from backend schema changes.",
+    relevanceScore: 9,
+    postedAt: hoursAgo(3),
+    url: "https://x.com/bcherny/status/demo_1",
+    links: [],
+    scrapedAt: hoursAgo(1),
+  },
+  {
+    id: -101,
+    tweetId: "demo_2",
+    author: "bcherny",
+    authorDisplayName: "Boris Cherney",
+    rawText: "Hot take: most teams adopting AI coding assistants are measuring the wrong things. Lines of code generated is vanity. What matters is time-to-correct-solution and defect escape rate.",
+    summary: "Argues that teams should measure AI coding assistant effectiveness by time-to-correct-solution and defect escape rate, not lines of code generated.",
+    relevanceScore: 10,
+    postedAt: hoursAgo(8),
+    url: "https://x.com/bcherny/status/demo_2",
+    links: [],
+    scrapedAt: hoursAgo(1),
+  },
+  {
+    id: -102,
+    tweetId: "demo_3",
+    author: "bcherny",
+    authorDisplayName: "Boris Cherney",
+    rawText: "Interesting paper from DeepMind on scaling test-time compute. The idea of letting models 'think longer' on harder problems instead of training bigger models is compelling. https://arxiv.org/abs/example",
+    summary: "Highlights a DeepMind paper on scaling test-time compute — letting models think longer on hard problems rather than training bigger models.",
+    relevanceScore: 8,
+    postedAt: daysAgo(1),
+    url: "https://x.com/bcherny/status/demo_3",
+    links: ["https://arxiv.org/abs/example"],
+    scrapedAt: hoursAgo(1),
+  },
+  {
+    id: -103,
+    tweetId: "demo_4",
+    author: "bcherny",
+    authorDisplayName: "Boris Cherney",
+    rawText: "Weekend project: built a small CLI that diffs two OpenAPI specs and generates a migration guide. Surprised this doesn't exist as a polished tool already.",
+    summary: "Built a CLI tool that diffs OpenAPI specs and generates migration guides — notes the gap in existing tooling.",
+    relevanceScore: 7,
+    postedAt: daysAgo(2),
+    url: "https://x.com/bcherny/status/demo_4",
+    links: [],
+    scrapedAt: hoursAgo(1),
+  },
+  {
+    id: -104,
+    tweetId: "demo_5",
+    author: "bcherny",
+    authorDisplayName: "Boris Cherney",
+    rawText: "Great dinner last night catching up with old colleagues. San Francisco energy is definitely back.",
+    summary: "Personal update about dinner with colleagues in San Francisco.",
+    relevanceScore: 2,
+    postedAt: daysAgo(3),
+    url: "https://x.com/bcherny/status/demo_5",
+    links: [],
+    scrapedAt: hoursAgo(1),
   },
 ];
 

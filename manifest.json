@@ -24,7 +24,9 @@
     "https://slack.com/api/*",
     "https://gmail.googleapis.com/*",
     "https://api.github.com/*",
-    "https://*.atlassian.net/*"
+    "https://*.atlassian.net/*",
+    "https://x.com/*",
+    "https://twitter.com/*"
   ],
   "background": {
     "service_worker": "src/background/service-worker.ts",
@@ -44,6 +46,11 @@
     {
       "matches": ["https://mail.google.com/*"],
       "js": ["src/content/gmail.ts"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://x.com/*", "https://twitter.com/*"],
+      "js": ["src/content/x-scraper.ts"],
       "run_at": "document_idle"
     }
   ],

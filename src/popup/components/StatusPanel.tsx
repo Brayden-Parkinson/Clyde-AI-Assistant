@@ -31,6 +31,7 @@ const SOURCE_LABELS: Record<StatusEntry["source"], string> = {
   sensitivity: "Privacy",
   calendar: "Calendar",
   people: "People",
+  news: "News",
 };
 
 function timeAgo(iso: string | null): string {

@@ -123,9 +123,11 @@ export async function fetchMergedPRs(
   repo: string,
   since: string,
 ): Promise<GHPull[]> {
+  // GitHub pulls endpoint doesn't filter by merged_at, but `since` filters by
+  // updated_at — this avoids paginating through ancient PRs on incremental syncs.
   const pulls = await ghFetch<GHPull>(
     token,
-    `/repos/${repo}/pulls?state=closed&per_page=100&sort=updated&direction=desc`,
+    `/repos/${repo}/pulls?state=closed&per_page=100&sort=updated&direction=desc&since=${encodeURIComponent(since)}`,
   );
   return pulls.filter(
     (p) => p.merged_at !== null && p.merged_at >= since,
