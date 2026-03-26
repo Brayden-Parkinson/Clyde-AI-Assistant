@@ -18,6 +18,7 @@ import {
   DRAFT_TTL_MS,
   FOLLOW_UP_RULE_TTL_MS,
   SYNC_OUTBOX_TTL_MS,
+  NEWS_POST_TTL_MS,
 } from "@shared/constants";
 import type { SlackMessagePayload, GmailMessagePayload } from "@shared/types";
 import { logStatus, updateStatus } from "@shared/status";
@@ -167,6 +168,10 @@ async function runCleanup(): Promise<void> {
   // Sync outbox: 7 days
   const syncCutoff = new Date(now - SYNC_OUTBOX_TTL_MS).toISOString();
   await db.sync_outbox.where("timestamp").below(syncCutoff).delete();
+
+  // AI News posts: 30 days
+  const newsPostCutoff = new Date(now - NEWS_POST_TTL_MS).toISOString();
+  await db.news_posts.where("scrapedAt").below(newsPostCutoff).delete();
 
   // People context: remove entries for deleted people
   const allPeopleIds = new Set((await db.people.toArray()).map(p => p.id).filter((id): id is number => id != null));
@@ -780,6 +785,32 @@ chrome.runtime.onMessage.addListener(
         .then((result) => sendResponse({ ok: true, ...result }))
         .catch((err) => sendResponse({ ok: false, error: String(err) }));
       return true;
+    } else if (message.type === "REFRESH_NEWS") {
+      sendResponse({ ok: true, started: true });
+      import("./newsFetcher").then(({ refreshNews }) => {
+        const accounts = (message as unknown as { accounts?: string[] }).accounts;
+        refreshNews(accounts)
+          .then((result) => {
+            chrome.runtime.sendMessage({ type: "NEWS_REFRESH_COMPLETE", ...result }).catch(() => {});
+          })
+          .catch((err) => {
+            chrome.runtime.sendMessage({
+              type: "NEWS_REFRESH_COMPLETE",
+              error: err instanceof Error ? err.message : String(err),
+              newPosts: 0,
+              total: 0,
+              errors: [String(err)],
+            }).catch(() => {});
+          });
+      });
+      return false;
+    } else if (message.type === "X_SCRAPED_POSTS") {
+      import("./newsFetcher").then(({ handleScrapedPosts }) => {
+        const payload = message as unknown as { posts: import("@shared/types").XScrapedPost[] };
+        handleScrapedPosts(payload.posts, sender.tab?.id);
+      });
+      sendResponse({ ok: true });
+      return false;
     } else if (message.type === "SEND_DRAFT") {
       const { draftId } = (message as unknown) as { draftId: number; type: string };
       (async () => {

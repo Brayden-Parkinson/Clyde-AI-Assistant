@@ -57,23 +57,22 @@ export async function syncGitHubData(): Promise<{
   let totalFound = 0;
   const errors: string[] = [];
   const syncedAt = new Date().toISOString();
-  const since = daysAgoISO(DEFAULT_LOOKBACK_DAYS);
+
+  // Incremental: use last sync time if available, otherwise full lookback
+  const lastSynced = result.githubLastSynced as string | undefined;
+  const since = lastSynced ?? daysAgoISO(DEFAULT_LOOKBACK_DAYS);
 
   for (const repo of repos) {
     try {
       const pulls = await fetchMergedPRs(token, repo, since);
       totalFound += pulls.length;
 
-      // Filter out PRs we already have
-      const newPulls: typeof pulls = [];
-      for (const pull of pulls) {
-        const existing = await db.pr_metrics
-          .where("[repo+prNumber]")
-          .equals([repo, pull.number])
-          .first()
-          .catch(() => undefined);
-        if (!existing) newPulls.push(pull);
-      }
+      // Batch existence check: get all known PR numbers for this repo in one query
+      const knownPRs = new Set(
+        (await db.pr_metrics.where("repo").equals(repo).toArray())
+          .map((pr) => pr.prNumber),
+      );
+      const newPulls = pulls.filter((p) => !knownPRs.has(p.number));
 
       // Enrich all new PRs — rate-limit bail-out is the only cap
       const enrichTotal = newPulls.length;

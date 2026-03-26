@@ -727,3 +727,41 @@ export interface CopilotDailyMetric {
   syncedAt: string;
 }
 
+// ─── AI News ───
+
+/** A scraped + summarized news post from X/Twitter */
+export interface NewsPost {
+  id?: number;
+  /** Tweet ID from X for dedup */
+  tweetId: string;
+  /** @handle of the author */
+  author: string;
+  /** Display name */
+  authorDisplayName: string;
+  /** Raw post text */
+  rawText: string;
+  /** Claude-generated 1-2 sentence summary */
+  summary: string;
+  /** AI/engineering relevance score 1-10 */
+  relevanceScore: number;
+  /** ISO timestamp of the original post */
+  postedAt: string;
+  /** Permalink to the original tweet */
+  url: string;
+  /** Links found in the post */
+  links: string[];
+  /** ISO timestamp when scraped */
+  scrapedAt: string;
+}
+
+/** Raw scraped post before Claude processing */
+export interface XScrapedPost {
+  tweetId: string;
+  author: string;
+  authorDisplayName: string;
+  text: string;
+  timestamp: string;
+  url: string;
+  links: string[];
+}
+

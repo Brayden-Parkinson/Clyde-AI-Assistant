@@ -31,6 +31,7 @@ import type {
   CopilotDailyMetric,
   JiraTicket,
   PRJiraLink,
+  NewsPost,
 } from "./types";
 
 class ClydeDB extends Dexie {
@@ -65,6 +66,7 @@ class ClydeDB extends Dexie {
   jira_tickets!: EntityTable<JiraTicket, "id">;
   pr_jira_links!: EntityTable<PRJiraLink, "id">;
   people_context!: EntityTable<PersonContext, "personId">;
+  news_posts!: EntityTable<NewsPost, "id">;
 
   constructor() {
     super("CommitmentTracker");
@@ -265,6 +267,11 @@ class ClydeDB extends Dexie {
       return tx.table("pr_metrics").toCollection().modify((pr) => {
         if (pr.aiReviewers === undefined) pr.aiReviewers = [];
       });
+    });
+
+    // AI News: scraped + summarized posts from X/Twitter
+    this.version(23).stores({
+      news_posts: "++id, &tweetId, author, relevanceScore, postedAt, scrapedAt",
     });
   }
 }
