@@ -64,7 +64,20 @@ export interface GHCopilotMetric {
   };
 }
 
-// ─── Internal fetch helper ───
+// ─── Rate-limit aware fetch helpers ───
+
+/** Pause if we're about to exhaust our rate limit */
+async function respectRateLimit(resp: Response): Promise<void> {
+  const remaining = resp.headers.get("x-ratelimit-remaining");
+  const resetAt = resp.headers.get("x-ratelimit-reset");
+  if (remaining != null && parseInt(remaining) <= 5 && resetAt) {
+    const waitMs = Math.max(0, parseInt(resetAt) * 1000 - Date.now()) + 1000;
+    // Cap wait to 60s — if it's longer, let the caller fail and retry next sync
+    if (waitMs <= 60_000) {
+      await new Promise((r) => setTimeout(r, waitMs));
+    }
+  }
+}
 
 async function ghFetch<T>(token: string, path: string, maxPages = 50): Promise<T[]> {
   const results: T[] = [];
@@ -89,6 +102,8 @@ async function ghFetch<T>(token: string, path: string, maxPages = 50): Promise<T
     const page = (await resp.json()) as T[];
     results.push(...page);
 
+    await respectRateLimit(resp);
+
     // Follow Link: <url>; rel="next" pagination
     const link = resp.headers.get("Link") ?? "";
     const next = link.match(/<([^>]+)>;\s*rel="next"/);
@@ -112,6 +127,7 @@ async function ghFetchOne<T>(token: string, path: string): Promise<T> {
     throw new Error(`GitHub API ${resp.status}: ${text}`);
   }
 
+  await respectRateLimit(resp);
   return resp.json() as Promise<T>;
 }
 
