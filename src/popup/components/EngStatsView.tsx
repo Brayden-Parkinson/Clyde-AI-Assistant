@@ -274,7 +274,7 @@ export function EngStatsView({ darkMode = false }: EngStatsViewProps) {
         ghMsg = "GitHub up to date";
         setSyncPhase("Skipping GitHub (recent)…");
       } else {
-        setSyncPhase("Fetching PRs…");
+        setSyncPhase("Starting GitHub sync…");
 
         const ghResult = await new Promise<{
           synced?: number;
@@ -357,6 +357,8 @@ export function EngStatsView({ darkMode = false }: EngStatsViewProps) {
       current?: number;
       total?: number;
       repo?: string;
+      repoIndex?: number;
+      repoCount?: number;
     }) => {
       if (message.type === "JIRA_SYNC_PROGRESS") {
         setJiraSyncProgress({
@@ -365,7 +367,15 @@ export function EngStatsView({ darkMode = false }: EngStatsViewProps) {
           total: message.total ?? 0,
         });
       } else if (message.type === "GITHUB_SYNC_PROGRESS") {
-        setSyncPhase(`Enriching ${message.current}/${message.total} PRs…`);
+        const shortRepo = message.repo?.split("/")[1] ?? message.repo ?? "";
+        const repoTag = message.repoCount && message.repoCount > 1
+          ? ` (${message.repoIndex}/${message.repoCount})`
+          : "";
+        if (message.phase === "fetch") {
+          setSyncPhase(`Scanning ${shortRepo}${repoTag}…`);
+        } else {
+          setSyncPhase(`Enriching ${message.current}/${message.total} PRs · ${shortRepo}${repoTag}`);
+        }
       } else if (message.type === "GITHUB_SYNC_COMPLETE") {
         if (ghSyncResolveRef.current) {
           ghSyncResolveRef.current(message as Record<string, unknown>);

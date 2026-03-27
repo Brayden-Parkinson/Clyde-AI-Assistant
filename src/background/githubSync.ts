@@ -66,8 +66,21 @@ export async function syncGitHubData(): Promise<{
   const lastSynced = result.githubLastSynced as string | undefined;
   const since = lastSynced ?? daysAgoISO(DEFAULT_LOOKBACK_DAYS);
 
+  const repoCount = repos.length;
+  let repoIndex = 0;
+
   for (const repo of repos) {
+    repoIndex++;
     try {
+      // Broadcast: scanning this repo
+      chrome.runtime.sendMessage({
+        type: "GITHUB_SYNC_PROGRESS",
+        phase: "fetch",
+        repo,
+        repoIndex,
+        repoCount,
+      }).catch(() => {});
+
       const pulls = await fetchMergedPRs(token, repo, since);
       totalFound += pulls.length;
 
@@ -85,9 +98,12 @@ export async function syncGitHubData(): Promise<{
         enrichCurrent++;
         chrome.runtime.sendMessage({
           type: "GITHUB_SYNC_PROGRESS",
+          phase: "enrich",
           current: enrichCurrent,
           total: enrichTotal,
           repo,
+          repoIndex,
+          repoCount,
         }).catch(() => {}); // no listener is fine
         try {
           // Fetch detail + reviews + commits in parallel
