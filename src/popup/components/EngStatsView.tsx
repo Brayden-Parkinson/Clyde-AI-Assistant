@@ -13,7 +13,7 @@ import {
   dk, daysAgoISO,
   type EngStatsConfig, type SectionId, type KpiId, type TeamColumnId,
 } from "./eng-stats/shared";
-import { KPICard, CycleTimeChart, AIAdoptionChart, PRSizeChart, ProjectionChart } from "./eng-stats/charts";
+import { KPICard, CycleTimeChart, AIAdoptionChart, PRSizeChart, PRFlowChart } from "./eng-stats/charts";
 import { SummaryTab } from "./eng-stats/SummaryTab";
 import { CycleTimeTab } from "./eng-stats/CycleTimeTab";
 import { AIAdoptionTab } from "./eng-stats/AIAdoptionTab";
@@ -898,7 +898,7 @@ export function EngStatsView({ darkMode = false }: EngStatsViewProps) {
               CycleTimeChart={CycleTimeChart}
               AIAdoptionChart={AIAdoptionChart}
               PRSizeChart={PRSizeChart}
-              ProjectionChart={ProjectionChart}
+              PRFlowChart={PRFlowChart}
             />
           )}
 

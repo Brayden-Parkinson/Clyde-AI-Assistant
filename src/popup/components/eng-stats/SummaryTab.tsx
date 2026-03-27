@@ -51,11 +51,9 @@ interface SummaryTabProps extends TabProps {
     large: number;
     dark: boolean;
   }>;
-  ProjectionChart: React.ComponentType<{
-    history: { label: string; count: number }[];
-    forecast: { label: string; count: number }[];
+  PRFlowChart: React.ComponentType<{
+    weeks: { label: string; opened: number; closed: number }[];
     dark: boolean;
-    height?: number;
   }>;
 }
 
@@ -271,7 +269,7 @@ export function SummaryTab({
   CycleTimeChart,
   AIAdoptionChart,
   PRSizeChart,
-  ProjectionChart,
+  PRFlowChart,
 }: SummaryTabProps) {
   const dark = darkMode;
 
@@ -625,66 +623,40 @@ export function SummaryTab({
     const openRatePerDay = totalOpened / windowDays;
     const netRatePerDay = openRatePerDay - closeRatePerDay;
 
-    // Build weekly history from snapshots (aggregate across repos per week)
-    const filteredSnapshots = selectedRepo === "__all__"
-      ? openSnapshots
-      : openSnapshots.filter((s) => s.repo === selectedRepo);
+    // Build weekly opened/closed flow data
+    const historyWeeks = Math.min(Math.floor(timeRange / 7), 12);
 
-    const historyWeeks = Math.min(Math.floor(timeRange / 7), 12); // cap at 12 weeks of history
-    const weeklyHistory: { label: string; count: number }[] = [];
+    const weeklyFlow: { label: string; opened: number; closed: number }[] = [];
     for (let w = historyWeeks; w >= 0; w--) {
       const weekEnd = new Date(Date.now() - w * 7 * 86400_000);
       const weekStart = new Date(weekEnd.getTime() - 7 * 86400_000);
       const weekEndISO = weekEnd.toISOString();
       const weekStartISO = weekStart.toISOString();
 
-      // Find snapshots closest to this week-end per repo
-      const bestPerRepo = new Map<string, OpenPRSnapshot>();
-      for (const s of filteredSnapshots) {
-        if (s.snapshotAt <= weekEndISO && s.snapshotAt >= weekStartISO) {
-          const existing = bestPerRepo.get(s.repo);
-          if (!existing || s.snapshotAt > existing.snapshotAt) {
-            bestPerRepo.set(s.repo, s);
-          }
-        }
+      // Closed in this week (merged PRs)
+      const closedInWeek = metrics.filter(
+        (m) => m.mergedAt && m.mergedAt >= weekStartISO && m.mergedAt < weekEndISO,
+      ).length;
+
+      // Opened in this week: merged PRs created this week + still-open PRs created this week
+      let openedInWeek = metrics.filter(
+        (m) => m.createdAt >= weekStartISO && m.createdAt < weekEndISO,
+      ).length;
+      for (const repo of relevantRepos) {
+        const dates = openPRCreatedDates[repo] ?? [];
+        openedInWeek += dates.filter((d) => d >= weekStartISO && d < weekEndISO).length;
       }
-      if (bestPerRepo.size > 0) {
-        const total = Array.from(bestPerRepo.values()).reduce((sum, s) => sum + s.openCount, 0);
-        const label = w === 0 ? "Now" : `${w}w`;
-        weeklyHistory.push({ label, count: total });
-      }
-    }
 
-    // If we have no weekly history, just use current as the single point
-    if (weeklyHistory.length === 0) {
-      weeklyHistory.push({ label: "Now", count: currentOpen });
+      const label = w === 0 ? "Now" : `${w}w`;
+      weeklyFlow.push({ label, opened: openedInWeek, closed: closedInWeek });
     }
-    // Ensure the last history point reflects the current count
-    weeklyHistory[weeklyHistory.length - 1] = { label: "Now", count: currentOpen };
-
-    // Build forecast: project forward proportional to timeRange
-    const forecastWeeks = Math.max(2, Math.min(Math.floor(timeRange / 14), 8));
-    const forecast: { label: string; count: number }[] = [{ label: "Now", count: currentOpen }];
-    for (let w = 1; w <= forecastWeeks; w++) {
-      forecast.push({
-        label: `+${w}w`,
-        count: Math.max(0, Math.round(currentOpen + netRatePerDay * 7 * w)),
-      });
-    }
-
-    const projected7d = Math.round(currentOpen + netRatePerDay * 7);
-    const projectedEnd = forecast[forecast.length - 1].count;
 
     return {
       currentOpen,
       openRatePerWeek: Math.round(openRatePerDay * 7 * 10) / 10,
       closeRatePerWeek: Math.round(closeRatePerDay * 7 * 10) / 10,
       netRatePerWeek: Math.round(netRatePerDay * 7 * 10) / 10,
-      projected7d,
-      projectedEnd,
-      forecastWeeks,
-      history: weeklyHistory,
-      forecast,
+      weeklyFlow,
       hasData: latestByRepo.size > 0,
     };
   }, [openSnapshots, metrics, openPRCreatedDates, selectedRepo, timeRange]);
@@ -903,28 +875,35 @@ export function SummaryTab({
                 ))}
               </div>
 
-              {/* Projection chart */}
-              <ProjectionChart
-                history={prProjection.history}
-                forecast={prProjection.forecast}
+              {/* Opened vs Closed flow chart */}
+              <PRFlowChart
+                weeks={prProjection.weeklyFlow}
                 dark={dark}
               />
 
               {/* Insight text */}
               <div style={{
                 fontSize: 11,
-                marginTop: 10,
-                padding: "8px 10px",
+                marginTop: 8,
+                padding: "6px 10px",
                 borderRadius: 6,
-                background: dk(dark, "rgba(234,88,12,0.1)", "rgba(234,88,12,0.06)"),
-                color: dk(dark, "#FB923C", "#C2410C"),
+                background: prProjection.netRatePerWeek > 0
+                  ? dk(dark, "rgba(234,88,12,0.1)", "rgba(234,88,12,0.06)")
+                  : prProjection.netRatePerWeek < 0
+                  ? dk(dark, "rgba(59,140,95,0.1)", "rgba(59,140,95,0.06)")
+                  : dk(dark, "rgba(255,255,255,0.04)", "rgba(0,0,0,0.03)"),
+                color: prProjection.netRatePerWeek > 0
+                  ? dk(dark, "#FB923C", "#C2410C")
+                  : prProjection.netRatePerWeek < 0
+                  ? OS.green
+                  : dk(dark, "rgba(255,255,255,0.6)", OS.secondary),
                 fontFamily: OS.font,
               }}>
                 {prProjection.netRatePerWeek > 0
-                  ? `At current rates, open PRs will reach ~${prProjection.projectedEnd} in ${prProjection.forecastWeeks} weeks.`
+                  ? `Backlog growing — opening ${prProjection.openRatePerWeek}/wk, closing ${prProjection.closeRatePerWeek}/wk (net +${prProjection.netRatePerWeek}/wk).`
                   : prProjection.netRatePerWeek < 0
-                  ? `Backlog is shrinking — projected to reach ~${prProjection.projectedEnd} in ${prProjection.forecastWeeks} weeks.`
-                  : `Open/close rates are balanced — backlog is holding steady at ~${prProjection.currentOpen}.`}
+                  ? `Backlog shrinking — closing ${prProjection.closeRatePerWeek}/wk vs ${prProjection.openRatePerWeek}/wk opened (net ${prProjection.netRatePerWeek}/wk).`
+                  : `Open/close rates are balanced at ~${prProjection.openRatePerWeek}/wk.`}
               </div>
             </>
           )}

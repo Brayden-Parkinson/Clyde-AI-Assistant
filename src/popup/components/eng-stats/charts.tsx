@@ -224,24 +224,20 @@ export function CycleTimeChart({
   const totalPts = days.length + predCount;
 
   const allVals = [...days, ...predicted];
-  const maxDay = Math.max(...allVals, 1);
-  const gridStep = Math.max(2, Math.ceil(maxDay / 3) * 2);
-  const yMax = Math.ceil(maxDay / gridStep) * gridStep || gridStep;
-  const gridLines: number[] = [];
-  for (let g = 0; g <= yMax; g += gridStep) gridLines.push(g);
+  const dataMax = Math.max(...allVals, 1);
+  const maxVal = Math.max(dataMax * 1.25, 1);
 
   const chartW = W - PAD.left - PAD.right;
   const chartH = H - PAD.top - PAD.bottom;
 
   const toX = (i: number) =>
     PAD.left + (totalPts > 1 ? (i / (totalPts - 1)) * chartW : chartW / 2);
-  const toY = (d: number) => PAD.top + chartH - (Math.max(0, d) / yMax) * chartH;
+  const toY = (d: number) => PAD.top + chartH - (Math.max(0, d) / maxVal) * chartH;
 
-  // Actual data path
-  const pathD = days
-    .map((d, i) => `${i === 0 ? "M" : "L"} ${toX(i)} ${toY(d)}`)
-    .join(" ");
-  const areaD = `${pathD} L ${toX(days.length - 1)} ${toY(0)} L ${toX(0)} ${toY(0)} Z`;
+  // Smooth actual data path (Catmull-Rom)
+  const pts = days.map((d, i) => ({ x: toX(i), y: toY(d) }));
+  const pathD = smoothPath(pts, 0.3);
+  const areaD = smoothArea(pts, PAD.top + chartH, 0.3);
 
   // Prediction path (from last real point through predicted)
   const predPathD = [days[days.length - 1], ...predicted]
@@ -253,10 +249,8 @@ export function CycleTimeChart({
   const trendStart = intercept;
   const trendEnd = intercept + slope * (totalPts - 1);
 
-  const gridColor = dk(dark, "rgba(255,255,255,0.06)", "rgba(0,0,0,0.06)");
   const textColor = dk(dark, "rgba(255,255,255,0.4)", OS.muted);
   const predColor = dk(dark, "rgba(91,156,246,0.4)", "rgba(94,106,210,0.4)");
-  const gradId = `ctAreaGrad_${fullWidth ? "fw" : "sm"}`;
 
   return (
     <svg
@@ -265,20 +259,20 @@ export function CycleTimeChart({
       style={{ display: "block" }}
       onMouseLeave={() => setHover(null)}
     >
-      <defs>
-        <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor={OS.blue} stopOpacity={0.25} />
-          <stop offset="100%" stopColor={OS.blue} stopOpacity={0} />
-        </linearGradient>
-      </defs>
-
-      {/* Grid lines + y-axis labels */}
-      {gridLines.map((g) => (
-        <g key={g}>
-          <line x1={PAD.left} x2={W - PAD.right} y1={toY(g)} y2={toY(g)} stroke={gridColor} strokeWidth={1} />
-          <text x={PAD.left - 6} y={toY(g) + 3} textAnchor="end" fontSize={9} fill={textColor} fontFamily={OS.mono}>{g}d</text>
-        </g>
-      ))}
+      {/* Y-axis grid + labels (5 evenly-spaced lines like AI adoption) */}
+      {[0, 1, 2, 3, 4].map((i) => {
+        const y = PAD.top + (i / 4) * chartH;
+        const val = maxVal - (i / 4) * maxVal;
+        return (
+          <g key={`ygrid_${i}`}>
+            <line x1={PAD.left} y1={y} x2={W - PAD.right} y2={y}
+              stroke={dk(dark, "rgba(255,255,255,0.06)", "rgba(0,0,0,0.06)")} />
+            <text x={PAD.left - 6} y={y + 3} textAnchor="end" fill={textColor} fontSize={9} fontFamily={OS.mono}>
+              {val < 10 ? val.toFixed(1) : Math.round(val)}d
+            </text>
+          </g>
+        );
+      })}
 
       {/* Trend line (full range — subtle) */}
       {days.length >= 3 && (
@@ -289,12 +283,12 @@ export function CycleTimeChart({
         />
       )}
 
-      {/* Area fill (actual data only) */}
-      {days.length >= 2 && <path d={areaD} fill={`url(#${gradId})`} />}
+      {/* Area fill (flat transparent — matches AI adoption) */}
+      {days.length >= 2 && <path d={areaD} fill={`${OS.blue}15`} />}
 
-      {/* Actual data line */}
+      {/* Actual data line (smooth Catmull-Rom) */}
       {days.length >= 2 && (
-        <path d={pathD} fill="none" stroke={OS.blue} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+        <path d={pathD} fill="none" stroke={OS.blue} strokeWidth={1.5} />
       )}
 
       {/* Prediction separator — vertical dotted line */}
@@ -308,7 +302,7 @@ export function CycleTimeChart({
 
       {/* Prediction line (dashed, faded) */}
       {days.length >= 3 && (
-        <path d={predPathD} fill="none" stroke={predColor} strokeWidth={2} strokeDasharray="4,3" strokeLinejoin="round" />
+        <path d={predPathD} fill="none" stroke={predColor} strokeWidth={1.5} strokeDasharray="4,3" strokeLinejoin="round" />
       )}
 
       {/* Prediction data points (hollow) */}
@@ -321,24 +315,25 @@ export function CycleTimeChart({
       {annotations && buckets.map((b, i) => {
         const anno = annotations[b.label];
         if (!anno) return null;
-        const x = toX(i);
-        const y = toY(days[i]);
+        const px = toX(i);
+        const py = toY(days[i]);
         return (
           <g key={`anno_${i}`}>
-            <line x1={x} y1={y - 4} x2={x} y2={PAD.top} stroke={OS.warning} strokeWidth={1} strokeDasharray="3,2" opacity={0.6} />
-            <text x={x} y={PAD.top - 4} textAnchor="middle" fill={OS.warning} fontSize={8} fontFamily={OS.mono} opacity={0.8}>{anno}</text>
+            <line x1={px} y1={py - 4} x2={px} y2={PAD.top} stroke={OS.warning} strokeWidth={1} strokeDasharray="3,2" opacity={0.6} />
+            <text x={px} y={PAD.top - 4} textAnchor="middle" fill={OS.warning} fontSize={8} fontFamily={OS.mono} opacity={0.8}>{anno}</text>
           </g>
         );
       })}
 
-      {/* Actual data points */}
+      {/* Data points — hidden by default, visible on hover + annotations */}
       {days.map((d, i) => {
         const hasAnno = annotations?.[buckets[i].label];
+        const isHovered = hover === i;
+        if (!hasAnno && !isHovered) return null;
         return (
           <circle key={i} cx={toX(i)} cy={toY(d)}
-            r={hover === i ? 4 : hasAnno ? 3.5 : 3}
-            fill={hasAnno ? OS.warning : OS.blue}
-            stroke={dk(dark, "#1c1c22", OS.white)} strokeWidth={1.5} />
+            r={isHovered ? 4 : 3.5}
+            fill={hasAnno ? OS.warning : OS.blue} />
         );
       })}
 
@@ -381,145 +376,142 @@ export function CycleTimeChart({
   );
 }
 
-// ─── Projection Chart (historical + forecast) ───
+// ─── PR Flow Chart (opened vs closed per week, with trend lines) ───
 
-export function ProjectionChart({
-  history,
-  forecast,
+export function PRFlowChart({
+  weeks,
   dark,
-  height = 180,
 }: {
-  /** Weekly historical open-PR counts, oldest first. Each entry: { label, count } */
-  history: { label: string; count: number }[];
-  /** Weekly projected counts, starting from "now". Each entry: { label, count } */
-  forecast: { label: string; count: number }[];
+  /** Weekly opened/closed counts, oldest first */
+  weeks: { label: string; opened: number; closed: number }[];
   dark: boolean;
-  height?: number;
 }) {
-  if (history.length === 0 && forecast.length === 0) return null;
+  const [hover, setHover] = useState<number | null>(null);
+  if (weeks.length < 2) return null;
 
-  const W = 480;
-  const H = height;
-  const pad = { top: 14, right: 16, bottom: 30, left: 42 };
-  const chartW = W - pad.left - pad.right;
-  const chartH = H - pad.top - pad.bottom;
+  const W = 640;
+  const H = 140;
+  const PAD = { top: 20, right: 16, bottom: 28, left: 32 };
+  const chartW = W - PAD.left - PAD.right;
+  const chartH = H - PAD.top - PAD.bottom;
 
-  // Merge into a single series; the divider is at history.length - 1 (last history point = first forecast point)
-  const allPoints = [
-    ...history.map((h, i) => ({ idx: i, count: h.count, label: h.label, isHistory: true })),
-    ...forecast.slice(1).map((f, i) => ({ idx: history.length + i, count: f.count, label: f.label, isHistory: false })),
-  ];
-  const totalPts = allPoints.length;
-  if (totalPts < 2) return null;
+  const opened = weeks.map((w) => w.opened);
+  const closed = weeks.map((w) => w.closed);
+  const allVals = [...opened, ...closed];
+  const dataMax = Math.max(...allVals, 1);
+  const maxVal = Math.max(dataMax * 1.25, 1);
 
-  const dividerIdx = history.length - 1; // index of "Today" point
+  const toX = (i: number) =>
+    PAD.left + (weeks.length > 1 ? (i / (weeks.length - 1)) * chartW : chartW / 2);
+  const toY = (v: number) => PAD.top + chartH - (Math.max(0, v) / maxVal) * chartH;
 
-  const counts = allPoints.map((p) => p.count);
-  const minY = Math.min(...counts);
-  const maxY = Math.max(...counts);
-  const padding = Math.max(Math.round((maxY - minY) * 0.15), 3);
-  const yMin = Math.max(0, minY - padding);
-  const yMax = maxY + padding;
-  const rangeY = yMax - yMin || 1;
+  // Smooth paths
+  const openPts = opened.map((v, i) => ({ x: toX(i), y: toY(v) }));
+  const closePts = closed.map((v, i) => ({ x: toX(i), y: toY(v) }));
+  const openPath = smoothPath(openPts, 0.3);
+  const closePath = smoothPath(closePts, 0.3);
 
-  const x = (idx: number) => pad.left + (idx / (totalPts - 1)) * chartW;
-  const y = (count: number) => pad.top + chartH - ((count - yMin) / rangeY) * chartH;
+  // Trend lines
+  const openTrend = linearRegression(opened);
+  const closeTrend = linearRegression(closed);
 
-  // Colors
-  const blue = dark ? "#60A5FA" : "#2563EB";
-  const amber = dark ? "#FB923C" : "#EA580C";
-  const amberFaint = dark ? "rgba(251,146,60,0.10)" : "rgba(234,88,12,0.06)";
-  const blueFaint = dark ? "rgba(96,165,250,0.10)" : "rgba(37,99,235,0.06)";
-  const gridColor = dark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.06)";
-  const labelColor = dark ? "rgba(255,255,255,0.4)" : OS.muted;
-  const textColor = dark ? "rgba(255,255,255,0.7)" : OS.secondary;
-
-  // Y-axis ticks (4 ticks)
-  const yTicks = Array.from({ length: 4 }, (_, i) => Math.round(yMin + (rangeY * i) / 3));
-
-  // History path (solid blue)
-  const histPts = allPoints.filter((_, i) => i <= dividerIdx);
-  const histLine = histPts.map((p, i) => `${i === 0 ? "M" : "L"}${x(p.idx).toFixed(1)},${y(p.count).toFixed(1)}`).join(" ");
-  const histArea = histPts.length > 1
-    ? `${histLine} L${x(histPts[histPts.length - 1].idx).toFixed(1)},${(pad.top + chartH).toFixed(1)} L${x(0).toFixed(1)},${(pad.top + chartH).toFixed(1)} Z`
-    : "";
-
-  // Forecast path (dashed amber) — starts from divider point
-  const fcPts = allPoints.filter((_, i) => i >= dividerIdx);
-  const fcLine = fcPts.map((p, i) => `${i === 0 ? "M" : "L"}${x(p.idx).toFixed(1)},${y(p.count).toFixed(1)}`).join(" ");
-  const fcArea = fcPts.length > 1
-    ? `${fcLine} L${x(fcPts[fcPts.length - 1].idx).toFixed(1)},${(pad.top + chartH).toFixed(1)} L${x(fcPts[0].idx).toFixed(1)},${(pad.top + chartH).toFixed(1)} Z`
-    : "";
-
-  // X-axis labels — show a subset to avoid crowding
-  const xLabels: { idx: number; label: string }[] = [];
-  if (totalPts <= 8) {
-    allPoints.forEach((p) => xLabels.push({ idx: p.idx, label: p.label }));
-  } else {
-    // Always show first, divider ("Now"), and last; fill evenly between
-    xLabels.push({ idx: 0, label: allPoints[0].label });
-    // Show a midpoint in history if there's room
-    if (dividerIdx > 2) {
-      const mid = Math.round(dividerIdx / 2);
-      xLabels.push({ idx: mid, label: allPoints[mid].label });
-    }
-    xLabels.push({ idx: dividerIdx, label: "Now" });
-    // Show midpoint in forecast if there's room
-    const fcMid = dividerIdx + Math.round((totalPts - 1 - dividerIdx) / 2);
-    if (fcMid > dividerIdx && fcMid < totalPts - 1) {
-      xLabels.push({ idx: fcMid, label: allPoints[fcMid].label });
-    }
-    if (totalPts - 1 !== dividerIdx) {
-      xLabels.push({ idx: totalPts - 1, label: allPoints[totalPts - 1].label });
-    }
-  }
-
-  const todayPt = allPoints[dividerIdx];
-  const lastPt = allPoints[totalPts - 1];
+  const textColor = dk(dark, "rgba(255,255,255,0.4)", OS.muted);
+  const openColor = dark ? "#F87171" : "#DC2626"; // red for opened
+  const closeColor = OS.green;
 
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto" }}>
-      {/* Grid lines */}
-      {yTicks.map((tick) => (
-        <g key={tick}>
-          <line x1={pad.left} x2={W - pad.right} y1={y(tick)} y2={y(tick)} stroke={gridColor} strokeWidth={1} />
-          <text x={pad.left - 6} y={y(tick) + 3} textAnchor="end" fill={labelColor} fontSize={9} fontFamily={OS.mono}>{tick}</text>
-        </g>
-      ))}
+    <svg
+      width="100%"
+      viewBox={`0 0 ${W} ${H}`}
+      style={{ display: "block" }}
+      onMouseLeave={() => setHover(null)}
+    >
+      {/* Y-axis grid + labels */}
+      {[0, 1, 2, 3].map((i) => {
+        const y = PAD.top + (i / 3) * chartH;
+        const val = maxVal - (i / 3) * maxVal;
+        return (
+          <g key={`ygrid_${i}`}>
+            <line x1={PAD.left} y1={y} x2={W - PAD.right} y2={y}
+              stroke={dk(dark, "rgba(255,255,255,0.06)", "rgba(0,0,0,0.06)")} />
+            <text x={PAD.left - 6} y={y + 3} textAnchor="end" fill={textColor} fontSize={9} fontFamily={OS.mono}>
+              {Math.round(val)}
+            </text>
+          </g>
+        );
+      })}
 
-      {/* History area + line */}
-      {histArea && <path d={histArea} fill={blueFaint} />}
-      {histLine && <path d={histLine} fill="none" stroke={blue} strokeWidth={2} />}
-
-      {/* Forecast area + line */}
-      {fcArea && <path d={fcArea} fill={amberFaint} />}
-      {fcLine && <path d={fcLine} fill="none" stroke={amber} strokeWidth={2} strokeDasharray="6 3" />}
-
-      {/* "Now" divider */}
-      <line x1={x(dividerIdx)} x2={x(dividerIdx)} y1={pad.top} y2={pad.top + chartH} stroke={labelColor} strokeWidth={1} strokeDasharray="3 3" />
-
-      {/* History dots */}
-      {histPts.map((p) => (
-        <circle key={`h${p.idx}`} cx={x(p.idx)} cy={y(p.count)} r={3} fill={blue} />
-      ))}
-
-      {/* Forecast dots */}
-      {fcPts.slice(1).map((p) => (
-        <circle key={`f${p.idx}`} cx={x(p.idx)} cy={y(p.count)} r={3} fill={amber} />
-      ))}
-
-      {/* Today value label */}
-      <text x={x(dividerIdx)} y={y(todayPt.count) - 8} textAnchor="middle" fill={textColor} fontSize={10} fontWeight={600} fontFamily={OS.mono}>{todayPt.count}</text>
-
-      {/* Final projected value label */}
-      {lastPt.idx !== dividerIdx && (
-        <text x={x(lastPt.idx)} y={y(lastPt.count) - 8} textAnchor="end" fill={amber} fontSize={10} fontWeight={700} fontFamily={OS.mono}>{lastPt.count}</text>
+      {/* Opened trend line (dashed) */}
+      {opened.length >= 3 && (
+        <line
+          x1={toX(0)} y1={toY(openTrend.intercept)}
+          x2={toX(weeks.length - 1)} y2={toY(openTrend.intercept + openTrend.slope * (weeks.length - 1))}
+          stroke={openColor} strokeWidth={1} strokeDasharray="4,3" opacity={0.3}
+        />
       )}
 
-      {/* X-axis labels */}
-      {xLabels.map(({ idx, label }) => (
-        <text key={idx} x={x(idx)} y={H - 8} textAnchor="middle" fill={idx === dividerIdx ? textColor : labelColor} fontSize={9} fontWeight={idx === dividerIdx ? 600 : 400} fontFamily={OS.mono}>{label}</text>
+      {/* Closed trend line (dashed) */}
+      {closed.length >= 3 && (
+        <line
+          x1={toX(0)} y1={toY(closeTrend.intercept)}
+          x2={toX(weeks.length - 1)} y2={toY(closeTrend.intercept + closeTrend.slope * (weeks.length - 1))}
+          stroke={closeColor} strokeWidth={1} strokeDasharray="4,3" opacity={0.3}
+        />
+      )}
+
+      {/* Opened line */}
+      <path d={openPath} fill="none" stroke={openColor} strokeWidth={1.5} />
+
+      {/* Closed line */}
+      <path d={closePath} fill="none" stroke={closeColor} strokeWidth={1.5} />
+
+      {/* Data points — visible on hover only */}
+      {hover !== null && weeks[hover] && (
+        <>
+          <circle cx={toX(hover)} cy={toY(opened[hover])} r={3.5} fill={openColor} />
+          <circle cx={toX(hover)} cy={toY(closed[hover])} r={3.5} fill={closeColor} />
+        </>
+      )}
+
+      {/* Hover zones */}
+      {weeks.map((_, i) => (
+        <rect key={`hz_${i}`} x={toX(i) - chartW / weeks.length / 2} y={PAD.top}
+          width={chartW / weeks.length} height={chartH} fill="transparent"
+          onMouseEnter={() => setHover(i)} />
       ))}
+
+      {/* Tooltip */}
+      {hover !== null && weeks[hover] && (
+        <g>
+          <line x1={toX(hover)} y1={PAD.top} x2={toX(hover)} y2={PAD.top + chartH}
+            stroke={dk(dark, "rgba(255,255,255,0.15)", "rgba(0,0,0,0.1)")} strokeWidth={1} />
+          <rect x={toX(hover) - 52} y={Math.min(toY(opened[hover]), toY(closed[hover])) - 34} width={104} height={30} rx={3}
+            fill={dk(dark, "rgba(0,0,0,0.85)", "rgba(0,0,0,0.75)")} stroke={dk(dark, "rgba(255,255,255,0.1)", "rgba(0,0,0,0.2)")} />
+          <text x={toX(hover) - 44} y={Math.min(toY(opened[hover]), toY(closed[hover])) - 20} fill={openColor} fontSize={9} fontFamily={OS.mono}>
+            +{opened[hover]} opened
+          </text>
+          <text x={toX(hover) - 44} y={Math.min(toY(opened[hover]), toY(closed[hover])) - 9} fill={closeColor} fontSize={9} fontFamily={OS.mono}>
+            -{closed[hover]} closed
+          </text>
+        </g>
+      )}
+
+      {/* X labels */}
+      {weeks.map((w, idx) => {
+        const step = Math.max(1, Math.floor(weeks.length / 6));
+        if (idx % step !== 0 && idx !== weeks.length - 1) return null;
+        return (
+          <text key={`x${idx}`} x={toX(idx)} y={H - 4} textAnchor="middle" fill={textColor} fontSize={9} fontFamily={OS.mono}>
+            {w.label}
+          </text>
+        );
+      })}
+
+      {/* Legend */}
+      <circle cx={W - PAD.right - 100} cy={8} r={3} fill={openColor} />
+      <text x={W - PAD.right - 94} y={11} fill={textColor} fontSize={9} fontFamily={OS.mono}>Opened</text>
+      <circle cx={W - PAD.right - 46} cy={8} r={3} fill={closeColor} />
+      <text x={W - PAD.right - 40} y={11} fill={textColor} fontSize={9} fontFamily={OS.mono}>Closed</text>
     </svg>
   );
 }
@@ -882,6 +874,113 @@ export function AIAdoptionChart({
           forecast
         </text>
       )}
+    </svg>
+  );
+}
+
+// ─── Weekly Trend Line Chart (unified style — replaces bar charts) ───
+
+export function WeeklyTrendChart({
+  data,
+  dark,
+  height: heightOverride,
+  tooltipSuffix = "",
+  color = OS.blue,
+}: {
+  data: { label: string; count: number }[];
+  dark: boolean;
+  height?: number;
+  tooltipSuffix?: string;
+  color?: string;
+}) {
+  const [hover, setHover] = useState<number | null>(null);
+  if (data.length < 2) return null;
+
+  const W = 640;
+  const H = heightOverride ?? 160;
+  const PAD = { top: 24, right: 16, bottom: 32, left: 36 };
+  const chartW = W - PAD.left - PAD.right;
+  const chartH = H - PAD.top - PAD.bottom;
+
+  const counts = data.map((d) => d.count);
+  const dataMax = Math.max(...counts, 1);
+  const maxVal = Math.max(dataMax * 1.25, 1);
+
+  const toX = (i: number) =>
+    PAD.left + (data.length > 1 ? (i / (data.length - 1)) * chartW : chartW / 2);
+  const toY = (v: number) => PAD.top + chartH - (Math.max(0, v) / maxVal) * chartH;
+
+  const points = data.map((d, i) => ({ x: toX(i), y: toY(d.count) }));
+  const pathD = smoothPath(points, 0.3);
+  const areaD = smoothArea(points, PAD.top + chartH, 0.3);
+
+  const textColor = dk(dark, "rgba(255,255,255,0.4)", OS.muted);
+
+  return (
+    <svg
+      width="100%"
+      viewBox={`0 0 ${W} ${H}`}
+      style={{ display: "block" }}
+      onMouseLeave={() => setHover(null)}
+    >
+      {/* Y-axis grid + labels */}
+      {[0, 1, 2, 3, 4].map((i) => {
+        const y = PAD.top + (i / 4) * chartH;
+        const val = maxVal - (i / 4) * maxVal;
+        return (
+          <g key={`ygrid_${i}`}>
+            <line x1={PAD.left} y1={y} x2={W - PAD.right} y2={y}
+              stroke={dk(dark, "rgba(255,255,255,0.06)", "rgba(0,0,0,0.06)")} />
+            <text x={PAD.left - 6} y={y + 3} textAnchor="end" fill={textColor} fontSize={9} fontFamily={OS.mono}>
+              {Math.round(val)}
+            </text>
+          </g>
+        );
+      })}
+
+      {/* Area fill */}
+      <path d={areaD} fill={`${color}15`} />
+
+      {/* Smooth line */}
+      <path d={pathD} fill="none" stroke={color} strokeWidth={1.5} />
+
+      {/* Data points — visible on hover only */}
+      {data.map((d, i) => {
+        if (hover !== i) return null;
+        return (
+          <circle key={i} cx={toX(i)} cy={toY(d.count)} r={4} fill={color} />
+        );
+      })}
+
+      {/* Hover zones */}
+      {data.map((_, i) => (
+        <rect key={`hz_${i}`} x={toX(i) - chartW / data.length / 2} y={PAD.top}
+          width={chartW / data.length} height={chartH} fill="transparent"
+          onMouseEnter={() => setHover(i)} />
+      ))}
+
+      {/* Tooltip */}
+      {hover !== null && data[hover] && (
+        <g>
+          <line x1={toX(hover)} y1={PAD.top} x2={toX(hover)} y2={PAD.top + chartH}
+            stroke={dk(dark, "rgba(255,255,255,0.15)", "rgba(0,0,0,0.1)")} strokeWidth={1} />
+          <rect x={toX(hover) - 36} y={toY(data[hover].count) - 22} width={72} height={18} rx={3}
+            fill={dk(dark, "rgba(0,0,0,0.85)", "rgba(0,0,0,0.75)")} stroke={dk(dark, "rgba(255,255,255,0.1)", "rgba(0,0,0,0.2)")} />
+          <text x={toX(hover)} y={toY(data[hover].count) - 10} textAnchor="middle"
+            fill="#e2e8f0" fontSize={10} fontFamily={OS.mono}>{data[hover].count}{tooltipSuffix}</text>
+        </g>
+      )}
+
+      {/* X labels */}
+      {data.map((d, idx) => {
+        const step = Math.max(1, Math.floor(data.length / 6));
+        if (idx % step !== 0 && idx !== data.length - 1) return null;
+        return (
+          <text key={`x${idx}`} x={toX(idx)} y={H - 6} textAnchor="middle" fill={textColor} fontSize={9} fontFamily={OS.mono}>
+            {d.label}
+          </text>
+        );
+      })}
     </svg>
   );
 }
