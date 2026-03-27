@@ -113,17 +113,17 @@ Return ONLY valid JSON (no markdown fences):
 
       const tagIdSet = new Set(existingTags.map((t) => t.id));
 
+      // Resolve tag IDs first, then batch-write in one transaction
+      const updates: Array<{ id: number; tagId: number }> = [];
       for (const a of parsed.assignments) {
         let tagId: number = generalTagId;
 
         if (a.tag_id != null && tagIdSet.has(a.tag_id)) {
           tagId = a.tag_id;
         } else if (a.suggested_tag) {
-          // Check if we already created this tag
           if (allSuggestedTags.has(a.suggested_tag)) {
             tagId = allSuggestedTags.get(a.suggested_tag)!;
           } else {
-            // Check case-insensitive match
             const match = existingTags.find(
               (t) => t.name.toLowerCase() === a.suggested_tag!.toLowerCase(),
             );
@@ -142,9 +142,14 @@ Return ONLY valid JSON (no markdown fences):
             }
           }
         }
-
-        await db.commitments.update(a.id, { tag_id: tagId });
+        updates.push({ id: a.id, tagId });
       }
+
+      await db.transaction("rw", db.commitments, async () => {
+        for (const u of updates) {
+          await db.commitments.update(u.id, { tag_id: u.tagId });
+        }
+      });
 
       await logStatus("info", "tags", `Backfill batch: tagged ${parsed.assignments.length} commitments`);
     } catch (err) {
@@ -256,10 +261,13 @@ Return ONLY valid JSON (no markdown):
       const parsed = JSON.parse(cleaned) as { results?: Array<{ id: number; sensitive: boolean }> };
       if (!Array.isArray(parsed.results)) continue;
 
-      for (const r of parsed.results) {
-        await db.commitments.update(r.id, { sensitive: r.sensitive === true });
-        totalUpdated++;
-      }
+      const results = parsed.results;
+      await db.transaction("rw", db.commitments, async () => {
+        for (const r of results) {
+          await db.commitments.update(r.id, { sensitive: r.sensitive === true });
+        }
+      });
+      totalUpdated += results.length;
 
       await logStatus("info", "sensitivity", `Batch done: ${parsed.results.length} commitments evaluated`);
     } catch (err) {
