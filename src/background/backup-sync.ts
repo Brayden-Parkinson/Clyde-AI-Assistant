@@ -139,16 +139,18 @@ export const BACKUP_SAVE_ALARM = BACKUP_ALARM;
 async function gatherState(): Promise<BackupState> {
   // Prune: skip done/dismissed older than 30 days
   const cutoff = new Date(Date.now() - COMPLETED_COMMITMENT_TTL_MS).toISOString();
-  const commitments = await db.commitments.toArray();
-  const prunedCommitments = commitments.filter((c) => {
-    if ((c.status === "done" || c.status === "dismissed") && c.createdAt < cutoff) {
-      return false;
-    }
-    return true;
-  });
+  // Only load active commitments + recently completed ones (not entire table)
+  const activeCommitments = await db.commitments
+    .where("status").anyOf("new", "started", "blocked", "waiting")
+    .toArray();
+  const recentCompleted = await db.commitments
+    .where("createdAt").aboveOrEqual(cutoff)
+    .toArray()
+    .then((all) => all.filter((c) => c.status === "done" || c.status === "dismissed"));
+  const prunedCommitments = [...activeCommitments, ...recentCompleted];
 
-  const dismissals = await db.dismissals.toArray();
-  const actionLog = await db.action_log.toArray();
+  const dismissals = await db.dismissals.orderBy("count").reverse().limit(100).toArray();
+  const actionLog = await db.action_log.where("createdAt").aboveOrEqual(cutoff).toArray();
   const settings = await db.settings.toArray();
   const kanbanColumns = await db.kanban_columns.toArray();
   const kanbanAssignments = await db.kanban_assignments.toArray();
