@@ -10,7 +10,7 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import { useLiveQuery } from "dexie-react-hooks";
 import { db } from "@shared/db";
 import { OS } from "@shared/tokens";
-import type { PRMetric, JiraTicket, PRJiraLink, AIReviewComment } from "@shared/types";
+import type { PRMetric, JiraTicket, PRJiraLink, AIReviewComment, OpenPRSnapshot } from "@shared/types";
 import { isBotAuthor } from "@shared/constants";
 
 // ─── Sub-tab types ───
@@ -18,7 +18,7 @@ type EngStatsTab = "Summary" | "Cycle Time" | "AI Adoption" | "AI Reviews" | "Te
 const ENG_STATS_TABS: EngStatsTab[] = ["Summary", "Cycle Time", "AI Adoption", "AI Reviews", "Teams"];
 
 // ─── Customization config (persisted to chrome.storage.local) ───
-type SectionId = "kpis" | "cycleTime" | "aiAdoption" | "prSize" | "toolUsage";
+type SectionId = "kpis" | "cycleTime" | "aiAdoption" | "prSize" | "toolUsage" | "projection";
 type KpiId = "cycletime" | "medreview" | "prsmerged" | "aiassisted" | "leadtime";
 type TeamColumnId = "prs" | "cycle" | "medReview" | "avgLines" | "ai" | "trend";
 
@@ -36,7 +36,7 @@ interface EngStatsConfig {
 }
 
 const DEFAULT_CONFIG: EngStatsConfig = {
-  visibleSections: ["kpis", "cycleTime", "aiAdoption", "prSize", "toolUsage"],
+  visibleSections: ["kpis", "cycleTime", "aiAdoption", "prSize", "toolUsage", "projection"],
   kpiOrder: ["cycletime", "medreview", "prsmerged", "aiassisted", "leadtime"],
   kpiDisplay: {
     cycletime: { delta: true, sparkline: true, subtitle: true },
@@ -561,6 +561,90 @@ function CycleTimeChart({
   );
 }
 
+// ─── Projection Chart (14-day backlog trajectory) ───
+
+function ProjectionChart({
+  points,
+  currentOpen,
+  projected7d,
+  projected14d,
+  dark,
+  height = 160,
+}: {
+  points: { day: number; count: number }[];
+  currentOpen: number;
+  projected7d: number;
+  projected14d: number;
+  dark: boolean;
+  height?: number;
+}) {
+  if (points.length < 2) return null;
+
+  const W = 480;
+  const H = height;
+  const pad = { top: 20, right: 45, bottom: 28, left: 40 };
+  const chartW = W - pad.left - pad.right;
+  const chartH = H - pad.top - pad.bottom;
+
+  const counts = points.map((p) => p.count);
+  const minY = Math.min(...counts) - 5;
+  const maxY = Math.max(...counts) + 5;
+  const rangeY = maxY - minY || 1;
+
+  const x = (day: number) => pad.left + (day / 14) * chartW;
+  const y = (count: number) => pad.top + chartH - ((count - minY) / rangeY) * chartH;
+
+  // Build line path
+  const linePath = points.map((p, i) => `${i === 0 ? "M" : "L"}${x(p.day).toFixed(1)},${y(p.count).toFixed(1)}`).join(" ");
+
+  // Area fill path
+  const areaPath = `${linePath} L${x(14).toFixed(1)},${(pad.top + chartH).toFixed(1)} L${x(0).toFixed(1)},${(pad.top + chartH).toFixed(1)} Z`;
+
+  const amber = dark ? "#FB923C" : "#EA580C";
+  const amberFaint = dark ? "rgba(251,146,60,0.15)" : "rgba(234,88,12,0.08)";
+  const gridColor = dark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.06)";
+  const labelColor = dark ? "rgba(255,255,255,0.4)" : OS.muted;
+
+  // Y-axis ticks (5 ticks)
+  const yTicks = Array.from({ length: 5 }, (_, i) => Math.round(minY + (rangeY * i) / 4));
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto" }}>
+      {/* Grid lines */}
+      {yTicks.map((tick) => (
+        <g key={tick}>
+          <line x1={pad.left} x2={W - pad.right} y1={y(tick)} y2={y(tick)} stroke={gridColor} strokeWidth={1} />
+          <text x={pad.left - 6} y={y(tick) + 3} textAnchor="end" fill={labelColor} fontSize={9} fontFamily={OS.mono}>{tick}</text>
+        </g>
+      ))}
+
+      {/* Area fill */}
+      <path d={areaPath} fill={amberFaint} />
+
+      {/* Main projection line */}
+      <path d={linePath} fill="none" stroke={amber} strokeWidth={2} />
+
+      {/* Current baseline (dashed) */}
+      <line x1={pad.left} x2={W - pad.right} y1={y(currentOpen)} y2={y(currentOpen)} stroke={labelColor} strokeWidth={1} strokeDasharray="4 3" />
+
+      {/* Day 7 annotation */}
+      <line x1={x(7)} x2={x(7)} y1={pad.top} y2={pad.top + chartH} stroke={gridColor} strokeWidth={1} strokeDasharray="3 3" />
+      <circle cx={x(7)} cy={y(projected7d)} r={4} fill={amber} />
+      <text x={x(7)} y={pad.top - 6} textAnchor="middle" fill={labelColor} fontSize={9} fontFamily={OS.mono}>1 wk: {projected7d}</text>
+
+      {/* Day 14 annotation */}
+      <line x1={x(14)} x2={x(14)} y1={pad.top} y2={pad.top + chartH} stroke={gridColor} strokeWidth={1} strokeDasharray="3 3" />
+      <circle cx={x(14)} cy={y(projected14d)} r={4} fill={amber} />
+      <text x={x(14)} y={pad.top - 6} textAnchor="middle" fill={amber} fontSize={10} fontWeight={700} fontFamily={OS.mono}>{projected14d}</text>
+
+      {/* X-axis labels */}
+      <text x={x(0)} y={H - 6} textAnchor="middle" fill={labelColor} fontSize={9} fontFamily={OS.mono}>Today</text>
+      <text x={x(7)} y={H - 6} textAnchor="middle" fill={labelColor} fontSize={9} fontFamily={OS.mono}>1 wk</text>
+      <text x={x(14)} y={H - 6} textAnchor="middle" fill={labelColor} fontSize={9} fontFamily={OS.mono}>2 wk</text>
+    </svg>
+  );
+}
+
 // ─── PR Size Donut Chart ───
 
 function PRSizeChart({
@@ -1004,6 +1088,26 @@ export function EngStatsView({ darkMode = false }: EngStatsViewProps) {
     [queryKey],
     [] as PRJiraLink[],
   );
+
+  // Open PR snapshots (for backlog projection)
+  const openSnapshots = useLiveQuery(
+    () =>
+      db.open_pr_snapshots
+        .where("snapshotAt")
+        .aboveOrEqual(daysAgoISO(90))
+        .toArray()
+        .catch(() => []),
+    [queryKey],
+    [] as OpenPRSnapshot[],
+  );
+
+  // Open PR created dates from chrome.storage (set during sync)
+  const [openPRCreatedDates, setOpenPRCreatedDates] = useState<Record<string, string[]>>({});
+  useEffect(() => {
+    chrome.storage.local.get("openPRCreatedDates").then((r) => {
+      if (r.openPRCreatedDates) setOpenPRCreatedDates(r.openPRCreatedDates as Record<string, string[]>);
+    });
+  }, [queryKey]);
 
   // ─── Jira link maps ───
   const prToTickets = useMemo(() => {
@@ -1735,13 +1839,21 @@ export function EngStatsView({ darkMode = false }: EngStatsViewProps) {
         setSyncPhase("Fetching PRs…");
 
         // Fire-and-forget — completion comes via GITHUB_SYNC_COMPLETE broadcast
+        // Timeout after 5 minutes to avoid stuck UI
         const ghResult = await new Promise<{
           synced?: number;
           total?: number;
           errors?: string[];
           error?: string;
         }>((resolve) => {
-          ghSyncResolveRef.current = resolve;
+          const timeout = setTimeout(() => {
+            ghSyncResolveRef.current = null;
+            resolve({ error: "Sync timed out after 5 minutes" });
+          }, 5 * 60 * 1000);
+          ghSyncResolveRef.current = (msg) => {
+            clearTimeout(timeout);
+            resolve(msg);
+          };
           chrome.runtime.sendMessage({ type: "GITHUB_SYNC" }).catch(() => {});
         });
 
@@ -1989,6 +2101,64 @@ export function EngStatsView({ darkMode = false }: EngStatsViewProps) {
     cursor: "pointer",
     fontFamily: OS.font,
   });
+
+  // ─── PR Backlog Projection ───
+  const prProjection = useMemo(() => {
+    // Current open count: latest snapshot per repo, summed
+    const latestByRepo = new Map<string, OpenPRSnapshot>();
+    for (const s of openSnapshots) {
+      const existing = latestByRepo.get(s.repo);
+      if (!existing || s.snapshotAt > existing.snapshotAt) {
+        latestByRepo.set(s.repo, s);
+      }
+    }
+    // Respect repo filter
+    const relevantSnapshots = selectedRepo === "__all__"
+      ? Array.from(latestByRepo.values())
+      : Array.from(latestByRepo.values()).filter((s) => s.repo === selectedRepo);
+    const currentOpen = relevantSnapshots.reduce((sum, s) => sum + s.openCount, 0);
+
+    // Close rate: PRs merged per day over last 30 days
+    const thirtyDaysAgo = daysAgoISO(30);
+    const recentMerged = metrics.filter((m) => m.mergedAt && m.mergedAt >= thirtyDaysAgo);
+    const closeRatePerDay = recentMerged.length / 30;
+
+    // Open rate: combine merged PR createdAt + currently open PR createdAt
+    const recentMergedCreated = metrics.filter((m) => m.createdAt >= thirtyDaysAgo);
+    const relevantRepos = selectedRepo === "__all__"
+      ? Object.keys(openPRCreatedDates)
+      : [selectedRepo];
+    let openCreatedInWindow = 0;
+    for (const repo of relevantRepos) {
+      const dates = openPRCreatedDates[repo] ?? [];
+      openCreatedInWindow += dates.filter((d) => d >= thirtyDaysAgo).length;
+    }
+    const totalOpened = recentMergedCreated.length + openCreatedInWindow;
+    const openRatePerDay = totalOpened / 30;
+
+    const netRatePerDay = openRatePerDay - closeRatePerDay;
+
+    // Projections
+    const projected7d = Math.round(currentOpen + netRatePerDay * 7);
+    const projected14d = Math.round(currentOpen + netRatePerDay * 14);
+
+    // Chart data: daily points for 14 days
+    const projectionPoints = Array.from({ length: 15 }, (_, i) => ({
+      day: i,
+      count: Math.round(currentOpen + netRatePerDay * i),
+    }));
+
+    return {
+      currentOpen,
+      openRatePerWeek: Math.round(openRatePerDay * 7 * 10) / 10,
+      closeRatePerWeek: Math.round(closeRatePerDay * 7 * 10) / 10,
+      netRatePerWeek: Math.round(netRatePerDay * 7 * 10) / 10,
+      projected7d,
+      projected14d,
+      projectionPoints,
+      hasData: latestByRepo.size > 0,
+    };
+  }, [openSnapshots, metrics, openPRCreatedDates, selectedRepo]);
 
   const noData = allMetrics.length === 0;
 
@@ -2309,6 +2479,7 @@ export function EngStatsView({ darkMode = false }: EngStatsViewProps) {
                       ["aiAdoption", "AI Adoption Chart"],
                       ["prSize", "PR Size Distribution"],
                       ["toolUsage", "Tool Usage"],
+                      ["projection", "PR Projection"],
                     ] as [SectionId, string][]).map(([id, label]) => (
                       <label key={id} style={{
                         display: "flex", alignItems: "center", gap: 8, padding: "3px 0",
@@ -2548,6 +2719,62 @@ export function EngStatsView({ darkMode = false }: EngStatsViewProps) {
                         })}
                       </div>
                     </div>
+                  )}
+                </div>
+              )}
+
+              {/* ─── PR Backlog Projection ─── */}
+              {sectionVisible("projection") && (
+                <div style={{ padding: "14px 16px", borderRadius: 10, border: cardBorder, background: cardBg }}>
+                  <h3 style={sectionTitle}>PR Backlog Projection</h3>
+                  {!prProjection.hasData ? (
+                    <div style={{ fontSize: 12, color: dk(darkMode, "rgba(255,255,255,0.4)", OS.muted), padding: "12px 0" }}>
+                      No open PR data yet — click <strong>Scan Now</strong> to sync.
+                    </div>
+                  ) : (
+                    <>
+                      {/* Mini KPI cards */}
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8, marginBottom: 12 }}>
+                        {[
+                          { label: "Open Now", value: String(prProjection.currentOpen) },
+                          { label: "Opened / wk", value: String(prProjection.openRatePerWeek) },
+                          { label: "Closed / wk", value: String(prProjection.closeRatePerWeek) },
+                          { label: "Net / wk", value: (prProjection.netRatePerWeek >= 0 ? "+" : "") + prProjection.netRatePerWeek },
+                        ].map((kpi) => (
+                          <div key={kpi.label} style={{
+                            padding: "8px 10px", borderRadius: 8,
+                            background: dk(darkMode, "rgba(255,255,255,0.04)", "rgba(0,0,0,0.02)"),
+                            border: `1px solid ${dk(darkMode, "rgba(255,255,255,0.06)", OS.border)}`,
+                          }}>
+                            <div style={{ fontSize: 10, color: dk(darkMode, "rgba(255,255,255,0.4)", OS.muted), marginBottom: 2 }}>{kpi.label}</div>
+                            <div style={{ fontSize: 18, fontWeight: 700, fontFamily: OS.mono, color: dk(darkMode, "#fff", OS.text) }}>{kpi.value}</div>
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Projection chart */}
+                      <ProjectionChart
+                        points={prProjection.projectionPoints}
+                        currentOpen={prProjection.currentOpen}
+                        projected7d={prProjection.projected7d}
+                        projected14d={prProjection.projected14d}
+                        dark={darkMode}
+                      />
+
+                      {/* Insight text */}
+                      <div style={{
+                        fontSize: 11, marginTop: 10, padding: "8px 10px", borderRadius: 6,
+                        background: dk(darkMode, "rgba(234,88,12,0.1)", "rgba(234,88,12,0.06)"),
+                        color: dk(darkMode, "#FB923C", "#C2410C"),
+                        fontFamily: OS.font,
+                      }}>
+                        {prProjection.netRatePerWeek > 0
+                          ? `At current rates, open PRs will reach ~${prProjection.projected14d} in 2 weeks if nothing changes.`
+                          : prProjection.netRatePerWeek < 0
+                          ? `Backlog is shrinking — projected to reach ~${prProjection.projected14d} in 2 weeks.`
+                          : `Open/close rates are balanced — backlog is holding steady at ~${prProjection.currentOpen}.`}
+                      </div>
+                    </>
                   )}
                 </div>
               )}

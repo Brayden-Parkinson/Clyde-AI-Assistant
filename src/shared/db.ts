@@ -33,6 +33,7 @@ import type {
   PRJiraLink,
   NewsPost,
   AIReviewComment,
+  OpenPRSnapshot,
 } from "./types";
 
 class ClydeDB extends Dexie {
@@ -69,6 +70,7 @@ class ClydeDB extends Dexie {
   people_context!: EntityTable<PersonContext, "personId">;
   news_posts!: EntityTable<NewsPost, "id">;
   ai_review_comments!: EntityTable<AIReviewComment, "id">;
+  open_pr_snapshots!: EntityTable<OpenPRSnapshot, "id">;
 
   constructor() {
     super("CommitmentTracker");
@@ -279,6 +281,11 @@ class ClydeDB extends Dexie {
     // Add AI review comments table
     this.version(24).stores({
       ai_review_comments: "++id, [repo+prNumber], repo, tool, category, severity, createdAt, syncedAt",
+    });
+
+    // Eng Stats: Open PR snapshots for backlog projection
+    this.version(25).stores({
+      open_pr_snapshots: "++id, repo, snapshotAt",
     });
   }
 }
