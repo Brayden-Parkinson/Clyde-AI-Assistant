@@ -39,7 +39,7 @@ import { generateWeeklyDigest } from "./weekly-digest";
 import { initSyncHooks, syncPush } from "./sync-engine";
 import { fetchAndCacheCalendarEvents } from "./google-calendar";
 import { initiateGoogleOAuth, disconnectGoogle } from "./google-auth";
-import { syncGitHubData, backfillPRAuthors } from "./githubSync";
+import { syncGitHubData, backfillPRAuthors, syncOpenPRSnapshots } from "./githubSync";
 import { syncJiraData, linkPRsToJira } from "./jiraSync";
 
 // ─── Badge ───
@@ -172,6 +172,10 @@ async function runCleanup(): Promise<void> {
   // AI News posts: 30 days
   const newsPostCutoff = new Date(now - NEWS_POST_TTL_MS).toISOString();
   await db.news_posts.where("scrapedAt").below(newsPostCutoff).delete();
+
+  // Open PR snapshots: 90 days
+  const snapshotCutoff = new Date(now - 90 * 24 * 60 * 60 * 1000).toISOString();
+  await db.open_pr_snapshots.where("snapshotAt").below(snapshotCutoff).delete();
 
   // People context: remove entries for deleted people
   const allPeopleIds = new Set((await db.people.toArray()).map(p => p.id).filter((id): id is number => id != null));
@@ -765,6 +769,7 @@ chrome.runtime.onMessage.addListener(
       syncGitHubData()
         .then((result) => {
           linkPRsToJira().catch(() => {});
+          syncOpenPRSnapshots().catch(() => {});
           chrome.runtime.sendMessage({
             type: "GITHUB_SYNC_COMPLETE",
             ...result,
@@ -887,6 +892,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
     case ALARMS.GITHUB_SYNC:
       syncGitHubData()
         .then(() => linkPRsToJira())
+        .then(() => syncOpenPRSnapshots())
         .catch((err) => console.warn("[CT:worker] GitHub sync failed:", err));
       break;
     case ALARMS.JIRA_SYNC:

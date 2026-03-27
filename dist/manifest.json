@@ -24,7 +24,9 @@
     "https://slack.com/api/*",
     "https://gmail.googleapis.com/*",
     "https://api.github.com/*",
-    "https://*.atlassian.net/*"
+    "https://*.atlassian.net/*",
+    "https://x.com/*",
+    "https://twitter.com/*"
   ],
   "background": {
     "service_worker": "service-worker-loader.js",
@@ -52,10 +54,20 @@
     },
     {
       "js": [
-        "assets/gmail.ts-loader-BWkWigrT.js"
+        "assets/gmail.ts-loader-CStPx4_H.js"
       ],
       "matches": [
         "https://mail.google.com/*"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "js": [
+        "assets/x-scraper.ts-B1OR6pxj.js"
+      ],
+      "matches": [
+        "https://x.com/*",
+        "https://twitter.com/*"
       ],
       "run_at": "document_idle"
     }
@@ -110,8 +122,18 @@
         "https://mail.google.com/*"
       ],
       "resources": [
-        "assets/constants-CsbspM7V.js",
-        "assets/gmail.ts-CU33q6Nk.js"
+        "assets/constants-CwCcJK1M.js",
+        "assets/gmail.ts-BOQ5sBtq.js"
+      ],
+      "use_dynamic_url": false
+    },
+    {
+      "matches": [
+        "https://twitter.com/*",
+        "https://x.com/*"
+      ],
+      "resources": [
+        "assets/x-scraper.ts-B1OR6pxj.js"
       ],
       "use_dynamic_url": false
     }

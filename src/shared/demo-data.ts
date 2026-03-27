@@ -26,6 +26,7 @@ import type {
   JiraTicket,
   PRJiraLink,
   NewsPost,
+  OpenPRSnapshot,
 } from "./types";
 
 // ─── Date helpers ───
@@ -1551,5 +1552,14 @@ export const DEMO_NEWS_POSTS: NewsPost[] = [
     links: [],
     scrapedAt: hoursAgo(1),
   },
+];
+
+export const DEMO_OPEN_PR_SNAPSHOTS: OpenPRSnapshot[] = [
+  { id: 1, repo: "openspace-ai/diana", openCount: 42, snapshotAt: daysAgo(7) },
+  { id: 2, repo: "openspace-ai/rad", openCount: 38, snapshotAt: daysAgo(7) },
+  { id: 3, repo: "openspace-ai/diana", openCount: 45, snapshotAt: daysAgo(3) },
+  { id: 4, repo: "openspace-ai/rad", openCount: 40, snapshotAt: daysAgo(3) },
+  { id: 5, repo: "openspace-ai/diana", openCount: 48, snapshotAt: hoursAgo(6) },
+  { id: 6, repo: "openspace-ai/rad", openCount: 41, snapshotAt: hoursAgo(6) },
 ];
 

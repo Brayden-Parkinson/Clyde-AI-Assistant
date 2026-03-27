@@ -68,11 +68,13 @@ export interface GHCopilotMetric {
 
 // ─── Internal fetch helper ───
 
-async function ghFetch<T>(token: string, path: string): Promise<T[]> {
+async function ghFetch<T>(token: string, path: string, maxPages = 50): Promise<T[]> {
   const results: T[] = [];
   let url: string | null = `https://api.github.com${path}`;
+  let pages = 0;
 
-  while (url) {
+  while (url && pages < maxPages) {
+    pages++;
     const resp = await fetch(url, {
       headers: {
         Authorization: `Bearer ${token}`,
@@ -116,6 +118,18 @@ async function ghFetchOne<T>(token: string, path: string): Promise<T> {
 }
 
 // ─── Public API ───
+
+/** Fetch currently open PRs for a repo (for backlog projection). Caps at 10 pages (1000 PRs). */
+export async function fetchOpenPRs(
+  token: string,
+  repo: string,
+): Promise<GHPull[]> {
+  return ghFetch<GHPull>(
+    token,
+    `/repos/${repo}/pulls?state=open&per_page=100&sort=created&direction=desc`,
+    10,
+  );
+}
 
 /** Fetch closed (merged) PRs since the given ISO date string */
 export async function fetchMergedPRs(

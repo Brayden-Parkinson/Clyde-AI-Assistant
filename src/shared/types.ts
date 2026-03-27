@@ -765,3 +765,14 @@ export interface XScrapedPost {
   links: string[];
 }
 
+// ─── Eng Stats: Open PR Snapshots ───
+
+/** Point-in-time snapshot of open PR count per repo */
+export interface OpenPRSnapshot {
+  id?: number;
+  repo: string;
+  openCount: number;
+  /** ISO timestamp when this snapshot was taken */
+  snapshotAt: string;
+}
+
