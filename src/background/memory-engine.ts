@@ -337,8 +337,9 @@ export async function extractMemories(): Promise<void> {
  */
 export async function searchMemories(query: string): Promise<MemoryEntry[]> {
   const lowerQuery = query.toLowerCase();
-  const all = await db.memories.toArray();
-  return all
+  // Limit scan to top 500 by importance to avoid loading entire table
+  const candidates = await db.memories.orderBy("importance").reverse().limit(500).toArray();
+  return candidates
     .filter((m) => m.content.toLowerCase().includes(lowerQuery))
     .sort((a, b) => b.importance - a.importance);
 }

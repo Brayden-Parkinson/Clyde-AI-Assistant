@@ -327,9 +327,9 @@ export async function getActiveCommitments(): Promise<Commitment[]> {
     .toArray();
 }
 
-/** Get all dismissal patterns for Claude prompt injection */
+/** Get top dismissal patterns for Claude prompt injection */
 export async function getDismissalPatterns(): Promise<Dismissal[]> {
-  return db.dismissals.orderBy("count").reverse().toArray();
+  return db.dismissals.orderBy("count").reverse().limit(50).toArray();
 }
 
 /** Count commitments with status 'new' for badge */

@@ -349,7 +349,11 @@ export async function syncOpenPRSnapshots(): Promise<{
         openCount: openPRs.length,
         snapshotAt,
       } as OpenPRSnapshot);
-      openPRCreatedDates[repo] = openPRs.map((p) => p.created_at);
+      // Only keep creation dates from last 90 days for rate calculations
+      const ninetyDaysAgo = new Date(Date.now() - 90 * 86400_000).toISOString();
+      openPRCreatedDates[repo] = openPRs
+        .filter((p) => p.created_at >= ninetyDaysAgo)
+        .map((p) => p.created_at);
       snapshots++;
     } catch (err) {
       errors.push(`${repo} open PRs: ${String(err)}`);
