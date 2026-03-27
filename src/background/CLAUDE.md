@@ -21,5 +21,5 @@ Chrome MV3 service worker. No DOM, no `window`. Can go idle — all state must l
 - All external actions (Slack send, Gmail, Calendar, Linear) MUST go through an approved ActionProposal — never auto-execute
 - API tokens read from `chrome.storage.local`, never logged
 - Circular import risk: action-executor.ts must NOT import service-worker.ts
-- Dynamic `import()` inside message handlers avoids unused-import linting issues
+- **No dynamic `import()`** — Chrome MV3 service workers forbid it. Use static imports only.
 - After changes: user must **reload extension** in chrome://extensions

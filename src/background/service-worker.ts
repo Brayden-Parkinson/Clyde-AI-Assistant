@@ -41,6 +41,10 @@ import { fetchAndCacheCalendarEvents } from "./google-calendar";
 import { initiateGoogleOAuth, disconnectGoogle } from "./google-auth";
 import { syncGitHubData, backfillPRAuthors, syncOpenPRSnapshots } from "./githubSync";
 import { syncJiraData, linkPRsToJira } from "./jiraSync";
+import { executeAction, createProposal } from "./action-executor";
+import { generateDraft, regenerateDraft } from "./draft-generator";
+import { setFollowUpRule, runFollowUpCheck } from "./follow-up-engine";
+import { refreshNews, handleScrapedPosts } from "./newsFetcher";
 
 // ─── Badge ───
 
@@ -748,25 +752,25 @@ chrome.runtime.onMessage.addListener(
       return true;
     } else if (message.type === "EXECUTE_ACTION") {
       const { proposalId } = (message as unknown) as { proposalId: number; type: string };
-      import("./action-executor").then(({ executeAction }) => executeAction(proposalId))
+      executeAction(proposalId)
         .then((result) => sendResponse(result))
         .catch((err) => sendResponse({ ok: false, message: err instanceof Error ? err.message : String(err) }));
       return true;
     } else if (message.type === "GENERATE_DRAFT") {
       const { input } = (message as unknown) as { input: Record<string, unknown>; type: string };
-      import("./draft-generator").then(({ generateDraft }) => generateDraft(input as unknown as Parameters<typeof generateDraft>[0]))
+      generateDraft(input as unknown as Parameters<typeof generateDraft>[0])
         .then((result) => sendResponse({ ok: true, ...result }))
         .catch((err) => sendResponse({ ok: false, error: err instanceof Error ? err.message : String(err) }));
       return true;
     } else if (message.type === "REGENERATE_DRAFT") {
       const { draftId, tone, instruction } = (message as unknown) as { draftId: number; tone: string; instruction: string | null; type: string };
-      import("./draft-generator").then(({ regenerateDraft }) => regenerateDraft(draftId, tone as import("@shared/types").DraftTone, instruction))
+      regenerateDraft(draftId, tone as import("@shared/types").DraftTone, instruction)
         .then((body) => sendResponse({ ok: true, body }))
         .catch((err) => sendResponse({ ok: false, error: err instanceof Error ? err.message : String(err) }));
       return true;
     } else if (message.type === "SET_FOLLOW_UP") {
       const { commitmentId, checkAt } = (message as unknown) as { commitmentId: number; checkAt?: string; type: string };
-      import("./follow-up-engine").then(({ setFollowUpRule }) => setFollowUpRule(commitmentId, checkAt))
+      setFollowUpRule(commitmentId, checkAt)
         .then((ruleId) => sendResponse({ ok: true, ruleId }))
         .catch((err) => sendResponse({ ok: false, error: String(err) }));
       return true;
@@ -799,28 +803,24 @@ chrome.runtime.onMessage.addListener(
       return true;
     } else if (message.type === "REFRESH_NEWS") {
       sendResponse({ ok: true, started: true });
-      import("./newsFetcher").then(({ refreshNews }) => {
-        const accounts = (message as unknown as { accounts?: string[] }).accounts;
-        refreshNews(accounts)
-          .then((result) => {
-            chrome.runtime.sendMessage({ type: "NEWS_REFRESH_COMPLETE", ...result }).catch(() => {});
-          })
-          .catch((err) => {
-            chrome.runtime.sendMessage({
-              type: "NEWS_REFRESH_COMPLETE",
-              error: err instanceof Error ? err.message : String(err),
-              newPosts: 0,
-              total: 0,
-              errors: [String(err)],
-            }).catch(() => {});
-          });
-      });
+      const accounts = (message as unknown as { accounts?: string[] }).accounts;
+      refreshNews(accounts)
+        .then((result) => {
+          chrome.runtime.sendMessage({ type: "NEWS_REFRESH_COMPLETE", ...result }).catch(() => {});
+        })
+        .catch((err) => {
+          chrome.runtime.sendMessage({
+            type: "NEWS_REFRESH_COMPLETE",
+            error: err instanceof Error ? err.message : String(err),
+            newPosts: 0,
+            total: 0,
+            errors: [String(err)],
+          }).catch(() => {});
+        });
       return false;
     } else if (message.type === "X_SCRAPED_POSTS") {
-      import("./newsFetcher").then(({ handleScrapedPosts }) => {
-        const payload = message as unknown as { posts: import("@shared/types").XScrapedPost[] };
-        handleScrapedPosts(payload.posts, sender.tab?.id);
-      });
+      const payload = message as unknown as { posts: import("@shared/types").XScrapedPost[] };
+      handleScrapedPosts(payload.posts, sender.tab?.id);
       sendResponse({ ok: true });
       return false;
     } else if (message.type === "SEND_DRAFT") {
@@ -828,7 +828,6 @@ chrome.runtime.onMessage.addListener(
       (async () => {
         const draft = await db.drafts.get(draftId);
         if (!draft) { sendResponse({ ok: false, error: "Draft not found" }); return; }
-        const { createProposal, executeAction } = await import("./action-executor");
         const proposalId = await createProposal(
           draft.commitmentId, "send_message",
           `Send ${draft.platform === "slack" ? "Slack message" : "email"} to ${draft.recipient}`,
@@ -893,7 +892,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
       syncPush().catch((err) => console.warn("[CT:worker] Sync push failed:", err));
       break;
     case ALARMS.FOLLOW_UP_CHECK:
-      import("./follow-up-engine").then(({ runFollowUpCheck }) => runFollowUpCheck())
+      runFollowUpCheck()
         .catch((err) => console.warn("[CT:worker] Follow-up check failed:", err));
       break;
     case ALARMS.GITHUB_SYNC:

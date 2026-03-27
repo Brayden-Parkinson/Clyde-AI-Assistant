@@ -10,6 +10,9 @@
 import { db } from "@shared/db";
 import type { ActionProposal, ActionType } from "@shared/types";
 import { logStatus } from "@shared/status";
+import { sendSlackMessage } from "./slack-sender";
+import { createGmailDraft } from "./gmail-sender";
+import { createTimeBlock, createMeeting } from "./calendar-writer";
 
 // ─── Payload Types ───
 
@@ -141,7 +144,6 @@ async function executeSendMessage(
   if (!draft) throw new Error("Draft not found");
 
   if (payload.platform === "slack") {
-    const { sendSlackMessage } = await import("./slack-sender");
     const result = await sendSlackMessage(payload.recipient, draft.body);
     if (!result.ok) throw new Error(result.error ?? "Slack send failed");
     await db.drafts.update(payload.draftId, { status: "sent", updatedAt: new Date().toISOString() });
@@ -149,7 +151,6 @@ async function executeSendMessage(
   }
 
   if (payload.platform === "gmail") {
-    const { createGmailDraft } = await import("./gmail-sender");
     const result = await createGmailDraft(
       payload.recipient,
       payload.subject ?? "(no subject)",
@@ -167,7 +168,6 @@ async function executeSendMessage(
 }
 
 async function executeBlockTime(payload: BlockTimePayload): Promise<string> {
-  const { createTimeBlock } = await import("./calendar-writer");
   const commitment = await db.commitments.get(payload.commitmentId);
   const description = commitment?.context_summary ?? commitment?.original_quote ?? "";
   const result = await createTimeBlock(
@@ -181,7 +181,6 @@ async function executeBlockTime(payload: BlockTimePayload): Promise<string> {
 }
 
 async function executeCreateMeeting(payload: CreateMeetingPayload): Promise<string> {
-  const { createMeeting } = await import("./calendar-writer");
   const endIso = new Date(
     new Date(payload.startIso).getTime() + payload.durationMinutes * 60_000,
   ).toISOString();
