@@ -22,7 +22,15 @@ import struct
 import sys
 import tempfile
 import time
-from datetime import datetime
+from datetime import datetime, timezone
+
+
+def _parse_dt(s: str) -> datetime:
+    """Parse ISO datetime, ensuring timezone-aware (defaults to UTC)."""
+    dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -42,7 +50,7 @@ elif platform.system() == "Windows":
 else:  # Linux
     GRANOLA_DIR = Path.home() / ".config" / "Granola"
 
-CACHE_CANDIDATES = ["cache-v4.json", "cache-v3.json", "cache-v5.json"]
+CACHE_CANDIDATES = ["cache-v6.json", "cache-v5.json", "cache-v4.json", "cache-v3.json"]
 SUPABASE_PATH = GRANOLA_DIR / "supabase.json"
 ACCOUNTS_PATH = GRANOLA_DIR / "stored-accounts.json"
 
@@ -471,7 +479,7 @@ def handle_list_meetings(since: str | None = None) -> dict:
     since_dt = None
     if since:
         try:
-            since_dt = datetime.fromisoformat(since.replace("Z", "+00:00"))
+            since_dt = _parse_dt(since)
         except ValueError:
             pass
 
@@ -486,7 +494,7 @@ def handle_list_meetings(since: str | None = None) -> dict:
             date_str = doc.get("created_at") or doc.get("updated_at") or ""
             if since_dt and date_str:
                 try:
-                    doc_dt = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
+                    doc_dt = _parse_dt(date_str)
                     if doc_dt < since_dt:
                         continue
                 except ValueError:
@@ -532,7 +540,7 @@ def handle_list_meetings(since: str | None = None) -> dict:
 
         if since_dt and date_str:
             try:
-                doc_dt = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
+                doc_dt = _parse_dt(date_str)
                 if doc_dt < since_dt:
                     continue
             except ValueError:

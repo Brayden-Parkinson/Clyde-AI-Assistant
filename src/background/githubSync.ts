@@ -4,16 +4,20 @@
  */
 
 import { db } from "@shared/db";
-import type { PRMetric, CopilotDailyMetric } from "@shared/types";
+import type { PRMetric, CopilotDailyMetric, AIReviewComment, OpenPRSnapshot } from "@shared/types";
 import {
   fetchMergedPRs,
+  fetchOpenPRs,
   fetchPRDetails,
   fetchPRReviews,
   fetchPRCommits,
+  fetchPRReviewComments,
   fetchReleases,
   fetchCopilotMetrics,
   detectAITools,
   detectAIReviewers,
+  getAIReviewTool,
+  classifyReviewComment,
   isBot,
 } from "./githubClient";
 
@@ -145,6 +149,39 @@ export async function syncGitHubData(): Promise<{
 
           await db.pr_metrics.add(metric);
           synced++;
+
+          // Fetch and store AI review comments (best-effort, don't block sync)
+          if (aiReviewers.length > 0) {
+            try {
+              const reviewComments = await fetchPRReviewComments(token, repo, pull.number);
+              const aiComments: AIReviewComment[] = [];
+              for (const rc of reviewComments) {
+                if (!rc.user) continue;
+                const tool = getAIReviewTool(rc.user.login);
+                if (!tool) continue;
+                // Skip empty/trivial comments
+                if (!rc.body || rc.body.length < 20) continue;
+                const { category, severity } = classifyReviewComment(tool, rc.body);
+                aiComments.push({
+                  repo,
+                  prNumber: pull.number,
+                  prAuthor: pull.user?.login ?? null,
+                  tool,
+                  body: rc.body.slice(0, 2000), // cap storage size
+                  category,
+                  severity,
+                  filePath: rc.path ?? null,
+                  createdAt: rc.created_at,
+                  syncedAt,
+                });
+              }
+              if (aiComments.length > 0) {
+                await db.ai_review_comments.bulkAdd(aiComments);
+              }
+            } catch (_rcErr) {
+              // Non-fatal — review comments are supplemental
+            }
+          }
         } catch (prErr) {
           errors.push(`PR #${pull.number}: ${String(prErr)}`);
           // Stop enriching if we hit rate limits — next sync picks up where we left off
@@ -267,4 +304,44 @@ export async function backfillPRAuthors(): Promise<{ updated: number; errors: st
   }
 
   return { updated, errors };
+}
+
+/**
+ * Fetch current open PR counts for all configured repos and store snapshots.
+ * Also stores open PR created_at dates in chrome.storage.local for
+ * accurate open-rate calculation in the projection UI.
+ */
+export async function syncOpenPRSnapshots(): Promise<{
+  snapshots: number;
+  errors: string[];
+}> {
+  const result = await chrome.storage.local.get(["githubToken", "githubRepos"]);
+  const token = result.githubToken as string | undefined;
+  const repos = result.githubRepos as string[] | undefined;
+  if (!token || !repos?.length) return { snapshots: 0, errors: [] };
+
+  let snapshots = 0;
+  const errors: string[] = [];
+  const snapshotAt = new Date().toISOString();
+  const openPRCreatedDates: Record<string, string[]> = {};
+
+  for (const repo of repos) {
+    try {
+      const openPRs = await fetchOpenPRs(token, repo);
+      await db.open_pr_snapshots.add({
+        repo,
+        openCount: openPRs.length,
+        snapshotAt,
+      } as OpenPRSnapshot);
+      openPRCreatedDates[repo] = openPRs.map((p) => p.created_at);
+      snapshots++;
+    } catch (err) {
+      errors.push(`${repo} open PRs: ${String(err)}`);
+    }
+  }
+
+  // Store created_at dates for open-rate calculation in UI
+  await chrome.storage.local.set({ openPRCreatedDates });
+
+  return { snapshots, errors };
 }

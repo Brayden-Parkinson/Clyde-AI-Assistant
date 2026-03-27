@@ -682,6 +682,27 @@ export interface PRMetric {
   syncedAt: string;
 }
 
+/** Individual AI review comment extracted from PR review threads */
+export interface AIReviewComment {
+  id?: number;
+  repo: string;
+  prNumber: number;
+  /** GitHub login of the PR author who received this review */
+  prAuthor: string | null;
+  /** AI tool that made the comment: "cursor", "coderabbit", "copilot", "claude" */
+  tool: string;
+  /** Raw comment body text */
+  body: string;
+  /** Classified category: "bug", "style", "security", "perf", "type-safety", "logic", "other" */
+  category: string;
+  /** Normalized severity: "high", "medium", "low", "info" */
+  severity: string;
+  /** File path the comment is on, if available */
+  filePath: string | null;
+  createdAt: string;
+  syncedAt: string;
+}
+
 // ─── Eng Stats: Jira Integration ───
 
 /** A Jira ticket synced from the REST API */
@@ -763,5 +784,16 @@ export interface XScrapedPost {
   timestamp: string;
   url: string;
   links: string[];
+}
+
+// ─── Eng Stats: Open PR Snapshots ───
+
+/** Point-in-time snapshot of open PR count per repo */
+export interface OpenPRSnapshot {
+  id?: number;
+  repo: string;
+  openCount: number;
+  /** ISO timestamp when this snapshot was taken */
+  snapshotAt: string;
 }
 

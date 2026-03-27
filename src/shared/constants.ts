@@ -125,6 +125,33 @@ export const NEWS_SCRAPE_TIMEOUT_MS = 30_000;
 /** Default X accounts to scrape for AI news */
 export const NEWS_DEFAULT_ACCOUNTS = ["bcherny"];
 
+// ─── Eng Stats: Bot detection ───
+
+/** Known bot logins (without [bot] suffix) that author PRs or reviews */
+export const KNOWN_BOT_LOGINS = new Set([
+  "dependabot", "renovate", "codecov", "sonarcloud", "coderabbitai",
+  "github-actions", "mergify", "snyk-bot", "depfu", "greenkeeper",
+  "imgbot", "allcontributors", "stale", "netlify", "vercel",
+  "openspace-bot",
+]);
+
+/** AI bot accounts that directly author PRs (login → AI tool name) */
+export const AI_BOT_AUTHORS = new Map<string, string>([
+  ["copilot-swe-agent[bot]", "copilot"],
+  ["devin-ai-integration[bot]", "devin"],
+  ["amazon-q-developer[bot]", "amazon-q"],
+  ["sweep-ai[bot]", "sweep"],
+]);
+
+/** Returns true if a GitHub login belongs to a bot (not a human contributor) */
+export function isBotAuthor(login: string): boolean {
+  const lower = login.toLowerCase();
+  if (lower.endsWith("[bot]")) return true;
+  if (KNOWN_BOT_LOGINS.has(lower)) return true;
+  if (AI_BOT_AUTHORS.has(lower)) return true;
+  return false;
+}
+
 /** Google OAuth configuration */
 export const GOOGLE_OAUTH = {
   AUTH_URL: "https://accounts.google.com/o/oauth2/v2/auth",
