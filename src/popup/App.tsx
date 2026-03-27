@@ -32,13 +32,14 @@ import { DraftComposer } from "./components/DraftComposer";
 import { PeoplePanel } from "./components/PeoplePanel";
 import { EngStatsView } from "./components/EngStatsView";
 import { AINewsView } from "./components/AINewsView";
+import { FocusView } from "./components/focus/FocusView";
 import {
   IconSettings, IconWarning, IconX, IconRefresh, IconLoader, IconCheck,
   IconChevronUp, IconChevronDown, IconArrowRight, IconClock, IconPeople,
   InlineIcon,
 } from "./components/Icons";
 
-type ViewMode = "board" | "people" | "eng-stats" | "ai-news" | "devlog" | "settings" | "draft";
+type ViewMode = "focus" | "board" | "people" | "eng-stats" | "ai-news" | "devlog" | "settings" | "draft";
 
 // ─── Display settings (persisted in chrome.storage.local) ───
 
@@ -1422,6 +1423,7 @@ function TopBar({
   const settingsRef = useRef<HTMLButtonElement>(null) as React.RefObject<HTMLButtonElement>;
 
   const navItems: Array<{ key: ViewMode; label: string; show: boolean }> = [
+    { key: "focus", label: "Focus", show: true },
     { key: "board", label: "Board", show: true },
     { key: "people", label: "People", show: true },
     { key: "eng-stats", label: "Eng Stats", show: engStatsEnabled },
@@ -1623,7 +1625,7 @@ export default function App() {
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [isWide, setIsWide] = useState(false);
   const isNarrow = !isWide;
-  const [viewMode, setViewMode] = useState<ViewMode>("board");
+  const [viewMode, setViewMode] = useState<ViewMode>("focus");
   const [activeDraftId, setActiveDraftId] = useState<number | null>(null);
   // Clear draft state when user navigates away from draft view
   useEffect(() => {
@@ -1948,7 +1950,10 @@ export default function App() {
 
       <div style={{ flex: 1, overflowY: "auto", display: "flex" }}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ padding: (viewMode === "board" || viewMode === "devlog" || viewMode === "eng-stats" || viewMode === "ai-news") ? "12px 16px" : 0 }}>
+          <div style={{ padding: (viewMode === "focus" || viewMode === "board" || viewMode === "devlog" || viewMode === "eng-stats" || viewMode === "ai-news") ? "12px 16px" : 0 }}>
+
+            {/* Focus view */}
+            {viewMode === "focus" && <FocusView darkMode={darkMode} demoMode={demoMode} />}
 
             {/* Board view */}
             {viewMode === "board" && (
