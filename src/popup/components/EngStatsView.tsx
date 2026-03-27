@@ -155,15 +155,15 @@ export function EngStatsView({ darkMode = false }: EngStatsViewProps) {
     [] as JiraTicket[],
   );
 
-  // Open PR snapshots (for backlog projection)
+  // Open PR snapshots (for backlog projection — fetch enough for longest time range)
   const openSnapshots = useLiveQuery(
     () =>
       db.open_pr_snapshots
         .where("snapshotAt")
-        .aboveOrEqual(daysAgoISO(90))
+        .aboveOrEqual(daysAgoISO(Math.max(timeRange, 90)))
         .toArray()
         .catch(() => []),
-    [queryKey],
+    [queryKey, timeRange],
     [] as OpenPRSnapshot[],
   );
 

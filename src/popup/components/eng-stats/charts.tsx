@@ -381,52 +381,101 @@ export function CycleTimeChart({
   );
 }
 
-// ─── Projection Chart (14-day backlog trajectory) ───
+// ─── Projection Chart (historical + forecast) ───
 
 export function ProjectionChart({
-  points,
-  currentOpen,
-  projected7d,
-  projected14d,
+  history,
+  forecast,
   dark,
-  height = 160,
+  height = 180,
 }: {
-  points: { day: number; count: number }[];
-  currentOpen: number;
-  projected7d: number;
-  projected14d: number;
+  /** Weekly historical open-PR counts, oldest first. Each entry: { label, count } */
+  history: { label: string; count: number }[];
+  /** Weekly projected counts, starting from "now". Each entry: { label, count } */
+  forecast: { label: string; count: number }[];
   dark: boolean;
   height?: number;
 }) {
-  if (points.length < 2) return null;
+  if (history.length === 0 && forecast.length === 0) return null;
 
   const W = 480;
   const H = height;
-  const pad = { top: 20, right: 45, bottom: 28, left: 40 };
+  const pad = { top: 14, right: 16, bottom: 30, left: 42 };
   const chartW = W - pad.left - pad.right;
   const chartH = H - pad.top - pad.bottom;
 
-  const counts = points.map((p) => p.count);
-  const minY = Math.min(...counts) - 5;
-  const maxY = Math.max(...counts) + 5;
-  const rangeY = maxY - minY || 1;
+  // Merge into a single series; the divider is at history.length - 1 (last history point = first forecast point)
+  const allPoints = [
+    ...history.map((h, i) => ({ idx: i, count: h.count, label: h.label, isHistory: true })),
+    ...forecast.slice(1).map((f, i) => ({ idx: history.length + i, count: f.count, label: f.label, isHistory: false })),
+  ];
+  const totalPts = allPoints.length;
+  if (totalPts < 2) return null;
 
-  const x = (day: number) => pad.left + (day / 14) * chartW;
-  const y = (count: number) => pad.top + chartH - ((count - minY) / rangeY) * chartH;
+  const dividerIdx = history.length - 1; // index of "Today" point
 
-  // Build line path
-  const linePath = points.map((p, i) => `${i === 0 ? "M" : "L"}${x(p.day).toFixed(1)},${y(p.count).toFixed(1)}`).join(" ");
+  const counts = allPoints.map((p) => p.count);
+  const minY = Math.min(...counts);
+  const maxY = Math.max(...counts);
+  const padding = Math.max(Math.round((maxY - minY) * 0.15), 3);
+  const yMin = Math.max(0, minY - padding);
+  const yMax = maxY + padding;
+  const rangeY = yMax - yMin || 1;
 
-  // Area fill path
-  const areaPath = `${linePath} L${x(14).toFixed(1)},${(pad.top + chartH).toFixed(1)} L${x(0).toFixed(1)},${(pad.top + chartH).toFixed(1)} Z`;
+  const x = (idx: number) => pad.left + (idx / (totalPts - 1)) * chartW;
+  const y = (count: number) => pad.top + chartH - ((count - yMin) / rangeY) * chartH;
 
+  // Colors
+  const blue = dark ? "#60A5FA" : "#2563EB";
   const amber = dark ? "#FB923C" : "#EA580C";
-  const amberFaint = dark ? "rgba(251,146,60,0.15)" : "rgba(234,88,12,0.08)";
+  const amberFaint = dark ? "rgba(251,146,60,0.10)" : "rgba(234,88,12,0.06)";
+  const blueFaint = dark ? "rgba(96,165,250,0.10)" : "rgba(37,99,235,0.06)";
   const gridColor = dark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.06)";
   const labelColor = dark ? "rgba(255,255,255,0.4)" : OS.muted;
+  const textColor = dark ? "rgba(255,255,255,0.7)" : OS.secondary;
 
-  // Y-axis ticks (5 ticks)
-  const yTicks = Array.from({ length: 5 }, (_, i) => Math.round(minY + (rangeY * i) / 4));
+  // Y-axis ticks (4 ticks)
+  const yTicks = Array.from({ length: 4 }, (_, i) => Math.round(yMin + (rangeY * i) / 3));
+
+  // History path (solid blue)
+  const histPts = allPoints.filter((_, i) => i <= dividerIdx);
+  const histLine = histPts.map((p, i) => `${i === 0 ? "M" : "L"}${x(p.idx).toFixed(1)},${y(p.count).toFixed(1)}`).join(" ");
+  const histArea = histPts.length > 1
+    ? `${histLine} L${x(histPts[histPts.length - 1].idx).toFixed(1)},${(pad.top + chartH).toFixed(1)} L${x(0).toFixed(1)},${(pad.top + chartH).toFixed(1)} Z`
+    : "";
+
+  // Forecast path (dashed amber) — starts from divider point
+  const fcPts = allPoints.filter((_, i) => i >= dividerIdx);
+  const fcLine = fcPts.map((p, i) => `${i === 0 ? "M" : "L"}${x(p.idx).toFixed(1)},${y(p.count).toFixed(1)}`).join(" ");
+  const fcArea = fcPts.length > 1
+    ? `${fcLine} L${x(fcPts[fcPts.length - 1].idx).toFixed(1)},${(pad.top + chartH).toFixed(1)} L${x(fcPts[0].idx).toFixed(1)},${(pad.top + chartH).toFixed(1)} Z`
+    : "";
+
+  // X-axis labels — show a subset to avoid crowding
+  const xLabels: { idx: number; label: string }[] = [];
+  if (totalPts <= 8) {
+    allPoints.forEach((p) => xLabels.push({ idx: p.idx, label: p.label }));
+  } else {
+    // Always show first, divider ("Now"), and last; fill evenly between
+    xLabels.push({ idx: 0, label: allPoints[0].label });
+    // Show a midpoint in history if there's room
+    if (dividerIdx > 2) {
+      const mid = Math.round(dividerIdx / 2);
+      xLabels.push({ idx: mid, label: allPoints[mid].label });
+    }
+    xLabels.push({ idx: dividerIdx, label: "Now" });
+    // Show midpoint in forecast if there's room
+    const fcMid = dividerIdx + Math.round((totalPts - 1 - dividerIdx) / 2);
+    if (fcMid > dividerIdx && fcMid < totalPts - 1) {
+      xLabels.push({ idx: fcMid, label: allPoints[fcMid].label });
+    }
+    if (totalPts - 1 !== dividerIdx) {
+      xLabels.push({ idx: totalPts - 1, label: allPoints[totalPts - 1].label });
+    }
+  }
+
+  const todayPt = allPoints[dividerIdx];
+  const lastPt = allPoints[totalPts - 1];
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto" }}>
@@ -438,29 +487,39 @@ export function ProjectionChart({
         </g>
       ))}
 
-      {/* Area fill */}
-      <path d={areaPath} fill={amberFaint} />
+      {/* History area + line */}
+      {histArea && <path d={histArea} fill={blueFaint} />}
+      {histLine && <path d={histLine} fill="none" stroke={blue} strokeWidth={2} />}
 
-      {/* Main projection line */}
-      <path d={linePath} fill="none" stroke={amber} strokeWidth={2} />
+      {/* Forecast area + line */}
+      {fcArea && <path d={fcArea} fill={amberFaint} />}
+      {fcLine && <path d={fcLine} fill="none" stroke={amber} strokeWidth={2} strokeDasharray="6 3" />}
 
-      {/* Current baseline (dashed) */}
-      <line x1={pad.left} x2={W - pad.right} y1={y(currentOpen)} y2={y(currentOpen)} stroke={labelColor} strokeWidth={1} strokeDasharray="4 3" />
+      {/* "Now" divider */}
+      <line x1={x(dividerIdx)} x2={x(dividerIdx)} y1={pad.top} y2={pad.top + chartH} stroke={labelColor} strokeWidth={1} strokeDasharray="3 3" />
 
-      {/* Day 7 annotation */}
-      <line x1={x(7)} x2={x(7)} y1={pad.top} y2={pad.top + chartH} stroke={gridColor} strokeWidth={1} strokeDasharray="3 3" />
-      <circle cx={x(7)} cy={y(projected7d)} r={4} fill={amber} />
-      <text x={x(7)} y={pad.top - 6} textAnchor="middle" fill={labelColor} fontSize={9} fontFamily={OS.mono}>1 wk: {projected7d}</text>
+      {/* History dots */}
+      {histPts.map((p) => (
+        <circle key={`h${p.idx}`} cx={x(p.idx)} cy={y(p.count)} r={3} fill={blue} />
+      ))}
 
-      {/* Day 14 annotation */}
-      <line x1={x(14)} x2={x(14)} y1={pad.top} y2={pad.top + chartH} stroke={gridColor} strokeWidth={1} strokeDasharray="3 3" />
-      <circle cx={x(14)} cy={y(projected14d)} r={4} fill={amber} />
-      <text x={x(14)} y={pad.top - 6} textAnchor="middle" fill={amber} fontSize={10} fontWeight={700} fontFamily={OS.mono}>{projected14d}</text>
+      {/* Forecast dots */}
+      {fcPts.slice(1).map((p) => (
+        <circle key={`f${p.idx}`} cx={x(p.idx)} cy={y(p.count)} r={3} fill={amber} />
+      ))}
+
+      {/* Today value label */}
+      <text x={x(dividerIdx)} y={y(todayPt.count) - 8} textAnchor="middle" fill={textColor} fontSize={10} fontWeight={600} fontFamily={OS.mono}>{todayPt.count}</text>
+
+      {/* Final projected value label */}
+      {lastPt.idx !== dividerIdx && (
+        <text x={x(lastPt.idx)} y={y(lastPt.count) - 8} textAnchor="end" fill={amber} fontSize={10} fontWeight={700} fontFamily={OS.mono}>{lastPt.count}</text>
+      )}
 
       {/* X-axis labels */}
-      <text x={x(0)} y={H - 6} textAnchor="middle" fill={labelColor} fontSize={9} fontFamily={OS.mono}>Today</text>
-      <text x={x(7)} y={H - 6} textAnchor="middle" fill={labelColor} fontSize={9} fontFamily={OS.mono}>1 wk</text>
-      <text x={x(14)} y={H - 6} textAnchor="middle" fill={labelColor} fontSize={9} fontFamily={OS.mono}>2 wk</text>
+      {xLabels.map(({ idx, label }) => (
+        <text key={idx} x={x(idx)} y={H - 8} textAnchor="middle" fill={idx === dividerIdx ? textColor : labelColor} fontSize={9} fontWeight={idx === dividerIdx ? 600 : 400} fontFamily={OS.mono}>{label}</text>
+      ))}
     </svg>
   );
 }

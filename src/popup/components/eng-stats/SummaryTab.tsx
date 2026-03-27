@@ -52,10 +52,8 @@ interface SummaryTabProps extends TabProps {
     dark: boolean;
   }>;
   ProjectionChart: React.ComponentType<{
-    points: { day: number; count: number }[];
-    currentOpen: number;
-    projected7d: number;
-    projected14d: number;
+    history: { label: string; count: number }[];
+    forecast: { label: string; count: number }[];
     dark: boolean;
     height?: number;
   }>;
@@ -595,6 +593,7 @@ export function SummaryTab({
 
   // ─── PR Backlog Projection ───
   const prProjection = useMemo(() => {
+    // Latest snapshot per repo (for "current open" count)
     const latestByRepo = new Map<string, OpenPRSnapshot>();
     for (const s of openSnapshots) {
       const existing = latestByRepo.get(s.repo);
@@ -607,30 +606,74 @@ export function SummaryTab({
       : Array.from(latestByRepo.values()).filter((s) => s.repo === selectedRepo);
     const currentOpen = relevantSnapshots.reduce((sum, s) => sum + s.openCount, 0);
 
-    const thirtyDaysAgo = daysAgoISO(30);
-    const recentMerged = metrics.filter((m) => m.mergedAt && m.mergedAt >= thirtyDaysAgo);
-    const closeRatePerDay = recentMerged.length / 30;
+    // Use timeRange for rate calculations
+    const windowDays = Math.max(timeRange, 14); // at least 14 days for meaningful rates
+    const windowStart = daysAgoISO(windowDays);
+    const recentMerged = metrics.filter((m) => m.mergedAt && m.mergedAt >= windowStart);
+    const closeRatePerDay = recentMerged.length / windowDays;
 
-    const recentMergedCreated = metrics.filter((m) => m.createdAt >= thirtyDaysAgo);
+    const recentMergedCreated = metrics.filter((m) => m.createdAt >= windowStart);
     const relevantRepos = selectedRepo === "__all__"
       ? Object.keys(openPRCreatedDates)
       : [selectedRepo];
     let openCreatedInWindow = 0;
     for (const repo of relevantRepos) {
       const dates = openPRCreatedDates[repo] ?? [];
-      openCreatedInWindow += dates.filter((d) => d >= thirtyDaysAgo).length;
+      openCreatedInWindow += dates.filter((d) => d >= windowStart).length;
     }
     const totalOpened = recentMergedCreated.length + openCreatedInWindow;
-    const openRatePerDay = totalOpened / 30;
+    const openRatePerDay = totalOpened / windowDays;
     const netRatePerDay = openRatePerDay - closeRatePerDay;
 
-    const projected7d = Math.round(currentOpen + netRatePerDay * 7);
-    const projected14d = Math.round(currentOpen + netRatePerDay * 14);
+    // Build weekly history from snapshots (aggregate across repos per week)
+    const filteredSnapshots = selectedRepo === "__all__"
+      ? openSnapshots
+      : openSnapshots.filter((s) => s.repo === selectedRepo);
 
-    const projectionPoints = Array.from({ length: 15 }, (_, i) => ({
-      day: i,
-      count: Math.round(currentOpen + netRatePerDay * i),
-    }));
+    const historyWeeks = Math.min(Math.floor(timeRange / 7), 12); // cap at 12 weeks of history
+    const weeklyHistory: { label: string; count: number }[] = [];
+    for (let w = historyWeeks; w >= 0; w--) {
+      const weekEnd = new Date(Date.now() - w * 7 * 86400_000);
+      const weekStart = new Date(weekEnd.getTime() - 7 * 86400_000);
+      const weekEndISO = weekEnd.toISOString();
+      const weekStartISO = weekStart.toISOString();
+
+      // Find snapshots closest to this week-end per repo
+      const bestPerRepo = new Map<string, OpenPRSnapshot>();
+      for (const s of filteredSnapshots) {
+        if (s.snapshotAt <= weekEndISO && s.snapshotAt >= weekStartISO) {
+          const existing = bestPerRepo.get(s.repo);
+          if (!existing || s.snapshotAt > existing.snapshotAt) {
+            bestPerRepo.set(s.repo, s);
+          }
+        }
+      }
+      if (bestPerRepo.size > 0) {
+        const total = Array.from(bestPerRepo.values()).reduce((sum, s) => sum + s.openCount, 0);
+        const label = w === 0 ? "Now" : `${w}w`;
+        weeklyHistory.push({ label, count: total });
+      }
+    }
+
+    // If we have no weekly history, just use current as the single point
+    if (weeklyHistory.length === 0) {
+      weeklyHistory.push({ label: "Now", count: currentOpen });
+    }
+    // Ensure the last history point reflects the current count
+    weeklyHistory[weeklyHistory.length - 1] = { label: "Now", count: currentOpen };
+
+    // Build forecast: project forward proportional to timeRange
+    const forecastWeeks = Math.max(2, Math.min(Math.floor(timeRange / 14), 8));
+    const forecast: { label: string; count: number }[] = [{ label: "Now", count: currentOpen }];
+    for (let w = 1; w <= forecastWeeks; w++) {
+      forecast.push({
+        label: `+${w}w`,
+        count: Math.max(0, Math.round(currentOpen + netRatePerDay * 7 * w)),
+      });
+    }
+
+    const projected7d = Math.round(currentOpen + netRatePerDay * 7);
+    const projectedEnd = forecast[forecast.length - 1].count;
 
     return {
       currentOpen,
@@ -638,11 +681,13 @@ export function SummaryTab({
       closeRatePerWeek: Math.round(closeRatePerDay * 7 * 10) / 10,
       netRatePerWeek: Math.round(netRatePerDay * 7 * 10) / 10,
       projected7d,
-      projected14d,
-      projectionPoints,
+      projectedEnd,
+      forecastWeeks,
+      history: weeklyHistory,
+      forecast,
       hasData: latestByRepo.size > 0,
     };
-  }, [openSnapshots, metrics, openPRCreatedDates, selectedRepo]);
+  }, [openSnapshots, metrics, openPRCreatedDates, selectedRepo, timeRange]);
 
   // ─── Derived values ───
   const {
@@ -860,10 +905,8 @@ export function SummaryTab({
 
               {/* Projection chart */}
               <ProjectionChart
-                points={prProjection.projectionPoints}
-                currentOpen={prProjection.currentOpen}
-                projected7d={prProjection.projected7d}
-                projected14d={prProjection.projected14d}
+                history={prProjection.history}
+                forecast={prProjection.forecast}
                 dark={dark}
               />
 
@@ -878,9 +921,9 @@ export function SummaryTab({
                 fontFamily: OS.font,
               }}>
                 {prProjection.netRatePerWeek > 0
-                  ? `At current rates, open PRs will reach ~${prProjection.projected14d} in 2 weeks if nothing changes.`
+                  ? `At current rates, open PRs will reach ~${prProjection.projectedEnd} in ${prProjection.forecastWeeks} weeks.`
                   : prProjection.netRatePerWeek < 0
-                  ? `Backlog is shrinking — projected to reach ~${prProjection.projected14d} in 2 weeks.`
+                  ? `Backlog is shrinking — projected to reach ~${prProjection.projectedEnd} in ${prProjection.forecastWeeks} weeks.`
                   : `Open/close rates are balanced — backlog is holding steady at ~${prProjection.currentOpen}.`}
               </div>
             </>
