@@ -177,6 +177,10 @@ async function runCleanup(): Promise<void> {
   const snapshotCutoff = new Date(now - 90 * 24 * 60 * 60 * 1000).toISOString();
   await db.open_pr_snapshots.where("snapshotAt").below(snapshotCutoff).delete();
 
+  // AI review comments: 90 days
+  const reviewCommentCutoff = new Date(now - 90 * 24 * 60 * 60 * 1000).toISOString();
+  await db.ai_review_comments.where("createdAt").below(reviewCommentCutoff).delete();
+
   // People context: remove entries for deleted people
   const allPeopleIds = new Set((await db.people.toArray()).map(p => p.id).filter((id): id is number => id != null));
   const allContexts = await db.people_context.toArray();

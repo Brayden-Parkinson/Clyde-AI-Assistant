@@ -140,6 +140,7 @@ export async function fetchMergedPRs(
   const pulls = await ghFetch<GHPull>(
     token,
     `/repos/${repo}/pulls?state=closed&per_page=100&sort=updated&direction=desc&since=${encodeURIComponent(since)}`,
+    20,
   );
   return pulls.filter(
     (p) => p.merged_at !== null && p.merged_at >= since,
@@ -161,7 +162,7 @@ export async function fetchPRReviews(
   repo: string,
   prNumber: number,
 ): Promise<GHReview[]> {
-  return ghFetch<GHReview>(token, `/repos/${repo}/pulls/${prNumber}/reviews`);
+  return ghFetch<GHReview>(token, `/repos/${repo}/pulls/${prNumber}/reviews`, 5);
 }
 
 /** Fetch commits for a PR (used for AI signature scanning) */
@@ -170,7 +171,7 @@ export async function fetchPRCommits(
   repo: string,
   prNumber: number,
 ): Promise<GHCommit[]> {
-  return ghFetch<GHCommit>(token, `/repos/${repo}/pulls/${prNumber}/commits`);
+  return ghFetch<GHCommit>(token, `/repos/${repo}/pulls/${prNumber}/commits`, 5);
 }
 
 /** Fetch recent releases for deploy-frequency metric */
@@ -178,7 +179,7 @@ export async function fetchReleases(
   token: string,
   repo: string,
 ): Promise<GHRelease[]> {
-  return ghFetch<GHRelease>(token, `/repos/${repo}/releases?per_page=30`);
+  return ghFetch<GHRelease>(token, `/repos/${repo}/releases?per_page=30`, 3);
 }
 
 /** Fetch Copilot org-level daily metrics (requires read:org scope) */
@@ -362,6 +363,7 @@ export async function fetchPRReviewComments(
   return ghFetch<GHReviewComment>(
     token,
     `/repos/${repo}/pulls/${prNumber}/comments?per_page=100`,
+    5,
   );
 }
 
