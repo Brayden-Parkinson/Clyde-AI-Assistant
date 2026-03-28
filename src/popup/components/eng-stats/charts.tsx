@@ -984,3 +984,99 @@ export function WeeklyTrendChart({
     </svg>
   );
 }
+
+// ─── Score Gauge ───
+
+const GAUGE_COLORS = {
+  utilization: "#3B82F6", // blue
+  impact: "#22C55E",      // green
+  quality: "#F59E0B",     // amber
+};
+
+export function ScoreGauge({
+  score,
+  tier,
+  pillars,
+  dark,
+}: {
+  score: number;
+  tier: string;
+  pillars: { utilization: number; impact: number; quality: number };
+  dark: boolean;
+}) {
+  const size = 120;
+  const cx = size / 2;
+  const cy = size / 2;
+  const r = 46;
+  const strokeW = 10;
+
+  // 270-degree arc: starts at 135deg (bottom-left), sweeps 270deg clockwise
+  const startAngle = 135;
+  const totalArc = 270;
+  const scoreArc = (score / 100) * totalArc;
+
+  // Pillar arcs proportional to their contribution
+  const pillarTotal = pillars.utilization + pillars.impact + pillars.quality;
+  const uArc = pillarTotal > 0 ? (pillars.utilization / pillarTotal) * scoreArc : 0;
+  const iArc = pillarTotal > 0 ? (pillars.impact / pillarTotal) * scoreArc : 0;
+  const qArc = pillarTotal > 0 ? (pillars.quality / pillarTotal) * scoreArc : 0;
+
+  function arcPath(startDeg: number, sweepDeg: number): string {
+    if (sweepDeg <= 0) return "";
+    const s = (startDeg * Math.PI) / 180;
+    const e = ((startDeg + sweepDeg) * Math.PI) / 180;
+    const x1 = cx + r * Math.cos(s);
+    const y1 = cy + r * Math.sin(s);
+    const x2 = cx + r * Math.cos(e);
+    const y2 = cy + r * Math.sin(e);
+    const large = sweepDeg > 180 ? 1 : 0;
+    return `M ${x1} ${y1} A ${r} ${r} 0 ${large} 1 ${x2} ${y2}`;
+  }
+
+  const trackColor = dk(dark, "rgba(255,255,255,0.08)", "rgba(0,0,0,0.06)");
+  const textColor = dk(dark, "#fff", OS.text);
+  const subColor = dk(dark, "rgba(255,255,255,0.5)", OS.muted);
+
+  let cursor = startAngle;
+  const segments = [
+    { arc: uArc, color: GAUGE_COLORS.utilization },
+    { arc: iArc, color: GAUGE_COLORS.impact },
+    { arc: qArc, color: GAUGE_COLORS.quality },
+  ];
+
+  return (
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{ display: "block" }}>
+      {/* Track */}
+      <path d={arcPath(startAngle, totalArc)} fill="none" stroke={trackColor} strokeWidth={strokeW} strokeLinecap="round" />
+
+      {/* Pillar segments */}
+      {segments.map((seg, idx) => {
+        if (seg.arc <= 0) return null;
+        const path = arcPath(cursor, seg.arc);
+        const el = (
+          <path key={idx} d={path} fill="none" stroke={seg.color} strokeWidth={strokeW}
+            strokeLinecap={idx === 0 && score > 0 ? "round" : "butt"} />
+        );
+        cursor += seg.arc;
+        return el;
+      })}
+      {/* Round cap on last segment */}
+      {scoreArc > 0 && (
+        <path d={arcPath(startAngle + scoreArc - 0.5, 0.5)} fill="none" stroke={segments.filter(s => s.arc > 0).pop()?.color ?? GAUGE_COLORS.utilization}
+          strokeWidth={strokeW} strokeLinecap="round" />
+      )}
+
+      {/* Score number */}
+      <text x={cx} y={cy - 4} textAnchor="middle" dominantBaseline="central"
+        fill={textColor} fontSize={28} fontWeight={700} fontFamily={OS.mono}>
+        {score}
+      </text>
+
+      {/* Tier label */}
+      <text x={cx} y={cy + 18} textAnchor="middle" dominantBaseline="central"
+        fill={subColor} fontSize={10} fontWeight={600}>
+        {tier}
+      </text>
+    </svg>
+  );
+}

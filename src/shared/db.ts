@@ -287,6 +287,31 @@ class ClydeDB extends Dexie {
     this.version(25).stores({
       open_pr_snapshots: "++id, repo, snapshotAt",
     });
+
+    // Eng Stats: Add revert detection to PRMetric, expand CopilotDailyMetric
+    this.version(26)
+      .stores({})
+      .upgrade((tx) => {
+        tx.table("pr_metrics")
+          .toCollection()
+          .modify((pr) => {
+            if (pr.isRevert === undefined) pr.isRevert = false;
+            if (pr.revertedPrNumber === undefined) pr.revertedPrNumber = null;
+            // Detect reverts from existing title data
+            if (/^revert\s/i.test(pr.title)) {
+              pr.isRevert = true;
+            }
+          });
+        tx.table("copilot_metrics")
+          .toCollection()
+          .modify((m) => {
+            if (m.totalSuggestions === undefined) m.totalSuggestions = 0;
+            if (m.totalAcceptances === undefined) m.totalAcceptances = 0;
+            if (m.totalLinesSuggested === undefined) m.totalLinesSuggested = 0;
+            if (m.totalLinesAccepted === undefined) m.totalLinesAccepted = 0;
+            if (m.totalSeats === undefined) m.totalSeats = null;
+          });
+      });
   }
 }
 

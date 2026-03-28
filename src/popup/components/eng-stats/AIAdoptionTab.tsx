@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from "react";
-import type { PRMetric } from "@shared/types";
+import type { PRMetric, CopilotDailyMetric } from "@shared/types";
 import {
   TabProps,
   TeamRow,
@@ -14,6 +14,15 @@ import {
 } from "./shared";
 import { OS } from "@shared/tokens";
 import { isBotAuthor } from "@shared/constants";
+import {
+  computeAIAdoptionScore,
+  authorTier,
+  tierLabel,
+  type AdoptionTier,
+  type AIAdoptionScore as ScoreResult,
+  type ActionItem,
+} from "./aiAdoptionScore";
+import { ScoreGauge } from "./charts";
 
 interface AIAdoptionTabProps extends TabProps {
   AIAdoptionChart: React.ComponentType<{
@@ -22,6 +31,7 @@ interface AIAdoptionTabProps extends TabProps {
     height?: number;
     fullWidth?: boolean;
   }>;
+  copilotMetrics: CopilotDailyMetric[];
 }
 
 const reviewColors: Record<string, string> = {
@@ -44,6 +54,7 @@ export function AIAdoptionTab({
   selectedRepo,
   prToTickets,
   AIAdoptionChart,
+  copilotMetrics,
 }: AIAdoptionTabProps) {
   const [showZeroAuthors, setShowZeroAuthors] = useState(false);
   const [showAllAuthors, setShowAllAuthors] = useState(false);
@@ -188,6 +199,21 @@ export function AIAdoptionTab({
     [allMetrics, selectedRepo, prToTickets],
   );
 
+  // ─── AI Adoption Score ───
+  const adoptionScore: ScoreResult = useMemo(
+    () => computeAIAdoptionScore(metrics, copilotMetrics, authorAIRows, teamRows),
+    [metrics, copilotMetrics, authorAIRows, teamRows],
+  );
+
+  // ─── Copilot acceptance rate ───
+  const copilotAcceptanceRate = useMemo(() => {
+    if (copilotMetrics.length === 0) return null;
+    const totalSugg = copilotMetrics.reduce((s, m) => s + (m.totalSuggestions ?? 0), 0);
+    const totalAcc = copilotMetrics.reduce((s, m) => s + (m.totalAcceptances ?? 0), 0);
+    if (totalSugg === 0) return null;
+    return Math.round((totalAcc / totalSugg) * 100);
+  }, [copilotMetrics]);
+
   // ─── Sorted authors ───
   const sortedActiveAuthors = useMemo(() => {
     const source = showZeroAuthors ? authorAIRows : activeAuthorRows;
@@ -249,110 +275,143 @@ export function AIAdoptionTab({
     [displayToolEntries],
   );
 
+  // Tier badge styling
+  const tierColors: Record<AdoptionTier, { bg: string; text: string }> = {
+    "power": { bg: dk(darkMode, "rgba(34,197,94,0.15)", "rgba(34,197,94,0.12)"), text: "#22C55E" },
+    "frequent": { bg: dk(darkMode, "rgba(59,130,246,0.15)", "rgba(59,130,246,0.12)"), text: OS.blue },
+    "infrequent": { bg: dk(darkMode, "rgba(245,158,11,0.15)", "rgba(245,158,11,0.12)"), text: "#F59E0B" },
+    "non-user": { bg: dk(darkMode, "rgba(255,255,255,0.05)", "rgba(0,0,0,0.04)"), text: dk(darkMode, "rgba(255,255,255,0.3)", OS.muted) },
+  };
+  const tierLabelMap: Record<AdoptionTier, string> = {
+    "power": "Power", "frequent": "Frequent", "infrequent": "Light", "non-user": "None",
+  };
+
+  // Pillar colors for display
+  const pillarColors = {
+    utilization: "#3B82F6",
+    impact: "#22C55E",
+    quality: "#F59E0B",
+  };
+
+  // Priority colors for action items
+  const priorityStyles: Record<string, { border: string; bg: string }> = {
+    high: { border: OS.red, bg: dk(darkMode, "rgba(239,68,68,0.08)", "rgba(239,68,68,0.06)") },
+    medium: { border: "#F59E0B", bg: dk(darkMode, "rgba(245,158,11,0.08)", "rgba(245,158,11,0.06)") },
+    low: { border: OS.blue, bg: dk(darkMode, "rgba(59,130,246,0.08)", "rgba(59,130,246,0.06)") },
+  };
+
+  // Cycle time delta display
+  const cycleTimeDeltaPct = useMemo(() => {
+    if (aiCycleComparison.avgAI === null || aiCycleComparison.avgNonAI === null || aiCycleComparison.avgNonAI === 0) return null;
+    return Math.round(((aiCycleComparison.avgNonAI - aiCycleComparison.avgAI) / aiCycleComparison.avgNonAI) * 100);
+  }, [aiCycleComparison]);
+
+  const { seg } = useMemo(() => ({ seg: adoptionScore.segmentation }), [adoptionScore]);
+
   return (
     <>
-      {/* ─── Hero Scorecard ─── */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}>
-        {/* AI-Assisted % */}
-        <div
-          style={{
-            padding: "14px 16px",
-            borderRadius: 10,
-            border: cardBorder,
-            background: cardBg,
-          }}
-        >
-          <div
-            style={{
-              fontSize: 11,
-              fontWeight: 600,
-              color: dk(darkMode, "rgba(255,255,255,0.5)", OS.muted),
-              marginBottom: 4,
+      {/* ─── AI Adoption Score Hero ─── */}
+      <div
+        style={{
+          padding: "14px 16px",
+          borderRadius: 10,
+          border: cardBorder,
+          background: cardBg,
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+          <ScoreGauge
+            score={adoptionScore.overall}
+            tier={tierLabel(adoptionScore.maturityTier)}
+            pillars={{
+              utilization: adoptionScore.utilization.score,
+              impact: adoptionScore.impact.score,
+              quality: adoptionScore.quality.score,
             }}
-          >
+            dark={darkMode}
+          />
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8 }}>
+            {(["utilization", "impact", "quality"] as const).map((key) => {
+              const pillar = adoptionScore[key];
+              const color = pillarColors[key];
+              return (
+                <div key={key} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <div style={{
+                    width: 8, height: 8, borderRadius: "50%", background: color, flexShrink: 0,
+                  }} />
+                  <div style={{
+                    fontSize: 10, color: dk(darkMode, "rgba(255,255,255,0.6)", OS.secondary),
+                    flex: 1, textTransform: "capitalize",
+                  }}>
+                    {key}
+                  </div>
+                  <div style={{
+                    fontSize: 12, fontWeight: 700, fontFamily: OS.mono,
+                    color: dk(darkMode, "#fff", OS.text),
+                  }}>
+                    {Math.round(pillar.score)}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      {/* ─── KPI Grid ─── */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10 }}>
+        {/* AI-Assisted % */}
+        <div style={{ padding: "12px 14px", borderRadius: 10, border: cardBorder, background: cardBg }}>
+          <div style={{ fontSize: 10, fontWeight: 600, color: dk(darkMode, "rgba(255,255,255,0.5)", OS.muted), marginBottom: 4 }}>
             AI-Assisted PRs
           </div>
-          <div style={{ fontSize: 28, fontWeight: 700, color: dk(darkMode, "#fff", OS.text) }}>
+          <div style={{ fontSize: 24, fontWeight: 700, color: dk(darkMode, "#fff", OS.text) }}>
             {aiPct}%
           </div>
-          <div
-            style={{
-              fontSize: 10,
-              color: dk(darkMode, "rgba(255,255,255,0.35)", OS.muted),
-              marginTop: 2,
-            }}
-          >
-            {aiPRs.length} of {humanMetrics.length} PRs
-            {aiSubtitle ? ` \u00B7 ${aiSubtitle}` : ""}
+          <div style={{ fontSize: 9, color: dk(darkMode, "rgba(255,255,255,0.35)", OS.muted), marginTop: 2 }}>
+            {aiPRs.length}/{humanMetrics.length} PRs{aiSubtitle ? ` \u00B7 ${aiSubtitle}` : ""}
+          </div>
+        </div>
+
+        {/* Cycle Time Delta */}
+        <div style={{ padding: "12px 14px", borderRadius: 10, border: cardBorder, background: cardBg }}>
+          <div style={{ fontSize: 10, fontWeight: 600, color: dk(darkMode, "rgba(255,255,255,0.5)", OS.muted), marginBottom: 4 }}>
+            Cycle Time Delta
+          </div>
+          <div style={{
+            fontSize: 24, fontWeight: 700,
+            color: cycleTimeDeltaPct !== null && cycleTimeDeltaPct > 0 ? OS.green : cycleTimeDeltaPct !== null && cycleTimeDeltaPct < 0 ? OS.red : dk(darkMode, "#fff", OS.text),
+          }}>
+            {cycleTimeDeltaPct !== null ? `${cycleTimeDeltaPct > 0 ? "+" : ""}${cycleTimeDeltaPct}%` : "\u2014"}
+          </div>
+          <div style={{ fontSize: 9, color: dk(darkMode, "rgba(255,255,255,0.35)", OS.muted), marginTop: 2 }}>
+            {cycleTimeDeltaPct !== null ? (cycleTimeDeltaPct > 0 ? "AI PRs faster" : "AI PRs slower") : "No data"}
+          </div>
+        </div>
+
+        {/* Acceptance Rate */}
+        <div style={{ padding: "12px 14px", borderRadius: 10, border: cardBorder, background: cardBg }}>
+          <div style={{ fontSize: 10, fontWeight: 600, color: dk(darkMode, "rgba(255,255,255,0.5)", OS.muted), marginBottom: 4 }}>
+            Acceptance Rate
+          </div>
+          <div style={{ fontSize: 24, fontWeight: 700, color: dk(darkMode, "#fff", OS.text) }}>
+            {copilotAcceptanceRate !== null ? `${copilotAcceptanceRate}%` : "\u2014"}
+          </div>
+          <div style={{ fontSize: 9, color: dk(darkMode, "rgba(255,255,255,0.35)", OS.muted), marginTop: 2 }}>
+            {copilotAcceptanceRate !== null ? "Copilot suggestions" : "No Copilot data"}
           </div>
         </div>
 
         {/* Top Tool */}
-        <div
-          style={{
-            padding: "14px 16px",
-            borderRadius: 10,
-            border: cardBorder,
-            background: cardBg,
-          }}
-        >
-          <div
-            style={{
-              fontSize: 11,
-              fontWeight: 600,
-              color: dk(darkMode, "rgba(255,255,255,0.5)", OS.muted),
-              marginBottom: 4,
-            }}
-          >
+        <div style={{ padding: "12px 14px", borderRadius: 10, border: cardBorder, background: cardBg }}>
+          <div style={{ fontSize: 10, fontWeight: 600, color: dk(darkMode, "rgba(255,255,255,0.5)", OS.muted), marginBottom: 4 }}>
             Top Tool
           </div>
-          <div style={{ fontSize: 28, fontWeight: 700, color: dk(darkMode, "#fff", OS.text) }}>
+          <div style={{ fontSize: 24, fontWeight: 700, color: dk(darkMode, "#fff", OS.text) }}>
             {topTool ? topTool[0] : "\u2014"}
           </div>
-          <div
-            style={{
-              fontSize: 10,
-              color: dk(darkMode, "rgba(255,255,255,0.35)", OS.muted),
-              marginTop: 2,
-            }}
-          >
+          <div style={{ fontSize: 9, color: dk(darkMode, "rgba(255,255,255,0.35)", OS.muted), marginTop: 2 }}>
             {topTool ? `${topTool[1]} PRs` : "No data"}
-            {unattributedAICount > 0 ? ` \u00B7 ${unattributedAICount} unattributed` : ""}
-          </div>
-        </div>
-
-        {/* AI PRs Cycle Time */}
-        <div
-          style={{
-            padding: "14px 16px",
-            borderRadius: 10,
-            border: cardBorder,
-            background: cardBg,
-          }}
-        >
-          <div
-            style={{
-              fontSize: 11,
-              fontWeight: 600,
-              color: dk(darkMode, "rgba(255,255,255,0.5)", OS.muted),
-              marginBottom: 4,
-            }}
-          >
-            AI PRs Cycle Time
-          </div>
-          <div style={{ fontSize: 28, fontWeight: 700, color: dk(darkMode, "#fff", OS.text) }}>
-            {fmtHours(aiCycleComparison.avgAI)}
-          </div>
-          <div
-            style={{
-              fontSize: 10,
-              color: dk(darkMode, "rgba(255,255,255,0.35)", OS.muted),
-              marginTop: 2,
-            }}
-          >
-            {aiCycleComparison.avgNonAI !== null
-              ? `vs ${fmtHours(aiCycleComparison.avgNonAI)} non-AI`
-              : "No comparison data"}
           </div>
         </div>
       </div>
@@ -390,7 +449,7 @@ export function AIAdoptionTab({
         )}
       </div>
 
-      {/* ─── By Team + By Tool side-by-side grid ─── */}
+      {/* ─── By Team + Segmentation side-by-side grid ─── */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
         {/* By Team */}
         <div
@@ -464,12 +523,7 @@ export function AIAdoptionTab({
           </div>
           {teamRows.filter((r) => r.team !== "Unlinked").length > 8 && (
             <div
-              style={{
-                fontSize: 10,
-                color: OS.blue,
-                cursor: "pointer",
-                marginTop: 6,
-              }}
+              style={{ fontSize: 10, color: OS.blue, cursor: "pointer", marginTop: 6 }}
               onClick={() => setShowLowTeams(!showLowTeams)}
             >
               {showLowTeams ? "Show less" : "Show all teams"}
@@ -477,85 +531,91 @@ export function AIAdoptionTab({
           )}
         </div>
 
-        {/* By Tool */}
+        {/* Segmentation + By Tool */}
         <div
           style={{
             padding: "14px 16px",
             borderRadius: 10,
             border: cardBorder,
             background: cardBg,
+            display: "flex",
+            flexDirection: "column",
+            gap: 14,
           }}
         >
-          <div
-            style={{
-              fontSize: 12,
-              fontWeight: 600,
-              color: dk(darkMode, "rgba(255,255,255,0.6)", OS.secondary),
-              marginBottom: 10,
-            }}
-          >
-            By Tool
+          {/* Segmentation summary */}
+          <div>
+            <div
+              style={{
+                fontSize: 12,
+                fontWeight: 600,
+                color: dk(darkMode, "rgba(255,255,255,0.6)", OS.secondary),
+                marginBottom: 10,
+              }}
+            >
+              Engineer Segments
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+              {([
+                { key: "power" as const, label: "Power", count: seg.power.length },
+                { key: "frequent" as const, label: "Frequent", count: seg.frequent.length },
+                { key: "infrequent" as const, label: "Light", count: seg.infrequent.length },
+                { key: "non-user" as const, label: "Non-users", count: seg.nonUsers.length },
+              ]).map((s) => (
+                <div
+                  key={s.key}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    padding: "5px 8px",
+                    borderRadius: 6,
+                    background: tierColors[s.key].bg,
+                  }}
+                >
+                  <div style={{ fontSize: 16, fontWeight: 700, fontFamily: OS.mono, color: tierColors[s.key].text }}>
+                    {s.count}
+                  </div>
+                  <div style={{ fontSize: 9, color: dk(darkMode, "rgba(255,255,255,0.5)", OS.secondary) }}>
+                    {s.label}
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            {displayToolEntries.map(([tool, count]) => (
-              <div key={tool} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <div
-                  style={{
-                    width: 64,
-                    fontSize: 10,
-                    color: dk(darkMode, "rgba(255,255,255,0.6)", OS.secondary),
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                    flexShrink: 0,
-                  }}
-                >
-                  {tool}
+
+          {/* By Tool (compact) */}
+          <div>
+            <div
+              style={{
+                fontSize: 12,
+                fontWeight: 600,
+                color: dk(darkMode, "rgba(255,255,255,0.6)", OS.secondary),
+                marginBottom: 8,
+              }}
+            >
+              By Tool
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+              {displayToolEntries.map(([tool, count]) => (
+                <div key={tool} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <div style={{ width: 54, fontSize: 10, color: dk(darkMode, "rgba(255,255,255,0.6)", OS.secondary), flexShrink: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {tool}
+                  </div>
+                  <div style={{ flex: 1, height: 12, background: dk(darkMode, "rgba(255,255,255,0.05)", "#f0f0f3"), borderRadius: 3, overflow: "hidden" }}>
+                    <div style={{ width: `${(count / maxToolCount) * 100}%`, height: "100%", background: toolColors[tool] ?? OS.blue, borderRadius: 3, minWidth: 2 }} />
+                  </div>
+                  <div style={{ width: 26, fontSize: 10, fontWeight: 600, color: dk(darkMode, "rgba(255,255,255,0.7)", OS.text), textAlign: "right", flexShrink: 0 }}>
+                    {count}
+                  </div>
                 </div>
-                <div
-                  style={{
-                    flex: 1,
-                    height: 14,
-                    background: dk(darkMode, "rgba(255,255,255,0.05)", "#f0f0f3"),
-                    borderRadius: 3,
-                    overflow: "hidden",
-                  }}
-                >
-                  <div
-                    style={{
-                      width: `${(count / maxToolCount) * 100}%`,
-                      height: "100%",
-                      background: toolColors[tool] ?? OS.blue,
-                      borderRadius: 3,
-                      minWidth: 2,
-                    }}
-                  />
+              ))}
+              {unattributedAICount > 0 && (
+                <div style={{ fontSize: 9, color: dk(darkMode, "rgba(255,255,255,0.35)", OS.muted), marginTop: 1 }}>
+                  + {unattributedAICount} unattributed
                 </div>
-                <div
-                  style={{
-                    width: 30,
-                    fontSize: 10,
-                    fontWeight: 600,
-                    color: dk(darkMode, "rgba(255,255,255,0.7)", OS.text),
-                    textAlign: "right",
-                    flexShrink: 0,
-                  }}
-                >
-                  {count}
-                </div>
-              </div>
-            ))}
-            {unattributedAICount > 0 && (
-              <div
-                style={{
-                  fontSize: 10,
-                  color: dk(darkMode, "rgba(255,255,255,0.35)", OS.muted),
-                  marginTop: 2,
-                }}
-              >
-                + {unattributedAICount} unattributed AI PRs
-              </div>
-            )}
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -633,6 +693,19 @@ export function AIAdoptionTab({
                 }}
               >
                 Author
+              </th>
+              <th
+                style={{
+                  textAlign: "center",
+                  padding: "4px 4px",
+                  fontSize: 10,
+                  fontWeight: 600,
+                  color: dk(darkMode, "rgba(255,255,255,0.4)", OS.muted),
+                  borderBottom: `1px solid ${dk(darkMode, "rgba(255,255,255,0.06)", OS.border)}`,
+                  width: 52,
+                }}
+              >
+                Tier
               </th>
               <th
                 style={{
@@ -744,6 +817,30 @@ export function AIAdoptionTab({
                     </td>
                     <td
                       style={{
+                        padding: "5px 4px",
+                        textAlign: "center",
+                        borderBottom: isExpanded ? "none" : rowBorder,
+                      }}
+                    >
+                      {(() => {
+                        const t = authorTier(row.pct);
+                        const tc = tierColors[t];
+                        return (
+                          <span style={{
+                            fontSize: 8,
+                            fontWeight: 600,
+                            padding: "2px 5px",
+                            borderRadius: 4,
+                            background: tc.bg,
+                            color: tc.text,
+                          }}>
+                            {tierLabelMap[t]}
+                          </span>
+                        );
+                      })()}
+                    </td>
+                    <td
+                      style={{
                         padding: "5px 6px",
                         textAlign: "right",
                         fontWeight: 600,
@@ -830,7 +927,7 @@ export function AIAdoptionTab({
                   </tr>
                   {isExpanded && (
                     <tr>
-                      <td colSpan={6} style={{
+                      <td colSpan={7} style={{
                         padding: "6px 12px 10px",
                         background: dk(darkMode, "rgba(255,255,255,0.015)", "rgba(0,0,0,0.01)"),
                         borderBottom: rowBorder,
@@ -883,6 +980,55 @@ export function AIAdoptionTab({
           </div>
         )}
       </div>
+
+      {/* ─── Action Items ─── */}
+      {adoptionScore.actionItems.length > 0 && (
+        <div
+          style={{
+            padding: "14px 16px",
+            borderRadius: 10,
+            border: cardBorder,
+            background: cardBg,
+          }}
+        >
+          <div
+            style={{
+              fontSize: 12,
+              fontWeight: 600,
+              color: dk(darkMode, "rgba(255,255,255,0.6)", OS.secondary),
+              marginBottom: 10,
+            }}
+          >
+            Insights
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {adoptionScore.actionItems.map((item, idx) => {
+              const ps = priorityStyles[item.priority] ?? priorityStyles.low;
+              return (
+                <div
+                  key={idx}
+                  style={{
+                    display: "flex",
+                    alignItems: "flex-start",
+                    gap: 8,
+                    padding: "8px 10px",
+                    borderRadius: 6,
+                    background: ps.bg,
+                    borderLeft: `3px solid ${ps.border}`,
+                  }}
+                >
+                  <div style={{ flex: 1, fontSize: 10, lineHeight: 1.4, color: dk(darkMode, "rgba(255,255,255,0.75)", OS.text) }}>
+                    {item.message}
+                  </div>
+                  <div style={{ fontSize: 8, fontWeight: 600, color: dk(darkMode, "rgba(255,255,255,0.3)", OS.muted), flexShrink: 0, textTransform: "uppercase" }}>
+                    {item.metric}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* ─── AI Reviews Section ─── */}
       {aiReviewStats.entries.length > 0 && (

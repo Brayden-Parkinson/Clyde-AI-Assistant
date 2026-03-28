@@ -679,6 +679,10 @@ export interface PRMetric {
   aiTools: string[];
   /** e.g. ["coderabbit", "copilot"] — AI tools that reviewed the PR */
   aiReviewers: string[];
+  /** true if this PR reverts a previous PR (detected from title pattern) */
+  isRevert: boolean;
+  /** PR number that was reverted, extracted from body (e.g. "Reverts org/repo#123") */
+  revertedPrNumber: number | null;
   syncedAt: string;
 }
 
@@ -745,6 +749,16 @@ export interface CopilotDailyMetric {
   totalActiveUsers: number;
   totalEngagedUsers: number;
   totalChats: number;
+  /** Aggregated code suggestions shown across all editors/models */
+  totalSuggestions: number;
+  /** Aggregated code suggestions accepted across all editors/models */
+  totalAcceptances: number;
+  /** Aggregated lines of code suggested */
+  totalLinesSuggested: number;
+  /** Aggregated lines of code accepted */
+  totalLinesAccepted: number;
+  /** Total licensed Copilot seats (from billing API, null if unavailable) */
+  totalSeats: number | null;
   syncedAt: string;
 }
 

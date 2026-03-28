@@ -907,7 +907,7 @@ export function EngStatsView({ darkMode = false }: EngStatsViewProps) {
           )}
 
           {activeTab === "AI Adoption" && !noData && (
-            <AIAdoptionTab {...tabProps} AIAdoptionChart={AIAdoptionChart} />
+            <AIAdoptionTab {...tabProps} AIAdoptionChart={AIAdoptionChart} copilotMetrics={copilotMetrics} />
           )}
 
           {activeTab === "AI Reviews" && (
@@ -923,8 +923,8 @@ export function EngStatsView({ darkMode = false }: EngStatsViewProps) {
             <TeamsTab {...tabProps} config={config} />
           )}
 
-          {/* ─── Copilot Section (only if org configured) ─── */}
-          {githubOrg && latestCopilot && (
+          {/* ─── Copilot Section (only if org configured, hidden on AI Adoption tab) ─── */}
+          {githubOrg && latestCopilot && activeTab !== "AI Adoption" && (
             <div
               style={{
                 padding: "14px 16px",
