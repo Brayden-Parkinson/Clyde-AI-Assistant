@@ -50,6 +50,8 @@ export function AIAdoptionTab({
   const [showLowTeams, setShowLowTeams] = useState(false);
   const [authorSortKey, setAuthorSortKey] = useState<"pct" | "ai" | "total" | "cycle">("pct");
   const [authorSortAsc, setAuthorSortAsc] = useState(false);
+  const [hoveredAuthor, setHoveredAuthor] = useState<string | null>(null);
+  const [expandedAuthor, setExpandedAuthor] = useState<string | null>(null);
 
   const cardBg = dk(darkMode, "#1c1c22", OS.white);
   const cardBorder = `1px solid ${dk(darkMode, "rgba(255,255,255,0.08)", OS.border)}`;
@@ -656,9 +658,23 @@ export function AIAdoptionTab({
                   borderBottom: `1px solid ${dk(darkMode, "rgba(255,255,255,0.06)", OS.border)}`,
                   cursor: "pointer",
                 }}
+                onClick={() => handleSort("ai")}
+              >
+                AI PRs{sortArrow("ai")}
+              </th>
+              <th
+                style={{
+                  textAlign: "right",
+                  padding: "4px 6px",
+                  fontSize: 10,
+                  fontWeight: 600,
+                  color: dk(darkMode, "rgba(255,255,255,0.4)", OS.muted),
+                  borderBottom: `1px solid ${dk(darkMode, "rgba(255,255,255,0.06)", OS.border)}`,
+                  cursor: "pointer",
+                }}
                 onClick={() => handleSort("total")}
               >
-                PRs{sortArrow("total")}
+                Total{sortArrow("total")}
               </th>
               <th
                 style={{
@@ -689,86 +705,164 @@ export function AIAdoptionTab({
             </tr>
           </thead>
           <tbody>
-            {sortedActiveAuthors.map((row) => (
-              <tr key={row.author}>
-                <td
-                  style={{
-                    padding: "5px 6px",
-                    color: dk(darkMode, "rgba(255,255,255,0.8)", OS.text),
-                    fontFamily: OS.mono,
-                    fontSize: 10,
-                    borderBottom: `1px solid ${dk(darkMode, "rgba(255,255,255,0.04)", "#f5f5f7")}`,
-                    maxWidth: 120,
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}
-                  title={row.author}
-                >
-                  {row.author}
-                </td>
-                <td
-                  style={{
-                    padding: "5px 6px",
-                    textAlign: "right",
-                    fontWeight: 600,
-                    color:
-                      row.pct === 0
-                        ? dk(darkMode, "rgba(255,255,255,0.2)", OS.faint)
-                        : dk(darkMode, "#fff", OS.text),
-                    borderBottom: `1px solid ${dk(darkMode, "rgba(255,255,255,0.04)", "#f5f5f7")}`,
-                  }}
-                >
-                  {row.pct}%
-                </td>
-                <td
-                  style={{
-                    padding: "5px 6px",
-                    textAlign: "right",
-                    color: dk(darkMode, "rgba(255,255,255,0.5)", OS.secondary),
-                    borderBottom: `1px solid ${dk(darkMode, "rgba(255,255,255,0.04)", "#f5f5f7")}`,
-                  }}
-                >
-                  {row.ai}/{row.total}
-                </td>
-                <td
-                  style={{
-                    padding: "5px 6px",
-                    textAlign: "right",
-                    color: dk(darkMode, "rgba(255,255,255,0.5)", OS.secondary),
-                    fontFamily: OS.mono,
-                    fontSize: 10,
-                    borderBottom: `1px solid ${dk(darkMode, "rgba(255,255,255,0.04)", "#f5f5f7")}`,
-                  }}
-                >
-                  {fmtHours(row.avgCycleHours)}
-                </td>
-                <td
-                  style={{
-                    padding: "5px 6px",
-                    borderBottom: `1px solid ${dk(darkMode, "rgba(255,255,255,0.04)", "#f5f5f7")}`,
-                  }}
-                >
-                  <div style={{ display: "flex", gap: 3, flexWrap: "wrap" }}>
-                    {row.tools.map((t) => (
-                      <span
-                        key={t}
-                        style={{
-                          fontSize: 9,
-                          padding: "1px 5px",
-                          borderRadius: 4,
-                          background: dk(darkMode, "rgba(255,255,255,0.06)", "#f0f0f3"),
-                          color: toolColors[t] ?? dk(darkMode, "rgba(255,255,255,0.5)", OS.secondary),
-                          fontWeight: 500,
-                        }}
-                      >
-                        {t}
-                      </span>
-                    ))}
-                  </div>
-                </td>
-              </tr>
-            ))}
+            {sortedActiveAuthors.map((row) => {
+              const rowBorder = `1px solid ${dk(darkMode, "rgba(255,255,255,0.04)", "#f5f5f7")}`;
+              const isExpanded = expandedAuthor === row.author;
+              const isHovered = hoveredAuthor === row.author;
+              const hoverBg = isHovered ? dk(darkMode, "rgba(255,255,255,0.02)", "rgba(0,0,0,0.015)") : "transparent";
+              const cycleColor = row.avgCycleHours == null
+                ? dk(darkMode, "rgba(255,255,255,0.2)", OS.faint)
+                : row.avgCycleHours > 168
+                  ? OS.red
+                  : row.avgCycleHours > 48
+                    ? OS.warning
+                    : OS.green;
+              const barColor = row.pct >= 50 ? OS.green : row.pct >= 20 ? OS.blue : row.pct > 0 ? OS.warning : "transparent";
+              return (
+                <React.Fragment key={row.author}>
+                  <tr
+                    style={{ cursor: "pointer", background: hoverBg }}
+                    onMouseEnter={() => setHoveredAuthor(row.author)}
+                    onMouseLeave={() => setHoveredAuthor(null)}
+                    onClick={() => setExpandedAuthor(isExpanded ? null : row.author)}
+                  >
+                    <td
+                      style={{
+                        padding: "5px 6px",
+                        color: dk(darkMode, "rgba(255,255,255,0.8)", OS.text),
+                        fontFamily: OS.mono,
+                        fontSize: 10,
+                        borderBottom: isExpanded ? "none" : rowBorder,
+                        maxWidth: 110,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                      title={row.author}
+                    >
+                      {row.author}
+                    </td>
+                    <td
+                      style={{
+                        padding: "5px 6px",
+                        textAlign: "right",
+                        fontWeight: 600,
+                        color: row.pct === 0
+                          ? dk(darkMode, "rgba(255,255,255,0.2)", OS.faint)
+                          : dk(darkMode, "#fff", OS.text),
+                        borderBottom: isExpanded ? "none" : rowBorder,
+                      }}
+                    >
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 4 }}>
+                        <div style={{
+                          width: 36,
+                          height: 4,
+                          borderRadius: 2,
+                          background: dk(darkMode, "rgba(255,255,255,0.08)", "#eee"),
+                          overflow: "hidden",
+                        }}>
+                          <div style={{
+                            width: `${row.pct}%`,
+                            height: "100%",
+                            borderRadius: 2,
+                            background: barColor,
+                          }} />
+                        </div>
+                        <span>{row.pct}%</span>
+                      </div>
+                    </td>
+                    <td
+                      style={{
+                        padding: "5px 6px",
+                        textAlign: "right",
+                        color: dk(darkMode, "rgba(255,255,255,0.5)", OS.secondary),
+                        borderBottom: isExpanded ? "none" : rowBorder,
+                      }}
+                    >
+                      {row.ai}
+                    </td>
+                    <td
+                      style={{
+                        padding: "5px 6px",
+                        textAlign: "right",
+                        color: dk(darkMode, "rgba(255,255,255,0.5)", OS.secondary),
+                        borderBottom: isExpanded ? "none" : rowBorder,
+                      }}
+                    >
+                      {row.total}
+                    </td>
+                    <td
+                      style={{
+                        padding: "5px 6px",
+                        textAlign: "right",
+                        color: cycleColor,
+                        fontFamily: OS.mono,
+                        fontSize: 10,
+                        borderBottom: isExpanded ? "none" : rowBorder,
+                      }}
+                    >
+                      {fmtHours(row.avgCycleHours)}
+                    </td>
+                    <td
+                      style={{
+                        padding: "5px 6px",
+                        borderBottom: isExpanded ? "none" : rowBorder,
+                      }}
+                    >
+                      <div style={{ display: "flex", gap: 3, flexWrap: "wrap" }}>
+                        {row.tools.map((t) => (
+                          <span
+                            key={t}
+                            style={{
+                              fontSize: 9,
+                              padding: "1px 5px",
+                              borderRadius: 4,
+                              background: dk(darkMode, "rgba(255,255,255,0.06)", "#f0f0f3"),
+                              color: toolColors[t] ?? dk(darkMode, "rgba(255,255,255,0.5)", OS.secondary),
+                              fontWeight: 500,
+                            }}
+                          >
+                            {t}
+                          </span>
+                        ))}
+                      </div>
+                    </td>
+                  </tr>
+                  {isExpanded && (
+                    <tr>
+                      <td colSpan={6} style={{
+                        padding: "6px 12px 10px",
+                        background: dk(darkMode, "rgba(255,255,255,0.015)", "rgba(0,0,0,0.01)"),
+                        borderBottom: rowBorder,
+                        fontSize: 10,
+                      }}>
+                        <div style={{ display: "flex", gap: 16, alignItems: "baseline" }}>
+                          <div>
+                            <span style={{ color: dk(darkMode, "rgba(255,255,255,0.35)", OS.muted) }}>Avg size </span>
+                            <span style={{ fontFamily: OS.mono, color: dk(darkMode, "rgba(255,255,255,0.6)", OS.secondary) }}>
+                              {row.avgSize > 0 ? `\u00B1${row.avgSize} lines` : "\u2014"}
+                            </span>
+                          </div>
+                          <div style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "baseline" }}>
+                            <span style={{ color: dk(darkMode, "rgba(255,255,255,0.35)", OS.muted) }}>Tools </span>
+                            {row.toolCounts.length === 0
+                              ? <span style={{ color: dk(darkMode, "rgba(255,255,255,0.2)", OS.faint) }}>{"\u2014"}</span>
+                              : row.toolCounts.map(([tool, count]) => (
+                                <span key={tool} style={{
+                                  fontFamily: OS.mono,
+                                  color: toolColors[tool] ?? dk(darkMode, "rgba(255,255,255,0.5)", OS.secondary),
+                                }}>
+                                  {tool}\u00A0({count})
+                                </span>
+                              ))}
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
+              );
+            })}
           </tbody>
         </table>
 
