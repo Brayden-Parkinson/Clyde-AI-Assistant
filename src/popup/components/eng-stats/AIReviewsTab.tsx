@@ -26,7 +26,7 @@ const reviewColors: Record<string, string> = {
 // Fixed category column order — matches categoryColors key order
 const CATEGORY_ORDER = ["bug", "security", "type-safety", "perf", "logic", "style", "other"] as const;
 
-type AuthorSortKey = "total" | typeof CATEGORY_ORDER[number];
+type AuthorSortKey = "total" | "perPR" | typeof CATEGORY_ORDER[number];
 
 export function AIReviewsTab({
   darkMode,
@@ -113,10 +113,18 @@ export function AIReviewsTab({
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([label, count]) => ({ label, count }));
 
+    // Count PRs per author from the metrics prop
+    const prCountByAuthor: Record<string, number> = {};
+    for (const m of metrics) {
+      if (m.author) prCountByAuthor[m.author] = (prCountByAuthor[m.author] ?? 0) + 1;
+    }
+
     const authorRows = Object.entries(byAuthor)
       .map(([author, data]) => {
         const topCat = Object.entries(data.byCategory).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "\u2014";
-        return { author, ...data, topCategory: topCat };
+        const prCount = prCountByAuthor[author] ?? 0;
+        const perPR = prCount > 0 ? data.total / prCount : 0;
+        return { author, ...data, topCategory: topCat, prCount, perPR };
       })
       .sort((a, b) => b.total - a.total);
 
@@ -314,8 +322,8 @@ export function AIReviewsTab({
             const sortArrow = (key: AuthorSortKey) =>
               authorSortKey === key ? (authorSortAsc ? " \u25B2" : " \u25BC") : "";
             const sorted = [...reviewTabStats.authorRows].sort((a, b) => {
-              const av = authorSortKey === "total" ? a.total : (a.byCategory[authorSortKey] ?? 0);
-              const bv = authorSortKey === "total" ? b.total : (b.byCategory[authorSortKey] ?? 0);
+              const av = authorSortKey === "total" ? a.total : authorSortKey === "perPR" ? a.perPR : (a.byCategory[authorSortKey] ?? 0);
+              const bv = authorSortKey === "total" ? b.total : authorSortKey === "perPR" ? b.perPR : (b.byCategory[authorSortKey] ?? 0);
               return authorSortAsc ? av - bv : bv - av;
             });
             const visible = showAllAuthors ? sorted : sorted.slice(0, 10);
@@ -335,11 +343,21 @@ export function AIReviewsTab({
                         <th style={{ textAlign: "left", padding: "4px 6px", fontSize: 10, fontWeight: 600, color: headerColor, borderBottom: headerBorder, whiteSpace: "nowrap" }}>
                           Author
                         </th>
+                        <th style={{ textAlign: "left", padding: "4px 4px", fontSize: 10, fontWeight: 600, color: headerColor, borderBottom: headerBorder, whiteSpace: "nowrap", width: 90 }}>
+                          Distribution
+                        </th>
                         <th
                           style={{ textAlign: "right", padding: "4px 6px", fontSize: 10, fontWeight: 600, color: authorSortKey === "total" ? dk(darkMode, "#fff", OS.text) : headerColor, borderBottom: headerBorder, cursor: "pointer", whiteSpace: "nowrap" }}
                           onClick={() => handleAuthorSort("total")}
                         >
-                          Total{sortArrow("total")}
+                          Issues{sortArrow("total")}
+                        </th>
+                        <th
+                          style={{ textAlign: "right", padding: "4px 6px", fontSize: 10, fontWeight: 600, color: authorSortKey === "perPR" ? dk(darkMode, "#fff", OS.text) : headerColor, borderBottom: headerBorder, cursor: "pointer", whiteSpace: "nowrap" }}
+                          onClick={() => handleAuthorSort("perPR")}
+                          title="Issues per PR"
+                        >
+                          /PR{sortArrow("perPR")}
                         </th>
                         {CATEGORY_ORDER.map((cat) => (
                           <th
@@ -365,15 +383,41 @@ export function AIReviewsTab({
                             <td style={{
                               padding: "5px 6px", color: dk(darkMode, "rgba(255,255,255,0.8)", OS.text),
                               fontFamily: OS.mono, fontSize: 10, borderBottom: rowBorder,
-                              maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                              maxWidth: 110, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
                             }} title={row.author}>
                               {row.author}
+                            </td>
+                            {/* Stacked category bar */}
+                            <td style={{ padding: "5px 4px", borderBottom: rowBorder }}>
+                              <div
+                                style={{ display: "flex", height: 10, borderRadius: 3, overflow: "hidden", background: dk(darkMode, "rgba(255,255,255,0.04)", OS.border) }}
+                                title={CATEGORY_ORDER.map((c) => `${c}: ${row.byCategory[c] ?? 0}`).join(", ")}
+                              >
+                                {CATEGORY_ORDER.map((cat) => {
+                                  const count = row.byCategory[cat] ?? 0;
+                                  if (count === 0) return null;
+                                  return (
+                                    <div key={cat} style={{
+                                      flex: count,
+                                      height: "100%",
+                                      background: categoryColors[cat] ?? dk(darkMode, "rgba(255,255,255,0.15)", OS.faint),
+                                    }} />
+                                  );
+                                })}
+                              </div>
                             </td>
                             <td style={{
                               padding: "5px 6px", textAlign: "right", fontWeight: 600, fontFamily: OS.mono,
                               color: dk(darkMode, "rgba(255,255,255,0.85)", OS.text), borderBottom: rowBorder,
                             }}>
                               {row.total}
+                            </td>
+                            <td style={{
+                              padding: "5px 6px", textAlign: "right", fontFamily: OS.mono, fontSize: 10,
+                              color: row.perPR >= 2 ? OS.red : row.perPR >= 1 ? OS.warning : dk(darkMode, "rgba(255,255,255,0.5)", OS.secondary),
+                              borderBottom: rowBorder,
+                            }} title={`${row.total} issues across ${row.prCount} PRs`}>
+                              {row.perPR > 0 ? row.perPR.toFixed(1) : "\u2014"}
                             </td>
                             {CATEGORY_ORDER.map((cat) => {
                               const count = row.byCategory[cat] ?? 0;
