@@ -45,7 +45,7 @@ export function CycleTimeTab({
   // Person rows are computed here and shared between PersonInsights and ProductivityMatrix
   const personRows = useMemo(() => {
     const base = computePersonRows(metrics, prToTickets, timeRange);
-    return applyProductivityScores(base, metrics, timeRange);
+    return applyProductivityScores(base, metrics, prToTickets, timeRange);
   }, [metrics, prToTickets, timeRange]);
 
   return (

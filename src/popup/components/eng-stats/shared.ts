@@ -222,7 +222,14 @@ export interface PersonRow {
   avgReviewDays: number;
   weeklyTrend: number[];
   primaryTeam: string | null;
-  productivityScore: number | null;
+  scores: ProductivityScores | null;
+}
+
+export interface ProductivityScores {
+  velocity: number;
+  quality: number;
+  impact: number;
+  overall: number;
 }
 
 export interface CycleTimeAIComparison {
@@ -400,7 +407,7 @@ export function computePersonRows(
       avgReviewDays: avgReviewDays(prs),
       weeklyTrend: weeklyTrendForPRs(prs),
       primaryTeam,
-      productivityScore: null, // filled by productivityScore.ts
+      scores: null, // filled by productivityScore.ts
     });
   }
 
