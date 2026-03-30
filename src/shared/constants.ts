@@ -37,6 +37,7 @@ export const ALARMS = {
   GITHUB_SYNC: "github-sync",
   JIRA_SYNC: "jira-sync",
   REVIEW_BACKFILL: "review-backfill",
+  NEWS_REFRESH: "news-refresh",
   PEOPLE_CONTEXT: "people-context",
   AUTHOR_BACKFILL: "author-backfill",
 } as const;
@@ -119,11 +120,72 @@ export const SYNC_OUTBOX_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 /** How long to keep news posts (30 days in ms) */
 export const NEWS_POST_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
-/** Max time to wait for X page scrape (30 seconds) */
-export const NEWS_SCRAPE_TIMEOUT_MS = 30_000;
+/** News fetch timeout per source (10 seconds) */
+export const NEWS_FETCH_TIMEOUT_MS = 10_000;
 
-/** Default X accounts to scrape for AI news */
-export const NEWS_DEFAULT_ACCOUNTS = ["bcherny"];
+/** Max items to fetch per source per refresh */
+export const NEWS_MAX_ITEMS_PER_SOURCE = 10;
+
+/** News source configurations — no API keys required */
+export const NEWS_SOURCES = {
+  "anthropic-blog": {
+    name: "Anthropic Blog",
+    shortName: "Anthropic",
+    url: "https://www.anthropic.com/rss.xml",
+    type: "rss" as const,
+    enabled: true,
+  },
+  "hacker-news": {
+    name: "Hacker News",
+    shortName: "HN",
+    url: "https://hacker-news.firebaseio.com/v0",
+    type: "json" as const,
+    enabled: true,
+  },
+  "arxiv": {
+    name: "arXiv AI",
+    shortName: "arXiv",
+    url: "https://export.arxiv.org/rss/cs.AI",
+    type: "rss" as const,
+    enabled: true,
+  },
+  "openai-blog": {
+    name: "OpenAI Blog",
+    shortName: "OpenAI",
+    url: "https://openai.com/blog/rss.xml",
+    type: "rss" as const,
+    enabled: true,
+  },
+  "huggingface-blog": {
+    name: "Hugging Face Blog",
+    shortName: "HF",
+    url: "https://huggingface.co/blog/feed.xml",
+    type: "rss" as const,
+    enabled: true,
+  },
+  "verge-ai": {
+    name: "The Verge AI",
+    shortName: "Verge",
+    url: "https://www.theverge.com/rss/ai-artificial-intelligence/index.xml",
+    type: "rss" as const,
+    enabled: true,
+  },
+  "techcrunch-ai": {
+    name: "TechCrunch AI",
+    shortName: "TC",
+    url: "https://techcrunch.com/category/artificial-intelligence/feed/",
+    type: "rss" as const,
+    enabled: true,
+  },
+} as const;
+
+/** Keywords for filtering Hacker News top stories */
+export const NEWS_HN_KEYWORDS = [
+  "ai", "llm", "gpt", "claude", "anthropic", "openai", "gemini",
+  "machine learning", "deep learning", "transformer", "diffusion",
+  "agentic", "agent", "copilot", "neural", "model", "inference",
+  "reasoning", "rag", "fine-tun", "token", "context window",
+];
 
 // ─── Eng Stats: Bot detection ───
 

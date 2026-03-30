@@ -14,8 +14,11 @@ import {
   fetchPRReviewComments,
   fetchReleases,
   fetchCopilotMetrics,
+  fetchCopilotBilling,
+  aggregateCopilotCompletions,
   detectAITools,
   detectAIReviewers,
+  detectRevert,
   getAIReviewTool,
   classifyReviewComment,
   isBot,
@@ -142,6 +145,7 @@ export async function syncGitHubData(): Promise<{
           const commitMessages = commits.map((c) => c.commit.message);
           const aiTools = detectAITools(pull.body, commitMessages, pull.head?.ref, pull.user?.login);
           const aiReviewers = detectAIReviewers(reviews);
+          const { isRevert, revertedPrNumber } = detectRevert(pull.title, pull.body);
 
           const metric: PRMetric = {
             repo,
@@ -160,6 +164,8 @@ export async function syncGitHubData(): Promise<{
             aiAssisted: aiTools.length > 0,
             aiTools,
             aiReviewers,
+            isRevert,
+            revertedPrNumber,
             syncedAt,
           };
 
@@ -214,6 +220,15 @@ export async function syncGitHubData(): Promise<{
 
   // Sync Copilot metrics if org is configured
   if (org) {
+    // Fetch seat count (best-effort — may 403 without billing access)
+    let totalSeats: number | null = null;
+    try {
+      const billing = await fetchCopilotBilling(token, org);
+      totalSeats = billing.seat_breakdown.total;
+    } catch {
+      // Non-fatal — billing API requires manage_billing:copilot scope
+    }
+
     try {
       const metrics = await fetchCopilotMetrics(token, org);
       for (const m of metrics) {
@@ -223,11 +238,17 @@ export async function syncGitHubData(): Promise<{
           .first()
           .catch(() => undefined);
 
+        const completions = aggregateCopilotCompletions(m);
         const record: CopilotDailyMetric = {
           date: m.date,
           totalActiveUsers: m.total_active_users,
           totalEngagedUsers: m.total_engaged_users,
           totalChats: m.copilot_ide_chat?.total_chats ?? 0,
+          totalSuggestions: completions.totalSuggestions,
+          totalAcceptances: completions.totalAcceptances,
+          totalLinesSuggested: completions.totalLinesSuggested,
+          totalLinesAccepted: completions.totalLinesAccepted,
+          totalSeats,
           syncedAt,
         };
 

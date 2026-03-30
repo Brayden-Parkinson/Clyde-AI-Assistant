@@ -1,6 +1,68 @@
-import React, { useState } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { OS } from "@shared/tokens";
-import { dk, predictPoints, linearRegression, type WeekBucket } from "./shared";
+import { dk, predictPoints, linearRegression, fmtHours, type WeekBucket, type MatrixPoint } from "./shared";
+
+// ─── InfoTip ───
+
+export function InfoTip({ text, dark }: { text: string; dark: boolean }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  return (
+    <div ref={ref} style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
+      <div
+        onClick={() => setOpen(!open)}
+        style={{
+          width: 16,
+          height: 16,
+          borderRadius: "50%",
+          border: `1.5px solid ${dk(dark, "rgba(255,255,255,0.35)", "rgba(0,0,0,0.3)")}`,
+          background: dk(dark, "rgba(255,255,255,0.06)", "rgba(0,0,0,0.04)"),
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          cursor: "pointer",
+          flexShrink: 0,
+        }}
+      >
+        <span style={{ fontSize: 10, fontWeight: 700, fontFamily: OS.mono, color: dk(dark, "rgba(255,255,255,0.6)", OS.muted), lineHeight: 1 }}>i</span>
+      </div>
+      {open && (
+        <div
+          style={{
+            position: "absolute",
+            top: "calc(100% + 6px)",
+            left: "50%",
+            transform: "translateX(-50%)",
+            width: 240,
+            padding: "10px 12px",
+            borderRadius: 8,
+            background: dk(dark, "rgba(30,30,38,0.97)", "rgba(255,255,255,0.98)"),
+            border: `1px solid ${dk(dark, "rgba(255,255,255,0.12)", OS.border)}`,
+            boxShadow: dk(dark, "0 4px 16px rgba(0,0,0,0.5)", "0 4px 16px rgba(0,0,0,0.12)"),
+            zIndex: 100,
+            fontSize: 11,
+            lineHeight: 1.5,
+            color: dk(dark, "rgba(255,255,255,0.7)", OS.secondary),
+            fontFamily: OS.font,
+            fontWeight: 400,
+          }}
+        >
+          {text}
+        </div>
+      )}
+    </div>
+  );
+}
 
 // ─── Sub-components ───
 
@@ -981,6 +1043,339 @@ export function WeeklyTrendChart({
           </text>
         );
       })}
+    </svg>
+  );
+}
+
+// ─── Score Gauge ───
+
+const GAUGE_COLORS = {
+  utilization: "#3B82F6", // blue
+  impact: "#22C55E",      // green
+  quality: "#F59E0B",     // amber
+};
+
+export function ScoreGauge({
+  score,
+  tier,
+  pillars,
+  dark,
+}: {
+  score: number;
+  tier: string;
+  pillars: { utilization: number; impact: number; quality: number };
+  dark: boolean;
+}) {
+  const size = 120;
+  const cx = size / 2;
+  const cy = size / 2;
+  const r = 46;
+  const strokeW = 10;
+
+  // 270-degree arc: starts at 135deg (bottom-left), sweeps 270deg clockwise
+  const startAngle = 135;
+  const totalArc = 270;
+  const scoreArc = (score / 100) * totalArc;
+
+  // Pillar arcs proportional to their contribution
+  const pillarTotal = pillars.utilization + pillars.impact + pillars.quality;
+  const uArc = pillarTotal > 0 ? (pillars.utilization / pillarTotal) * scoreArc : 0;
+  const iArc = pillarTotal > 0 ? (pillars.impact / pillarTotal) * scoreArc : 0;
+  const qArc = pillarTotal > 0 ? (pillars.quality / pillarTotal) * scoreArc : 0;
+
+  function arcPath(startDeg: number, sweepDeg: number): string {
+    if (sweepDeg <= 0) return "";
+    const s = (startDeg * Math.PI) / 180;
+    const e = ((startDeg + sweepDeg) * Math.PI) / 180;
+    const x1 = cx + r * Math.cos(s);
+    const y1 = cy + r * Math.sin(s);
+    const x2 = cx + r * Math.cos(e);
+    const y2 = cy + r * Math.sin(e);
+    const large = sweepDeg > 180 ? 1 : 0;
+    return `M ${x1} ${y1} A ${r} ${r} 0 ${large} 1 ${x2} ${y2}`;
+  }
+
+  const trackColor = dk(dark, "rgba(255,255,255,0.08)", "rgba(0,0,0,0.06)");
+  const textColor = dk(dark, "#fff", OS.text);
+  const subColor = dk(dark, "rgba(255,255,255,0.5)", OS.muted);
+
+  let cursor = startAngle;
+  const segments = [
+    { arc: uArc, color: GAUGE_COLORS.utilization },
+    { arc: iArc, color: GAUGE_COLORS.impact },
+    { arc: qArc, color: GAUGE_COLORS.quality },
+  ];
+
+  return (
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{ display: "block" }}>
+      {/* Track */}
+      <path d={arcPath(startAngle, totalArc)} fill="none" stroke={trackColor} strokeWidth={strokeW} strokeLinecap="round" />
+
+      {/* Pillar segments */}
+      {segments.map((seg, idx) => {
+        if (seg.arc <= 0) return null;
+        const path = arcPath(cursor, seg.arc);
+        const el = (
+          <path key={idx} d={path} fill="none" stroke={seg.color} strokeWidth={strokeW}
+            strokeLinecap={idx === 0 && score > 0 ? "round" : "butt"} />
+        );
+        cursor += seg.arc;
+        return el;
+      })}
+      {/* Round cap on last segment */}
+      {scoreArc > 0 && (
+        <path d={arcPath(startAngle + scoreArc - 0.5, 0.5)} fill="none" stroke={segments.filter(s => s.arc > 0).pop()?.color ?? GAUGE_COLORS.utilization}
+          strokeWidth={strokeW} strokeLinecap="round" />
+      )}
+
+      {/* Score number */}
+      <text x={cx} y={cy - 4} textAnchor="middle" dominantBaseline="central"
+        fill={textColor} fontSize={28} fontWeight={700} fontFamily={OS.mono}>
+        {score}
+      </text>
+
+      {/* Tier label */}
+      <text x={cx} y={cy + 18} textAnchor="middle" dominantBaseline="central"
+        fill={subColor} fontSize={10} fontWeight={600}>
+        {tier}
+      </text>
+    </svg>
+  );
+}
+
+// ─── LOC Bar Chart ───
+
+export function LOCBarChart({
+  data,
+  dark,
+  height = 160,
+}: {
+  data: { label: string; additions: number; deletions: number }[];
+  dark: boolean;
+  height?: number;
+}) {
+  const [hover, setHover] = useState<number | null>(null);
+  if (!data.length) return null;
+
+  const W = 600;
+  const H = height;
+  const PAD = { top: 16, bottom: 24, left: 48, right: 12 };
+  const chartW = W - PAD.left - PAD.right;
+  const chartH = H - PAD.top - PAD.bottom;
+
+  const maxVal = Math.max(...data.map((d) => Math.max(d.additions, d.deletions)), 1);
+  const barW = Math.max(8, Math.min(28, chartW / data.length * 0.7));
+  const gap = (chartW - barW * data.length) / Math.max(data.length - 1, 1);
+
+  const toX = (i: number) => PAD.left + i * (barW + gap);
+  const toH = (v: number) => (v / maxVal) * chartH;
+
+  const textColor = dk(dark, "rgba(255,255,255,0.45)", OS.muted);
+  const gridColor = dk(dark, "rgba(255,255,255,0.06)", "rgba(0,0,0,0.06)");
+
+  // Y-axis labels
+  const yTicks = 4;
+  const yLabels = Array.from({ length: yTicks + 1 }, (_, i) => Math.round((maxVal / yTicks) * i));
+
+  return (
+    <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{ display: "block" }}>
+      {/* Grid lines */}
+      {yLabels.map((v, i) => (
+        <line key={i} x1={PAD.left} x2={W - PAD.right}
+          y1={PAD.top + chartH - toH(v)} y2={PAD.top + chartH - toH(v)}
+          stroke={gridColor} strokeWidth={1} />
+      ))}
+
+      {/* Y-axis labels */}
+      {yLabels.map((v, i) => (
+        <text key={`y${i}`} x={PAD.left - 6} y={PAD.top + chartH - toH(v) + 3}
+          textAnchor="end" fill={textColor} fontSize={9} fontFamily={OS.mono}>
+          {v >= 1000 ? `${(v / 1000).toFixed(1)}k` : v}
+        </text>
+      ))}
+
+      {/* Bars */}
+      {data.map((d, i) => {
+        const x = toX(i);
+        const addH = toH(d.additions);
+        const delH = toH(d.deletions);
+        return (
+          <g key={i} onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)}>
+            {/* Additions bar (grows up from baseline) */}
+            <rect x={x} y={PAD.top + chartH - addH} width={barW * 0.45}
+              height={addH} rx={2} fill="#10B981" opacity={hover === i ? 1 : 0.8} />
+            {/* Deletions bar (next to additions) */}
+            <rect x={x + barW * 0.5} y={PAD.top + chartH - delH} width={barW * 0.45}
+              height={delH} rx={2} fill="#EF4444" opacity={hover === i ? 1 : 0.8} />
+          </g>
+        );
+      })}
+
+      {/* X labels */}
+      {data.map((d, i) => {
+        const step = Math.max(1, Math.floor(data.length / 8));
+        if (i % step !== 0 && i !== data.length - 1) return null;
+        return (
+          <text key={`x${i}`} x={toX(i) + barW / 2} y={H - 6}
+            textAnchor="middle" fill={textColor} fontSize={9} fontFamily={OS.mono}>
+            {d.label}
+          </text>
+        );
+      })}
+
+      {/* Hover tooltip */}
+      {hover !== null && data[hover] && (
+        <g>
+          <rect x={toX(hover) - 10} y={PAD.top - 2} width={barW + 20} height={14} rx={3}
+            fill={dk(dark, "rgba(0,0,0,0.85)", "rgba(0,0,0,0.75)")} />
+          <text x={toX(hover) + barW / 2} y={PAD.top + 9} textAnchor="middle"
+            fill="#e2e8f0" fontSize={9} fontFamily={OS.mono}>
+            +{data[hover].additions} −{data[hover].deletions}
+          </text>
+        </g>
+      )}
+
+      {/* Legend */}
+      <rect x={W - PAD.right - 100} y={4} width={8} height={8} rx={2} fill="#10B981" />
+      <text x={W - PAD.right - 88} y={12} fill={textColor} fontSize={9}>Additions</text>
+      <rect x={W - PAD.right - 48} y={4} width={8} height={8} rx={2} fill="#EF4444" />
+      <text x={W - PAD.right - 36} y={12} fill={textColor} fontSize={9}>Deletions</text>
+    </svg>
+  );
+}
+
+// ─── Productivity Matrix (Bubble Scatter) ───
+
+export function ProductivityMatrixChart({
+  points,
+  dark,
+  height = 280,
+}: {
+  points: MatrixPoint[];
+  dark: boolean;
+  height?: number;
+}) {
+  const [hover, setHover] = useState<number | null>(null);
+  if (points.length < 3) return null;
+
+  const W = 600;
+  const H = height;
+  const PAD = { top: 24, bottom: 32, left: 56, right: 20 };
+  const chartW = W - PAD.left - PAD.right;
+  const chartH = H - PAD.top - PAD.bottom;
+
+  const xs = points.map((p) => p.x);
+  const ys = points.map((p) => p.y);
+  const maxX = Math.max(...xs) * 1.15 || 1;
+  const maxY = Math.max(...ys) * 1.15 || 1;
+
+  const toX = (v: number) => PAD.left + (v / maxX) * chartW;
+  const toY = (v: number) => PAD.top + chartH - (v / maxY) * chartH;
+
+  const medX = [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)];
+  const medY = [...ys].sort((a, b) => a - b)[Math.floor(ys.length / 2)];
+
+  const textColor = dk(dark, "rgba(255,255,255,0.45)", OS.muted);
+  const gridColor = dk(dark, "rgba(255,255,255,0.06)", "rgba(0,0,0,0.06)");
+  const dashColor = dk(dark, "rgba(255,255,255,0.15)", "rgba(0,0,0,0.12)");
+  const labelColor = dk(dark, "rgba(255,255,255,0.08)", "rgba(0,0,0,0.04)");
+
+  // Bubble color: gray→blue based on AI %
+  function bubbleColor(aiPct: number): string {
+    const t = Math.min(aiPct / 100, 1);
+    const r = Math.round(150 * (1 - t) + 94 * t);
+    const g = Math.round(150 * (1 - t) + 106 * t);
+    const b = Math.round(150 * (1 - t) + 210 * t);
+    return `rgb(${r},${g},${b})`;
+  }
+
+  return (
+    <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{ display: "block" }}>
+      {/* Grid */}
+      {[0.25, 0.5, 0.75, 1].map((f) => (
+        <line key={`gy${f}`} x1={PAD.left} x2={W - PAD.right}
+          y1={toY(maxY * f)} y2={toY(maxY * f)} stroke={gridColor} />
+      ))}
+      {[0.25, 0.5, 0.75, 1].map((f) => (
+        <line key={`gx${f}`} y1={PAD.top} y2={PAD.top + chartH}
+          x1={toX(maxX * f)} x2={toX(maxX * f)} stroke={gridColor} />
+      ))}
+
+      {/* Median dividers */}
+      <line x1={toX(medX)} x2={toX(medX)} y1={PAD.top} y2={PAD.top + chartH}
+        stroke={dashColor} strokeWidth={1} strokeDasharray="4,3" />
+      <line x1={PAD.left} x2={W - PAD.right} y1={toY(medY)} y2={toY(medY)}
+        stroke={dashColor} strokeWidth={1} strokeDasharray="4,3" />
+
+      {/* Quadrant labels */}
+      <text x={toX(medX / 2)} y={toY(medY + (maxY - medY) / 2)} textAnchor="middle"
+        fill={labelColor} fontSize={11} fontWeight={600}>Deep Work</text>
+      <text x={toX(medX + (maxX - medX) / 2)} y={toY(medY + (maxY - medY) / 2)} textAnchor="middle"
+        fill={labelColor} fontSize={11} fontWeight={600}>High Output</text>
+      <text x={toX(medX / 2)} y={toY(medY / 2)} textAnchor="middle"
+        fill={labelColor} fontSize={11} fontWeight={600}>Ramping Up</text>
+      <text x={toX(medX + (maxX - medX) / 2)} y={toY(medY / 2)} textAnchor="middle"
+        fill={labelColor} fontSize={11} fontWeight={600}>High Volume</text>
+
+      {/* Bubbles */}
+      {points.map((p, i) => (
+        <circle key={i} cx={toX(p.x)} cy={toY(p.y)} r={p.size}
+          fill={bubbleColor(p.aiPct)} opacity={hover === i ? 1 : 0.7}
+          stroke={hover === i ? dk(dark, "#fff", OS.text) : "none"} strokeWidth={1.5}
+          style={{ cursor: "pointer", transition: "opacity 0.15s" }}
+          onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)} />
+      ))}
+
+      {/* Hover tooltip */}
+      {hover !== null && points[hover] && (() => {
+        const p = points[hover];
+        const tx = toX(p.x);
+        const ty = toY(p.y) - p.size - 8;
+        const lines = [
+          p.author,
+          `${p.x.toFixed(1)} PRs/wk`,
+          `${fmtHours(1 / p.y * 24)} cycle`,
+          `${p.aiPct}% AI`,
+        ];
+        const boxW = 120;
+        const boxH = lines.length * 14 + 8;
+        return (
+          <g>
+            <rect x={tx - boxW / 2} y={ty - boxH} width={boxW} height={boxH} rx={4}
+              fill={dk(dark, "rgba(0,0,0,0.9)", "rgba(0,0,0,0.8)")}
+              stroke={dk(dark, "rgba(255,255,255,0.1)", "rgba(0,0,0,0.2)")} />
+            {lines.map((l, li) => (
+              <text key={li} x={tx} y={ty - boxH + 14 + li * 14} textAnchor="middle"
+                fill="#e2e8f0" fontSize={10} fontFamily={OS.mono}
+                fontWeight={li === 0 ? 600 : 400}>{l}</text>
+            ))}
+          </g>
+        );
+      })()}
+
+      {/* Axis labels */}
+      <text x={PAD.left + chartW / 2} y={H - 6} textAnchor="middle"
+        fill={textColor} fontSize={10}>Throughput (PRs/week)</text>
+      <text x={12} y={PAD.top + chartH / 2} textAnchor="middle"
+        fill={textColor} fontSize={10}
+        transform={`rotate(-90, 12, ${PAD.top + chartH / 2})`}>Efficiency (faster cycles)</text>
+
+      {/* X tick labels */}
+      {[0, 0.25, 0.5, 0.75, 1].map((f) => (
+        <text key={`xt${f}`} x={toX(maxX * f)} y={H - 18} textAnchor="middle"
+          fill={textColor} fontSize={9} fontFamily={OS.mono}>{(maxX * f).toFixed(1)}</text>
+      ))}
+
+      {/* AI color legend */}
+      <defs>
+        <linearGradient id="aiGrad" x1="0" x2="1" y1="0" y2="0">
+          <stop offset="0%" stopColor="rgb(150,150,150)" />
+          <stop offset="100%" stopColor={OS.blue} />
+        </linearGradient>
+      </defs>
+      <rect x={W - PAD.right - 90} y={4} width={50} height={6} rx={3} fill="url(#aiGrad)" />
+      <text x={W - PAD.right - 94} y={11} textAnchor="end" fill={textColor} fontSize={8}>0% AI</text>
+      <text x={W - PAD.right - 36} y={11} fill={textColor} fontSize={8}>100%</text>
     </svg>
   );
 }
