@@ -22,7 +22,7 @@ export function RightNow({ items, darkMode, onMarkDone }: Props) {
 
   if (items.length === 0) {
     return (
-      <SectionHeader title="Right now" count={0} darkMode={darkMode}>
+      <SectionHeader title="Coming up" count={0} darkMode={darkMode}>
         <div
           style={{
             padding: "32px 20px",
@@ -37,7 +37,7 @@ export function RightNow({ items, darkMode, onMarkDone }: Props) {
             You're caught up
           </div>
           <div style={{ color: dk(darkMode, "rgba(255,255,255,0.25)", OS.faint), fontSize: 12, marginTop: 3 }}>
-            Nothing urgent needs your attention right now
+            Nothing upcoming needs your attention
           </div>
         </div>
       </SectionHeader>
@@ -45,7 +45,7 @@ export function RightNow({ items, darkMode, onMarkDone }: Props) {
   }
 
   return (
-    <SectionHeader title="Right now" count={items.length} darkMode={darkMode}>
+    <SectionHeader title="Coming up" count={items.length} darkMode={darkMode}>
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
         {items.map((item) => {
           const isDismissed = dismissed.has(item.commitment.id!);

@@ -17,6 +17,8 @@ import {
   median,
   weekKey,
   weekLabel,
+  isWeekday,
+  businessDaysInRange,
   type TabProps,
   type WeekBucket,
   type EngStatsConfig,
@@ -24,6 +26,7 @@ import {
   type SectionId,
   toolColors,
 } from "./shared";
+import { InfoTip } from "./charts";
 
 // ─── Props ───
 
@@ -604,26 +607,27 @@ export function SummaryTab({
       : Array.from(latestByRepo.values()).filter((s) => s.repo === selectedRepo);
     const currentOpen = relevantSnapshots.reduce((sum, s) => sum + s.openCount, 0);
 
-    // Use timeRange for rate calculations
-    const windowDays = Math.max(timeRange, 14); // at least 14 days for meaningful rates
+    // Use timeRange for rate calculations (business days only)
+    const windowDays = Math.max(timeRange, 14);
+    const bizDays = businessDaysInRange(windowDays);
     const windowStart = daysAgoISO(windowDays);
     const recentMerged = metrics.filter((m) => m.mergedAt && m.mergedAt >= windowStart);
-    const closeRatePerDay = recentMerged.length / windowDays;
+    const closeRatePerDay = recentMerged.length / bizDays;
 
-    const recentMergedCreated = metrics.filter((m) => m.createdAt >= windowStart);
+    const recentMergedCreated = metrics.filter((m) => isWeekday(m.createdAt) && m.createdAt >= windowStart);
     const relevantRepos = selectedRepo === "__all__"
       ? Object.keys(openPRCreatedDates)
       : [selectedRepo];
     let openCreatedInWindow = 0;
     for (const repo of relevantRepos) {
       const dates = openPRCreatedDates[repo] ?? [];
-      openCreatedInWindow += dates.filter((d) => d >= windowStart).length;
+      openCreatedInWindow += dates.filter((d) => d >= windowStart && isWeekday(d)).length;
     }
     const totalOpened = recentMergedCreated.length + openCreatedInWindow;
-    const openRatePerDay = totalOpened / windowDays;
+    const openRatePerDay = totalOpened / bizDays;
     const netRatePerDay = openRatePerDay - closeRatePerDay;
 
-    // Build weekly opened/closed flow data
+    // Build weekly opened/closed flow data (weekdays only)
     const historyWeeks = Math.min(Math.floor(timeRange / 7), 12);
 
     const weeklyFlow: { label: string; opened: number; closed: number }[] = [];
@@ -633,18 +637,18 @@ export function SummaryTab({
       const weekEndISO = weekEnd.toISOString();
       const weekStartISO = weekStart.toISOString();
 
-      // Closed in this week (merged PRs)
+      // Closed in this week (merged PRs — weekends already excluded by allMetrics filter)
       const closedInWeek = metrics.filter(
         (m) => m.mergedAt && m.mergedAt >= weekStartISO && m.mergedAt < weekEndISO,
       ).length;
 
-      // Opened in this week: merged PRs created this week + still-open PRs created this week
+      // Opened in this week: merged PRs created this week + still-open PRs created this week (weekdays only)
       let openedInWeek = metrics.filter(
-        (m) => m.createdAt >= weekStartISO && m.createdAt < weekEndISO,
+        (m) => isWeekday(m.createdAt) && m.createdAt >= weekStartISO && m.createdAt < weekEndISO,
       ).length;
       for (const repo of relevantRepos) {
         const dates = openPRCreatedDates[repo] ?? [];
-        openedInWeek += dates.filter((d) => d >= weekStartISO && d < weekEndISO).length;
+        openedInWeek += dates.filter((d) => d >= weekStartISO && d < weekEndISO && isWeekday(d)).length;
       }
 
       const label = w === 0 ? "Now" : `${w}w`;
@@ -653,9 +657,9 @@ export function SummaryTab({
 
     return {
       currentOpen,
-      openRatePerWeek: Math.round(openRatePerDay * 7 * 10) / 10,
-      closeRatePerWeek: Math.round(closeRatePerDay * 7 * 10) / 10,
-      netRatePerWeek: Math.round(netRatePerDay * 7 * 10) / 10,
+      openRatePerWeek: Math.round(openRatePerDay * 5 * 10) / 10,
+      closeRatePerWeek: Math.round(closeRatePerDay * 5 * 10) / 10,
+      netRatePerWeek: Math.round(netRatePerDay * 5 * 10) / 10,
       weeklyFlow,
       hasData: latestByRepo.size > 0,
     };
@@ -768,7 +772,7 @@ export function SummaryTab({
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
           <div style={{ padding: "14px 16px", borderRadius: 10, border: cardBorder, background: cardBg }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 12 }}>
-              <span style={{ fontSize: 12, fontWeight: 600, color: dk(dark, "rgba(255,255,255,0.7)", OS.secondary) }}>Cycle Time</span>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 600, color: dk(dark, "rgba(255,255,255,0.7)", OS.secondary) }}>Cycle Time <InfoTip dark={dark} text="Average time from PR creation to merge, in business hours. Weekends and nights excluded. Outliers (top/bottom 5%) removed. Dashed line shows linear trend; dotted section is a forecast." /></span>
               <span style={{ fontSize: 10, color: dk(dark, "rgba(255,255,255,0.3)", OS.faint), fontFamily: OS.mono }}>weekly avg, days</span>
             </div>
             {weeklyBuckets.length > 0 ? (
@@ -779,7 +783,7 @@ export function SummaryTab({
           </div>
           <div style={{ padding: "14px 16px", borderRadius: 10, border: cardBorder, background: cardBg }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
-              <span style={{ fontSize: 12, fontWeight: 600, color: dk(dark, "rgba(255,255,255,0.7)", OS.secondary) }}>AI Adoption</span>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 600, color: dk(dark, "rgba(255,255,255,0.7)", OS.secondary) }}>AI Adoption <InfoTip dark={dark} text="Percentage of merged PRs that used AI tools (Copilot, Cursor, CodeRabbit, etc.), calculated weekly. Detection is based on commit trailers, PR labels, and bot comments." /></span>
               <span style={{ fontSize: 10, color: dk(dark, "rgba(255,255,255,0.3)", OS.faint), fontFamily: OS.mono }}>weekly % of PRs</span>
             </div>
             <div style={{ fontSize: 10, color: dk(dark, "rgba(255,255,255,0.35)", OS.muted), marginBottom: 8 }}>{aiSubtitle}</div>
@@ -791,7 +795,7 @@ export function SummaryTab({
           {sectionVisible("cycleTime") && (
             <div style={{ padding: "14px 16px", borderRadius: 10, border: cardBorder, background: cardBg }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 12 }}>
-                <span style={{ fontSize: 12, fontWeight: 600, color: dk(dark, "rgba(255,255,255,0.7)", OS.secondary) }}>Cycle Time</span>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 600, color: dk(dark, "rgba(255,255,255,0.7)", OS.secondary) }}>Cycle Time <InfoTip dark={dark} text="Average time from PR creation to merge, in business hours. Weekends and nights excluded. Outliers (top/bottom 5%) removed. Dashed line shows linear trend; dotted section is a forecast." /></span>
                 <span style={{ fontSize: 10, color: dk(dark, "rgba(255,255,255,0.3)", OS.faint), fontFamily: OS.mono }}>weekly avg, days</span>
               </div>
               {weeklyBuckets.length > 0 ? <CycleTimeChart buckets={weeklyBuckets} dark={dark} height={300} /> : null}
@@ -800,7 +804,7 @@ export function SummaryTab({
           {sectionVisible("aiAdoption") && weeklyAI.length >= 2 && (
             <div style={{ padding: "14px 16px", borderRadius: 10, border: cardBorder, background: cardBg }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
-                <span style={{ fontSize: 12, fontWeight: 600, color: dk(dark, "rgba(255,255,255,0.7)", OS.secondary) }}>AI Adoption</span>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 600, color: dk(dark, "rgba(255,255,255,0.7)", OS.secondary) }}>AI Adoption <InfoTip dark={dark} text="Percentage of merged PRs that used AI tools (Copilot, Cursor, CodeRabbit, etc.), calculated weekly. Detection is based on commit trailers, PR labels, and bot comments." /></span>
                 <span style={{ fontSize: 10, color: dk(dark, "rgba(255,255,255,0.3)", OS.faint), fontFamily: OS.mono }}>weekly % of PRs</span>
               </div>
               <AIAdoptionChart weeklyPcts={weeklyAI} dark={dark} height={280} />
@@ -814,13 +818,13 @@ export function SummaryTab({
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
           {sectionVisible("prSize") && (
             <div style={{ padding: "14px 16px", borderRadius: 10, border: cardBorder, background: cardBg }}>
-              <h3 style={sectionTitle}>PR Size Distribution</h3>
+              <h3 style={sectionTitle}><span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>PR Size Distribution <InfoTip dark={dark} text="PRs grouped by total lines changed (additions + deletions). Small: < 100 lines, Medium: 100–499, Large: 500+. Smaller PRs generally get faster, higher-quality reviews." /></span></h3>
               <PRSizeChart small={smallCount} medium={mediumCount} large={largeCount} dark={dark} />
             </div>
           )}
           {sectionVisible("toolUsage") && (
             <div style={{ padding: "14px 16px", borderRadius: 10, border: cardBorder, background: cardBg }}>
-              <h3 style={sectionTitle}>AI Tool Usage</h3>
+              <h3 style={sectionTitle}><span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>AI Tool Usage <InfoTip dark={dark} text="Count of merged PRs per detected AI tool. Tools are identified from commit trailers, PR body markers, and bot review comments. A PR can count toward multiple tools." /></span></h3>
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                 {displayToolEntries.map(([tool, count]) => {
                   const maxCount = displayToolEntries.length > 0 ? displayToolEntries[0][1] : 1;
@@ -848,7 +852,7 @@ export function SummaryTab({
       {/* ─── PR Backlog Projection ─── */}
       {sectionVisible("projection") && (
         <div style={{ padding: "14px 16px", borderRadius: 10, border: cardBorder, background: cardBg }}>
-          <h3 style={sectionTitle}>PR Backlog Projection</h3>
+          <h3 style={sectionTitle}><span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>PR Backlog Projection <InfoTip dark={dark} text="Tracks open PRs over time. 'Opened/wk' and 'Closed/wk' are rolling averages. 'Net/wk' is the difference — positive means the backlog is growing. Chart shows weekly opened (red) vs closed (green) with trend lines." /></span></h3>
           {!prProjection.hasData ? (
             <div style={{ fontSize: 12, color: dk(dark, "rgba(255,255,255,0.4)", OS.muted), padding: "12px 0" }}>
               No open PR data yet — click <strong>Scan Now</strong> to sync.

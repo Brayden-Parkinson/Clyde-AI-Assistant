@@ -62,6 +62,65 @@ export interface GHCopilotMetric {
   copilot_ide_chat?: {
     total_chats?: number;
   };
+  copilot_ide_code_completions?: {
+    editors?: Array<{
+      name: string;
+      models?: Array<{
+        total_code_suggestions?: number;
+        total_code_acceptances?: number;
+        total_code_lines_suggested?: number;
+        total_code_lines_accepted?: number;
+      }>;
+    }>;
+  };
+}
+
+export interface GHCopilotBilling {
+  seat_breakdown: {
+    total: number;
+    active_this_cycle: number;
+    inactive_this_cycle: number;
+  };
+}
+
+/** Aggregate suggestion/acceptance counts across all editors and models */
+export function aggregateCopilotCompletions(metric: GHCopilotMetric): {
+  totalSuggestions: number;
+  totalAcceptances: number;
+  totalLinesSuggested: number;
+  totalLinesAccepted: number;
+} {
+  let totalSuggestions = 0;
+  let totalAcceptances = 0;
+  let totalLinesSuggested = 0;
+  let totalLinesAccepted = 0;
+  for (const editor of metric.copilot_ide_code_completions?.editors ?? []) {
+    for (const model of editor.models ?? []) {
+      totalSuggestions += model.total_code_suggestions ?? 0;
+      totalAcceptances += model.total_code_acceptances ?? 0;
+      totalLinesSuggested += model.total_code_lines_suggested ?? 0;
+      totalLinesAccepted += model.total_code_lines_accepted ?? 0;
+    }
+  }
+  return { totalSuggestions, totalAcceptances, totalLinesSuggested, totalLinesAccepted };
+}
+
+// ─── Revert detection ───
+
+const REVERT_TITLE_PATTERN = /^revert\s/i;
+const REVERT_BODY_PATTERN = /reverts\s+[\w.-]+\/[\w.-]+#(\d+)/i;
+
+/** Detect if a PR is a revert from its title/body */
+export function detectRevert(
+  title: string,
+  body: string | null,
+): { isRevert: boolean; revertedPrNumber: number | null } {
+  const titleMatch = REVERT_TITLE_PATTERN.test(title);
+  const bodyMatch = body ? REVERT_BODY_PATTERN.exec(body) : null;
+  return {
+    isRevert: titleMatch || bodyMatch !== null,
+    revertedPrNumber: bodyMatch ? parseInt(bodyMatch[1], 10) : null,
+  };
 }
 
 // ─── Rate-limit aware fetch helpers ───
@@ -204,6 +263,14 @@ export async function fetchCopilotMetrics(
   org: string,
 ): Promise<GHCopilotMetric[]> {
   return ghFetch<GHCopilotMetric>(token, `/orgs/${org}/copilot/metrics`);
+}
+
+/** Fetch Copilot billing/seat info (requires manage_billing:copilot scope) */
+export async function fetchCopilotBilling(
+  token: string,
+  org: string,
+): Promise<GHCopilotBilling> {
+  return ghFetchOne<GHCopilotBilling>(token, `/orgs/${org}/copilot/billing`);
 }
 
 // ─── AI tool detection ───

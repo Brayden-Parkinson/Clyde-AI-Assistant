@@ -1,6 +1,6 @@
 /**
- * AI News orchestrator — opens background tabs to X/Twitter profiles,
- * injects a scraper, sends results through Claude for summarization,
+ * AI News orchestrator — fetches from multiple RSS/JSON sources,
+ * sends through Claude for summarization + relevance scoring,
  * and stores in IndexedDB.
  */
 
@@ -10,152 +10,149 @@ import {
   API_TIMEOUT_MS,
   API_MAX_RETRIES,
   API_RETRY_DELAY_MS,
-  NEWS_SCRAPE_TIMEOUT_MS,
-  NEWS_DEFAULT_ACCOUNTS,
 } from "@shared/constants";
-import type { NewsPost, XScrapedPost } from "@shared/types";
+import type { NewsPost, RawNewsItem } from "@shared/types";
 import { logStatus } from "@shared/status";
+import { fetchAllSources, type FetchResult } from "./news-providers/index";
 
-// ─── Pending scrape resolvers keyed by tab ID ───
-
-const pendingScrapes = new Map<
-  number,
-  { resolve: (posts: XScrapedPost[]) => void; reject: (err: Error) => void }
->();
-
-/** Called by service-worker when an X_SCRAPED_POSTS message arrives */
-export function handleScrapedPosts(
-  posts: XScrapedPost[],
-  tabId: number | undefined,
-): void {
-  if (tabId == null) return;
-  const pending = pendingScrapes.get(tabId);
-  if (pending) {
-    pending.resolve(posts);
-    pendingScrapes.delete(tabId);
-  }
-}
-
-/** Main entry point — scrape accounts, summarize with Claude, store results */
-export async function refreshNews(
-  accounts: string[] = NEWS_DEFAULT_ACCOUNTS,
-): Promise<{ newPosts: number; total: number; errors: string[] }> {
+/** Main entry point — fetch all sources, summarize with Claude, store results */
+export async function refreshNews(): Promise<{
+  newPosts: number;
+  total: number;
+  errors: string[];
+  sourceStats: FetchResult["sourceStats"];
+}> {
   const errors: string[] = [];
-  let allScraped: XScrapedPost[] = [];
 
-  for (const account of accounts) {
-    try {
-      const posts = await scrapeAccount(account);
-      allScraped = allScraped.concat(posts);
-      await logStatus("info", "news", `Scraped ${posts.length} posts from @${account}`);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`@${account}: ${msg}`);
-      await logStatus("warn", "news", `Failed to scrape @${account}: ${msg}`);
-    }
-  }
-
-  // Dedup against existing posts
-  const existingIds = new Set(
-    (await db.news_posts.orderBy("tweetId").keys()) as string[],
-  );
-  const newPosts = allScraped.filter((p) => !existingIds.has(p.tweetId));
-
-  if (newPosts.length === 0) {
-    await logStatus("info", "news", "No new posts to process");
-    return { newPosts: 0, total: allScraped.length, errors };
-  }
-
-  // Summarize with Claude
+  // 1. Fetch from all enabled sources
+  let fetchResult: FetchResult;
   try {
-    const summarized = await summarizeWithClaude(newPosts);
+    fetchResult = await fetchAllSources();
+    errors.push(...fetchResult.errors);
+    await logStatus(
+      "info",
+      "news",
+      `Fetched ${fetchResult.items.length} items from ${fetchResult.sourceStats.filter((s) => !s.error).length} sources`,
+    );
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    await logStatus("warn", "news", `Source fetch failed: ${msg}`);
+    return { newPosts: 0, total: 0, errors: [msg], sourceStats: [] };
+  }
+
+  // 2. Dedup against existing posts
+  const existingIds = new Set(
+    (await db.news_posts.orderBy("sourceId").keys()) as string[],
+  );
+  const newItems = fetchResult.items.filter((p) => !existingIds.has(p.sourceId));
+
+  if (newItems.length === 0) {
+    await logStatus("info", "news", "No new items to process");
+    return {
+      newPosts: 0,
+      total: fetchResult.items.length,
+      errors,
+      sourceStats: fetchResult.sourceStats,
+    };
+  }
+
+  // 3. Summarize with Claude
+  try {
+    const { posts: summarized, dailyBriefing } = await summarizeWithClaude(newItems);
     const now = new Date().toISOString();
 
     for (const item of summarized) {
       const newsPost: Omit<NewsPost, "id"> = {
-        tweetId: item.tweetId,
+        sourceId: item.sourceId,
+        source: item.source,
+        sourceName: item.sourceName,
         author: item.author,
-        authorDisplayName: item.authorDisplayName,
+        title: item.title,
         rawText: item.text,
         summary: item.summary,
         relevanceScore: item.relevanceScore,
-        postedAt: item.timestamp,
+        topicTag: item.topicTag,
+        postedAt: item.postedAt,
         url: item.url,
-        links: item.links,
-        scrapedAt: now,
+        fetchedAt: now,
       };
       await db.news_posts.add(newsPost as NewsPost);
     }
 
-    await logStatus("info", "news", `Stored ${summarized.length} new posts`);
-    return { newPosts: summarized.length, total: allScraped.length, errors };
+    // Store daily briefing in chrome.storage
+    if (dailyBriefing) {
+      await chrome.storage.local.set({
+        newsBriefing: dailyBriefing,
+        newsBriefingDate: now,
+      });
+    }
+
+    // Store source stats for the UI footer
+    await chrome.storage.local.set({ newsSourceStats: fetchResult.sourceStats });
+
+    await logStatus("info", "news", `Stored ${summarized.length} new items`);
+    return {
+      newPosts: summarized.length,
+      total: fetchResult.items.length,
+      errors,
+      sourceStats: fetchResult.sourceStats,
+    };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     errors.push(`Claude summarization: ${msg}`);
     await logStatus("warn", "news", `Summarization failed: ${msg}`);
-    return { newPosts: 0, total: allScraped.length, errors };
-  }
-}
-
-// ─── Tab scraping ───
-
-async function scrapeAccount(account: string): Promise<XScrapedPost[]> {
-  const tab = await chrome.tabs.create({
-    url: `https://x.com/${account}`,
-    active: false,
-  });
-
-  const tabId = tab.id;
-  if (tabId == null) throw new Error("Failed to create tab");
-
-  try {
-    // Content script (x-scraper.ts) auto-injects on x.com via manifest
-    // and sends X_SCRAPED_POSTS when done — just wait for that message.
-    const posts = await new Promise<XScrapedPost[]>((resolve, reject) => {
-      pendingScrapes.set(tabId, { resolve, reject });
-
-      setTimeout(() => {
-        if (pendingScrapes.has(tabId)) {
-          pendingScrapes.delete(tabId);
-          reject(new Error(`Scrape timed out after ${NEWS_SCRAPE_TIMEOUT_MS / 1000}s`));
-        }
-      }, NEWS_SCRAPE_TIMEOUT_MS);
-    });
-
-    return posts;
-  } finally {
-    try {
-      await chrome.tabs.remove(tabId);
-    } catch {
-      // Tab may already be closed
-    }
+    return {
+      newPosts: 0,
+      total: fetchResult.items.length,
+      errors,
+      sourceStats: fetchResult.sourceStats,
+    };
   }
 }
 
 // ─── Claude summarization ───
 
-interface SummarizedPost extends XScrapedPost {
+interface SummarizedItem extends RawNewsItem {
   summary: string;
   relevanceScore: number;
+  topicTag: string;
 }
 
 async function summarizeWithClaude(
-  posts: XScrapedPost[],
-): Promise<SummarizedPost[]> {
+  items: RawNewsItem[],
+): Promise<{ posts: SummarizedItem[]; dailyBriefing: string | null }> {
   const result = await chrome.storage.local.get("anthropicApiKey");
   const apiKey = result.anthropicApiKey as string | undefined;
   if (!apiKey) throw new Error("No API key configured");
 
-  const system = `You are an AI/tech news analyst. You will receive a JSON array of social media posts.
-For each post, produce a JSON object with:
-- "tweetId": the original tweetId (pass through)
-- "summary": a concise 1-2 sentence summary of the key insight or news
-- "relevanceScore": integer 1-10, where 10 = highly relevant to AI, ML, software engineering, developer tools, or programming language design
+  const system = `You are an AI news analyst for a senior engineering manager at OpenSpace, an AI-forward construction tech company exploring agentic workflows.
 
-Return a JSON array of objects. Only output valid JSON, no markdown fences.`;
+You will receive a JSON array of news items from various sources (blogs, Hacker News, arXiv, etc.).
+
+For each item, produce a JSON object with:
+- "sourceId": pass through unchanged
+- "summary": a concise 1-2 sentence summary of the key insight or news
+- "relevanceScore": integer 1-10, scored by relevance:
+  10 = Anthropic/Claude news, Claude Code, Claude Code Review
+  8-9 = Agentic AI workflows, AI coding tools, AI-assisted engineering
+  7-8 = Major AI model releases, significant research findings
+  5-6 = General AI industry news, ML infrastructure
+  3-4 = Tangentially related tech news
+  1-2 = Not relevant to AI engineering leadership
+- "topicTag": exactly one of: "Claude & Anthropic", "Research", "Industry", "Tools & Infra", "Agents & Workflows", "Open Source"
+
+Also produce a "dailyBriefing" field: 3-5 bullet points (plain text, one per line, starting with "• ") summarizing the most important themes across ALL items. Focus on what matters to an engineering leader adopting AI tools.
+
+Return JSON: { "items": [...], "dailyBriefing": "• bullet1\\n• bullet2\\n..." }
+Only output valid JSON, no markdown fences.`;
 
   const userMessage = JSON.stringify(
-    posts.map((p) => ({ tweetId: p.tweetId, text: p.text, author: p.author })),
+    items.map((p) => ({
+      sourceId: p.sourceId,
+      source: p.source,
+      title: p.title,
+      text: p.text.slice(0, 300),
+    })),
   );
 
   const response = await fetchWithRetry(apiKey, {
@@ -176,25 +173,33 @@ Return a JSON array of objects. Only output valid JSON, no markdown fences.`;
   );
   if (!textBlock?.text) throw new Error("No text in Claude response");
 
-  const parsed = parseJsonArray(textBlock.text) as Array<{
-    tweetId: string;
+  const parsed = parseJsonResponse(textBlock.text);
+  const parsedItems = (parsed.items ?? []) as Array<{
+    sourceId: string;
     summary: string;
     relevanceScore: number;
+    topicTag: string;
   }>;
 
-  // Merge summaries back into original posts
-  const summaryMap = new Map(parsed.map((s) => [s.tweetId, s]));
-  return posts
-    .map((post) => {
-      const summary = summaryMap.get(post.tweetId);
+  // Merge summaries back into original items
+  const summaryMap = new Map(parsedItems.map((s) => [s.sourceId, s]));
+  const posts = items
+    .map((item) => {
+      const summary = summaryMap.get(item.sourceId);
       if (!summary) return null;
       return {
-        ...post,
+        ...item,
         summary: summary.summary,
         relevanceScore: Math.max(1, Math.min(10, summary.relevanceScore)),
+        topicTag: summary.topicTag || "Industry",
       };
     })
-    .filter((p): p is SummarizedPost => p !== null);
+    .filter((p): p is SummarizedItem => p !== null);
+
+  return {
+    posts,
+    dailyBriefing: (parsed.dailyBriefing as string) ?? null,
+  };
 }
 
 async function fetchWithRetry(
@@ -233,12 +238,12 @@ async function fetchWithRetry(
   throw new Error("Claude API failed after all retries");
 }
 
-function parseJsonArray(raw: string): unknown[] {
+function parseJsonResponse(raw: string): Record<string, unknown> {
   let cleaned = raw.trim().replace(/^```json?\s*/, "").replace(/\s*```$/, "");
-  const firstBracket = cleaned.indexOf("[");
-  const lastBracket = cleaned.lastIndexOf("]");
-  if (firstBracket >= 0 && lastBracket > firstBracket) {
-    cleaned = cleaned.slice(firstBracket, lastBracket + 1);
+  const firstBrace = cleaned.indexOf("{");
+  const lastBrace = cleaned.lastIndexOf("}");
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    cleaned = cleaned.slice(firstBrace, lastBrace + 1);
   }
   return JSON.parse(cleaned);
 }

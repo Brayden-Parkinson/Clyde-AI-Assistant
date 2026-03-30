@@ -1,6 +1,6 @@
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import type { AIReviewComment } from "@shared/types";
-import { TabProps, dk, weekKey, categoryColors, toolColors } from "./shared";
+import { TabProps, dk, weekKey, categoryColors, toolColors, isWeekday } from "./shared";
 import { OS } from "@shared/tokens";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db } from "@shared/db";
@@ -23,6 +23,11 @@ const reviewColors: Record<string, string> = {
   windsurf: "#06B6D4",
 };
 
+// Fixed category column order — matches categoryColors key order
+const CATEGORY_ORDER = ["bug", "security", "type-safety", "perf", "logic", "style", "other"] as const;
+
+type AuthorSortKey = "total" | "perPR" | typeof CATEGORY_ORDER[number];
+
 export function AIReviewsTab({
   darkMode,
   metrics,
@@ -36,10 +41,14 @@ export function AIReviewsTab({
 }: AIReviewsTabProps) {
   const cardBg = dk(darkMode, "#1c1c22", OS.white);
   const cardBorder = `1px solid ${dk(darkMode, "rgba(255,255,255,0.08)", OS.border)}`;
+  const [authorSortKey, setAuthorSortKey] = useState<AuthorSortKey>("total");
+  const [authorSortAsc, setAuthorSortAsc] = useState(false);
+  const [showAllAuthors, setShowAllAuthors] = useState(false);
 
-  // ─── Query AI review comments from DB ───
+  // ─── Query AI review comments from DB (weekdays only) ───
   const allReviewComments = useLiveQuery(
-    () => db.ai_review_comments.where("createdAt").aboveOrEqual(since).toArray(),
+    () => db.ai_review_comments.where("createdAt").aboveOrEqual(since).toArray()
+      .then((comments) => comments.filter((c) => isWeekday(c.createdAt))),
     [since, queryKey],
     [] as AIReviewComment[],
   );
@@ -105,10 +114,18 @@ export function AIReviewsTab({
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([label, count]) => ({ label, count }));
 
+    // Count PRs per author from the metrics prop
+    const prCountByAuthor: Record<string, number> = {};
+    for (const m of metrics) {
+      if (m.author) prCountByAuthor[m.author] = (prCountByAuthor[m.author] ?? 0) + 1;
+    }
+
     const authorRows = Object.entries(byAuthor)
       .map(([author, data]) => {
         const topCat = Object.entries(data.byCategory).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "\u2014";
-        return { author, ...data, topCategory: topCat };
+        const prCount = prCountByAuthor[author] ?? 0;
+        const perPR = prCount > 0 ? data.total / prCount : 0;
+        return { author, ...data, topCategory: topCat, prCount, perPR };
       })
       .sort((a, b) => b.total - a.total);
 
@@ -298,49 +315,141 @@ export function AIReviewsTab({
           </div>
 
           {/* By Author table */}
-          <div style={{ padding: "14px 16px", borderRadius: 10, border: cardBorder, background: cardBg }}>
-            <div style={{ fontSize: 14, fontWeight: 500, color: dk(darkMode, "rgba(255,255,255,0.85)", OS.text), marginBottom: 2 }}>By Author</div>
-            <div style={{ fontSize: 12, color: dk(darkMode, "rgba(255,255,255,0.5)", OS.muted), marginBottom: 10 }}>
-              Who is receiving the most AI review feedback ({timeRange}d)
-            </div>
-            {/* Header */}
-            <div style={{ display: "grid", gridTemplateColumns: "130px 1fr 60px 80px", gap: 6, marginBottom: 6, padding: "0 0 4px 0", borderBottom: `1px solid ${dk(darkMode, "rgba(255,255,255,0.08)", OS.border)}` }}>
-              <div style={{ fontSize: 11, color: dk(darkMode, "rgba(255,255,255,0.5)", OS.muted), textTransform: "uppercase", letterSpacing: "0.05em" }}>Author</div>
-              <div style={{ fontSize: 11, color: dk(darkMode, "rgba(255,255,255,0.5)", OS.muted), textTransform: "uppercase", letterSpacing: "0.05em" }}>Severity</div>
-              <div style={{ fontSize: 11, color: dk(darkMode, "rgba(255,255,255,0.5)", OS.muted), textTransform: "uppercase", letterSpacing: "0.05em", textAlign: "right" }}>Issues</div>
-              <div style={{ fontSize: 11, color: dk(darkMode, "rgba(255,255,255,0.5)", OS.muted), textTransform: "uppercase", letterSpacing: "0.05em", textAlign: "right" }}>Top Category</div>
-            </div>
-            {reviewTabStats.authorRows.slice(0, 10).map((row) => (
-              <div key={row.author} style={{ display: "grid", gridTemplateColumns: "130px 1fr 60px 80px", gap: 6, alignItems: "center", padding: "4px 0" }}>
-                <span style={{ fontSize: 12, color: dk(darkMode, "rgba(255,255,255,0.8)", OS.text), overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={row.author}>
-                  {row.author}
-                </span>
-                {/* Severity distribution mini bar */}
-                <div style={{ display: "flex", height: 10, borderRadius: 3, overflow: "hidden", background: dk(darkMode, "rgba(255,255,255,0.04)", OS.border) }}
-                  title={Object.entries(row.byCategory).map(([c, n]) => `${c}: ${n}`).join(", ")}
-                >
-                  {Object.entries(row.byCategory).sort((a, b) => b[1] - a[1]).map(([cat, count]) => (
-                    <div key={cat} style={{
-                      flex: count,
-                      height: "100%",
-                      background: categoryColors[cat] ?? dk(darkMode, "rgba(255,255,255,0.15)", OS.faint),
-                    }} />
-                  ))}
+          {(() => {
+            const handleAuthorSort = (key: AuthorSortKey) => {
+              if (authorSortKey === key) setAuthorSortAsc(!authorSortAsc);
+              else { setAuthorSortKey(key); setAuthorSortAsc(false); }
+            };
+            const sortArrow = (key: AuthorSortKey) =>
+              authorSortKey === key ? (authorSortAsc ? " \u25B2" : " \u25BC") : "";
+            const sorted = [...reviewTabStats.authorRows].sort((a, b) => {
+              const av = authorSortKey === "total" ? a.total : authorSortKey === "perPR" ? a.perPR : (a.byCategory[authorSortKey] ?? 0);
+              const bv = authorSortKey === "total" ? b.total : authorSortKey === "perPR" ? b.perPR : (b.byCategory[authorSortKey] ?? 0);
+              return authorSortAsc ? av - bv : bv - av;
+            });
+            const visible = showAllAuthors ? sorted : sorted.slice(0, 10);
+            const headerColor = dk(darkMode, "rgba(255,255,255,0.4)", OS.muted);
+            const headerBorder = `1px solid ${dk(darkMode, "rgba(255,255,255,0.06)", OS.border)}`;
+
+            return (
+              <div style={{ padding: "14px 16px", borderRadius: 10, border: cardBorder, background: cardBg }}>
+                <div style={{ fontSize: 14, fontWeight: 500, color: dk(darkMode, "rgba(255,255,255,0.85)", OS.text), marginBottom: 2 }}>By Author</div>
+                <div style={{ fontSize: 12, color: dk(darkMode, "rgba(255,255,255,0.5)", OS.muted), marginBottom: 10 }}>
+                  Who is receiving the most AI review feedback ({timeRange}d)
                 </div>
-                <span style={{ fontSize: 12, fontFamily: OS.mono, fontWeight: 600, color: dk(darkMode, "rgba(255,255,255,0.85)", OS.text), textAlign: "right" }}>
-                  {row.total}
-                </span>
-                <span style={{ fontSize: 11, color: categoryColors[row.topCategory] ?? dk(darkMode, "rgba(255,255,255,0.5)", OS.muted), textAlign: "right", textTransform: "capitalize" }}>
-                  {row.topCategory}
-                </span>
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, fontFamily: OS.font }}>
+                    <thead>
+                      <tr>
+                        <th style={{ textAlign: "left", padding: "4px 6px", fontSize: 10, fontWeight: 600, color: headerColor, borderBottom: headerBorder, whiteSpace: "nowrap" }}>
+                          Author
+                        </th>
+                        <th style={{ textAlign: "left", padding: "4px 4px", fontSize: 10, fontWeight: 600, color: headerColor, borderBottom: headerBorder, whiteSpace: "nowrap", width: 90 }}>
+                          Distribution
+                        </th>
+                        <th
+                          style={{ textAlign: "right", padding: "4px 6px", fontSize: 10, fontWeight: 600, color: authorSortKey === "total" ? dk(darkMode, "#fff", OS.text) : headerColor, borderBottom: headerBorder, cursor: "pointer", whiteSpace: "nowrap" }}
+                          onClick={() => handleAuthorSort("total")}
+                        >
+                          Issues{sortArrow("total")}
+                        </th>
+                        <th
+                          style={{ textAlign: "right", padding: "4px 6px", fontSize: 10, fontWeight: 600, color: authorSortKey === "perPR" ? dk(darkMode, "#fff", OS.text) : headerColor, borderBottom: headerBorder, cursor: "pointer", whiteSpace: "nowrap" }}
+                          onClick={() => handleAuthorSort("perPR")}
+                          title="Issues per PR"
+                        >
+                          /PR{sortArrow("perPR")}
+                        </th>
+                        {CATEGORY_ORDER.map((cat) => (
+                          <th
+                            key={cat}
+                            style={{
+                              textAlign: "right", padding: "4px 5px", fontSize: 10, fontWeight: 600,
+                              color: authorSortKey === cat ? (categoryColors[cat] ?? dk(darkMode, "#fff", OS.text)) : headerColor,
+                              borderBottom: headerBorder, cursor: "pointer",
+                              textTransform: "capitalize", whiteSpace: "nowrap",
+                            }}
+                            onClick={() => handleAuthorSort(cat)}
+                          >
+                            {cat === "type-safety" ? "types" : cat}{sortArrow(cat)}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {visible.map((row) => {
+                        const rowBorder = `1px solid ${dk(darkMode, "rgba(255,255,255,0.04)", "#f5f5f7")}`;
+                        return (
+                          <tr key={row.author}>
+                            <td style={{
+                              padding: "5px 6px", color: dk(darkMode, "rgba(255,255,255,0.8)", OS.text),
+                              fontFamily: OS.mono, fontSize: 10, borderBottom: rowBorder,
+                              maxWidth: 110, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                            }} title={row.author}>
+                              {row.author}
+                            </td>
+                            {/* Stacked category bar */}
+                            <td style={{ padding: "5px 4px", borderBottom: rowBorder }}>
+                              <div
+                                style={{ display: "flex", height: 10, borderRadius: 3, overflow: "hidden", background: dk(darkMode, "rgba(255,255,255,0.04)", OS.border) }}
+                                title={CATEGORY_ORDER.map((c) => `${c}: ${row.byCategory[c] ?? 0}`).join(", ")}
+                              >
+                                {CATEGORY_ORDER.map((cat) => {
+                                  const count = row.byCategory[cat] ?? 0;
+                                  if (count === 0) return null;
+                                  return (
+                                    <div key={cat} style={{
+                                      flex: count,
+                                      height: "100%",
+                                      background: categoryColors[cat] ?? dk(darkMode, "rgba(255,255,255,0.15)", OS.faint),
+                                    }} />
+                                  );
+                                })}
+                              </div>
+                            </td>
+                            <td style={{
+                              padding: "5px 6px", textAlign: "right", fontWeight: 600, fontFamily: OS.mono,
+                              color: dk(darkMode, "rgba(255,255,255,0.85)", OS.text), borderBottom: rowBorder,
+                            }}>
+                              {row.total}
+                            </td>
+                            <td style={{
+                              padding: "5px 6px", textAlign: "right", fontFamily: OS.mono, fontSize: 10,
+                              color: row.perPR >= 2 ? OS.red : row.perPR >= 1 ? OS.warning : dk(darkMode, "rgba(255,255,255,0.5)", OS.secondary),
+                              borderBottom: rowBorder,
+                            }} title={`${row.total} issues across ${row.prCount} PRs`}>
+                              {row.perPR > 0 ? row.perPR.toFixed(1) : "\u2014"}
+                            </td>
+                            {CATEGORY_ORDER.map((cat) => {
+                              const count = row.byCategory[cat] ?? 0;
+                              return (
+                                <td key={cat} style={{
+                                  padding: "5px 5px", textAlign: "right", fontFamily: OS.mono, fontSize: 10,
+                                  borderBottom: rowBorder,
+                                  color: count > 0 ? (categoryColors[cat] ?? dk(darkMode, "rgba(255,255,255,0.6)", OS.secondary)) : dk(darkMode, "rgba(255,255,255,0.12)", "#ddd"),
+                                  fontWeight: count > 0 ? 600 : 400,
+                                }}>
+                                  {count > 0 ? count : "\u00B7"}
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                {reviewTabStats.authorRows.length > 10 && (
+                  <div
+                    style={{ fontSize: 10, color: OS.blue, cursor: "pointer", marginTop: 8, textAlign: "center" }}
+                    onClick={() => setShowAllAuthors(!showAllAuthors)}
+                  >
+                    {showAllAuthors ? "Show fewer" : `Show all ${reviewTabStats.authorRows.length} authors`}
+                  </div>
+                )}
               </div>
-            ))}
-            {reviewTabStats.authorRows.length > 10 && (
-              <div style={{ fontSize: 11, color: dk(darkMode, "rgba(255,255,255,0.4)", OS.muted), marginTop: 6 }}>
-                +{reviewTabStats.authorRows.length - 10} more authors
-              </div>
-            )}
-          </div>
+            );
+          })()}
 
           {/* Category legend */}
           <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", padding: "0 4px" }}>

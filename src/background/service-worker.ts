@@ -44,7 +44,7 @@ import { syncJiraData, linkPRsToJira } from "./jiraSync";
 import { executeAction, createProposal } from "./action-executor";
 import { generateDraft, regenerateDraft } from "./draft-generator";
 import { setFollowUpRule, runFollowUpCheck } from "./follow-up-engine";
-import { refreshNews, handleScrapedPosts } from "./newsFetcher";
+import { refreshNews } from "./newsFetcher";
 
 // ─── Badge ───
 
@@ -175,7 +175,7 @@ async function runCleanup(): Promise<void> {
 
   // AI News posts: 30 days
   const newsPostCutoff = new Date(now - NEWS_POST_TTL_MS).toISOString();
-  await db.news_posts.where("scrapedAt").below(newsPostCutoff).delete();
+  await db.news_posts.where("fetchedAt").below(newsPostCutoff).delete();
 
   // Open PR snapshots: 90 days
   const snapshotCutoff = new Date(now - 90 * 24 * 60 * 60 * 1000).toISOString();
@@ -447,6 +447,15 @@ chrome.runtime.onInstalled.addListener(async () => {
     periodInMinutes: 240,
   });
 
+  // AI News: auto-refresh (controlled by user toggle, default off)
+  const newsAutoRefresh = await chrome.storage.local.get("newsAutoRefresh");
+  if (newsAutoRefresh.newsAutoRefresh) {
+    chrome.alarms.create(ALARMS.NEWS_REFRESH, {
+      delayInMinutes: 30,
+      periodInMinutes: 30,
+    });
+  }
+
   await scheduleMorningDigestAlarm();
   updateBadge();
 
@@ -525,6 +534,12 @@ chrome.runtime.onStartup.addListener(async () => {
   });
   // People Context: compute every 4 hours
   chrome.alarms.create(ALARMS.PEOPLE_CONTEXT, { delayInMinutes: 20, periodInMinutes: 240 });
+  // AI News: auto-refresh (controlled by user toggle)
+  chrome.storage.local.get("newsAutoRefresh").then((r) => {
+    if (r.newsAutoRefresh) {
+      chrome.alarms.create(ALARMS.NEWS_REFRESH, { delayInMinutes: 30, periodInMinutes: 30 });
+    }
+  });
   await scheduleMorningDigestAlarm();
 
   initSyncHooks();
@@ -803,8 +818,7 @@ chrome.runtime.onMessage.addListener(
       return true;
     } else if (message.type === "REFRESH_NEWS") {
       sendResponse({ ok: true, started: true });
-      const accounts = (message as unknown as { accounts?: string[] }).accounts;
-      refreshNews(accounts)
+      refreshNews()
         .then((result) => {
           chrome.runtime.sendMessage({ type: "NEWS_REFRESH_COMPLETE", ...result }).catch(() => {});
         })
@@ -815,12 +829,17 @@ chrome.runtime.onMessage.addListener(
             newPosts: 0,
             total: 0,
             errors: [String(err)],
+            sourceStats: [],
           }).catch(() => {});
         });
       return false;
-    } else if (message.type === "X_SCRAPED_POSTS") {
-      const payload = message as unknown as { posts: import("@shared/types").XScrapedPost[] };
-      handleScrapedPosts(payload.posts, sender.tab?.id);
+    } else if (message.type === "SET_NEWS_ALARM") {
+      const { enabled } = message as unknown as { enabled: boolean; type: string };
+      if (enabled) {
+        chrome.alarms.create(ALARMS.NEWS_REFRESH, { delayInMinutes: 30, periodInMinutes: 30 });
+      } else {
+        chrome.alarms.clear(ALARMS.NEWS_REFRESH);
+      }
       sendResponse({ ok: true });
       return false;
     } else if (message.type === "SEND_DRAFT") {
@@ -912,6 +931,10 @@ chrome.alarms.onAlarm.addListener((alarm) => {
     case ALARMS.AUTHOR_BACKFILL:
       backfillPRAuthors()
         .catch((err) => console.warn("[CT:worker] Author backfill failed:", err));
+      break;
+    case ALARMS.NEWS_REFRESH:
+      refreshNews()
+        .catch((err) => console.warn("[CT:worker] News refresh failed:", err));
       break;
     default:
       if (alarm.name.startsWith(ALARMS.SNOOZE_PREFIX)) {

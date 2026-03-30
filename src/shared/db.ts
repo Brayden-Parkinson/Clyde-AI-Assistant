@@ -287,6 +287,52 @@ class ClydeDB extends Dexie {
     this.version(25).stores({
       open_pr_snapshots: "++id, repo, snapshotAt",
     });
+
+    // Eng Stats: Add revert detection to PRMetric, expand CopilotDailyMetric
+    this.version(26)
+      .stores({})
+      .upgrade((tx) => {
+        tx.table("pr_metrics")
+          .toCollection()
+          .modify((pr) => {
+            if (pr.isRevert === undefined) pr.isRevert = false;
+            if (pr.revertedPrNumber === undefined) pr.revertedPrNumber = null;
+            // Detect reverts from existing title data
+            if (/^revert\s/i.test(pr.title)) {
+              pr.isRevert = true;
+            }
+          });
+        tx.table("copilot_metrics")
+          .toCollection()
+          .modify((m) => {
+            if (m.totalSuggestions === undefined) m.totalSuggestions = 0;
+            if (m.totalAcceptances === undefined) m.totalAcceptances = 0;
+            if (m.totalLinesSuggested === undefined) m.totalLinesSuggested = 0;
+            if (m.totalLinesAccepted === undefined) m.totalLinesAccepted = 0;
+            if (m.totalSeats === undefined) m.totalSeats = null;
+          });
+      });
+
+    // AI News: multi-source (replaces X-only tweetId schema)
+    this.version(27).stores({
+      news_posts: "++id, &sourceId, source, relevanceScore, postedAt, fetchedAt",
+    }).upgrade(async (tx) => {
+      await tx.table("news_posts").toCollection().modify((post: Record<string, unknown>) => {
+        if (post.tweetId && !post.sourceId) {
+          post.sourceId = `x:${post.tweetId}`;
+          post.source = "hacker-news"; // legacy X posts bucketed here
+          post.sourceName = `@${post.author}`;
+          post.title = typeof post.rawText === "string" ? post.rawText.slice(0, 80) : "";
+          post.fetchedAt = (post.scrapedAt as string) ?? new Date().toISOString();
+          post.topicTag = "Industry";
+          post.author = post.authorDisplayName ?? post.author ?? null;
+        }
+        delete post.tweetId;
+        delete post.scrapedAt;
+        delete post.links;
+        delete post.authorDisplayName;
+      });
+    });
   }
 }
 

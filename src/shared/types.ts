@@ -679,6 +679,10 @@ export interface PRMetric {
   aiTools: string[];
   /** e.g. ["coderabbit", "copilot"] — AI tools that reviewed the PR */
   aiReviewers: string[];
+  /** true if this PR reverts a previous PR (detected from title pattern) */
+  isRevert: boolean;
+  /** PR number that was reverted, extracted from body (e.g. "Reverts org/repo#123") */
+  revertedPrNumber: number | null;
   syncedAt: string;
 }
 
@@ -745,45 +749,70 @@ export interface CopilotDailyMetric {
   totalActiveUsers: number;
   totalEngagedUsers: number;
   totalChats: number;
+  /** Aggregated code suggestions shown across all editors/models */
+  totalSuggestions: number;
+  /** Aggregated code suggestions accepted across all editors/models */
+  totalAcceptances: number;
+  /** Aggregated lines of code suggested */
+  totalLinesSuggested: number;
+  /** Aggregated lines of code accepted */
+  totalLinesAccepted: number;
+  /** Total licensed Copilot seats (from billing API, null if unavailable) */
+  totalSeats: number | null;
   syncedAt: string;
 }
 
 // ─── AI News ───
 
-/** A scraped + summarized news post from X/Twitter */
+/** Known news source identifiers */
+export type NewsSourceType =
+  | "anthropic-blog"
+  | "hacker-news"
+  | "arxiv"
+  | "openai-blog"
+  | "huggingface-blog"
+  | "verge-ai"
+  | "techcrunch-ai";
+
+/** A fetched + summarized news item from any source */
 export interface NewsPost {
   id?: number;
-  /** Tweet ID from X for dedup */
-  tweetId: string;
-  /** @handle of the author */
-  author: string;
-  /** Display name */
-  authorDisplayName: string;
-  /** Raw post text */
+  /** Unique ID for dedup: "<source>:<item-id>" */
+  sourceId: string;
+  /** Source type enum */
+  source: NewsSourceType;
+  /** Human-readable source name, e.g. "Anthropic Blog" */
+  sourceName: string;
+  /** Author name if available (article byline), null otherwise */
+  author: string | null;
+  /** Article/post title */
+  title: string;
+  /** Raw content text (description or snippet) */
   rawText: string;
   /** Claude-generated 1-2 sentence summary */
   summary: string;
-  /** AI/engineering relevance score 1-10 */
+  /** Relevance score 1-10 */
   relevanceScore: number;
-  /** ISO timestamp of the original post */
+  /** Claude-assigned topic cluster */
+  topicTag: string;
+  /** ISO timestamp of the original publication */
   postedAt: string;
-  /** Permalink to the original tweet */
+  /** Permalink to the original article */
   url: string;
-  /** Links found in the post */
-  links: string[];
-  /** ISO timestamp when scraped */
-  scrapedAt: string;
+  /** ISO timestamp when fetched */
+  fetchedAt: string;
 }
 
-/** Raw scraped post before Claude processing */
-export interface XScrapedPost {
-  tweetId: string;
-  author: string;
-  authorDisplayName: string;
+/** Raw item from a news provider before Claude summarization */
+export interface RawNewsItem {
+  sourceId: string;
+  source: NewsSourceType;
+  sourceName: string;
+  author: string | null;
+  title: string;
   text: string;
-  timestamp: string;
   url: string;
-  links: string[];
+  postedAt: string;
 }
 
 // ─── Eng Stats: Open PR Snapshots ───
