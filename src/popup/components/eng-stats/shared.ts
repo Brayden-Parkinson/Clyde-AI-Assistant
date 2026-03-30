@@ -193,6 +193,321 @@ export function predictPoints(values: number[], count: number): number[] {
   });
 }
 
+// ─── Cycle Time expansion types ───
+
+export interface ComponentCycleRow {
+  component: string;
+  prCount: number;
+  avgCycleHours: number | null;
+  medCycleHours: number | null;
+  avgFirstReviewHours: number | null;
+  avgReviewDays: number;
+  avgSize: number;
+  aiPct: number;
+  weeklyTrend: number[];
+  prsByType: Record<string, number>;
+}
+
+export interface PersonRow {
+  author: string;
+  prCount: number;
+  prsPerWeek: number;
+  avgCycleHours: number | null;
+  medCycleHours: number | null;
+  totalAdditions: number;
+  totalDeletions: number;
+  totalLOC: number;
+  avgPRSize: number;
+  aiPct: number;
+  avgReviewDays: number;
+  weeklyTrend: number[];
+  primaryTeam: string | null;
+  productivityScore: number | null;
+}
+
+export interface CycleTimeAIComparison {
+  aiPRs: { count: number; avgCycleHours: number; avgFirstReviewHours: number; avgSize: number };
+  nonAIPRs: { count: number; avgCycleHours: number; avgFirstReviewHours: number; avgSize: number };
+  cycleTimeDeltaPct: number;
+  firstReviewDeltaPct: number;
+}
+
+export interface LOCStatsData {
+  totalAdditions: number;
+  totalDeletions: number;
+  netLOC: number;
+  totalPRs: number;
+  avgPRSize: number;
+  medPRSize: number;
+  prsPerWeek: number;
+  prSizeBuckets: { label: string; count: number; color: string }[];
+  weeklyLOC: { label: string; additions: number; deletions: number }[];
+  weeklyPRCount: { label: string; count: number }[];
+}
+
+export interface MatrixPoint {
+  author: string;
+  x: number;
+  y: number;
+  size: number;
+  aiPct: number;
+}
+
+// PR size buckets (LinearB benchmarks)
+export const PR_SIZE_BUCKETS = [
+  { label: "S (<194)", max: 194, color: "#10B981" },
+  { label: "M (194–400)", max: 400, color: "#3B82F6" },
+  { label: "L (400–800)", max: 800, color: "#F97316" },
+  { label: "XL (800+)", max: Infinity, color: "#EF4444" },
+] as const;
+
+// ─── Cycle Time compute helpers ───
+
+function groupByComponent(
+  metrics: PRMetric[],
+  prToTickets: Map<number, JiraTicket[]>,
+): Map<string, PRMetric[]> {
+  const map = new Map<string, PRMetric[]>();
+  for (const m of metrics) {
+    const tickets = prToTickets.get(m.id!);
+    if (!tickets?.length) continue;
+    const comp = tickets[0].component ?? "No Component";
+    if (!map.has(comp)) map.set(comp, []);
+    map.get(comp)!.push(m);
+  }
+  return map;
+}
+
+function avgBizCycleHours(prs: PRMetric[]): number | null {
+  const vals = removeOutliers(
+    prs.filter((p) => p.cycleTimeHours !== null && p.mergedAt)
+      .map((p) => toBusinessHours(p.cycleTimeHours!, p.createdAt, p.mergedAt!)),
+  );
+  return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
+}
+
+function medBizCycleHours(prs: PRMetric[]): number | null {
+  const vals = prs
+    .filter((p) => p.cycleTimeHours !== null && p.mergedAt)
+    .map((p) => toBusinessHours(p.cycleTimeHours!, p.createdAt, p.mergedAt!));
+  return vals.length ? median(vals) : null;
+}
+
+function avgFirstReview(prs: PRMetric[]): number | null {
+  const vals = removeOutliers(
+    prs.filter((p) => p.timeToFirstReviewHours !== null)
+      .map((p) => {
+        const end = new Date(new Date(p.createdAt).getTime() + p.timeToFirstReviewHours! * 3600000).toISOString();
+        return toBusinessHours(p.timeToFirstReviewHours!, p.createdAt, end);
+      }),
+  );
+  return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
+}
+
+function avgReviewDays(prs: PRMetric[]): number {
+  const vals = prs.filter((p) => p.reviewRounds > 0).map((p) => p.reviewRounds);
+  return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 0;
+}
+
+function weeklyTrendForPRs(prs: PRMetric[]): number[] {
+  const byWeek = new Map<string, number[]>();
+  for (const m of prs) {
+    if (!m.mergedAt || m.cycleTimeHours === null) continue;
+    const biz = toBusinessHours(m.cycleTimeHours, m.createdAt, m.mergedAt);
+    const key = weekKey(new Date(m.mergedAt));
+    if (!byWeek.has(key)) byWeek.set(key, []);
+    byWeek.get(key)!.push(biz);
+  }
+  return Array.from(byWeek.entries())
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([, vals]) => vals.reduce((a, b) => a + b, 0) / vals.length)
+    .slice(-6);
+}
+
+export function computeComponentCycleRows(
+  metrics: PRMetric[],
+  prToTickets: Map<number, JiraTicket[]>,
+): ComponentCycleRow[] {
+  const byComp = groupByComponent(metrics, prToTickets);
+  return Array.from(byComp.entries())
+    .sort((a, b) => b[1].length - a[1].length)
+    .map(([component, prs]) => {
+      const prsByType: Record<string, number> = {};
+      for (const m of prs) {
+        const tickets = prToTickets.get(m.id!);
+        const issueType = tickets?.[0]?.issueType ?? "Unknown";
+        prsByType[issueType] = (prsByType[issueType] ?? 0) + 1;
+      }
+      return {
+        component,
+        prCount: prs.length,
+        avgCycleHours: avgBizCycleHours(prs),
+        medCycleHours: medBizCycleHours(prs),
+        avgFirstReviewHours: avgFirstReview(prs),
+        avgReviewDays: avgReviewDays(prs),
+        avgSize: prs.length ? Math.round(prs.reduce((a, p) => a + p.additions + p.deletions, 0) / prs.length) : 0,
+        aiPct: prs.length ? Math.round((prs.filter((p) => p.aiAssisted).length / prs.length) * 100) : 0,
+        weeklyTrend: weeklyTrendForPRs(prs),
+        prsByType,
+      };
+    });
+}
+
+export function computePersonRows(
+  metrics: PRMetric[],
+  prToTickets: Map<number, JiraTicket[]>,
+  timeRange: number,
+): PersonRow[] {
+  const weeksInRange = Math.max(1, Math.ceil(timeRange / 7));
+  const byAuthor = new Map<string, PRMetric[]>();
+  let nullAuthorCount = 0;
+  for (const m of metrics) {
+    if (!m.author) { nullAuthorCount++; continue; }
+    if (!byAuthor.has(m.author)) byAuthor.set(m.author, []);
+    byAuthor.get(m.author)!.push(m);
+  }
+
+  const rows: PersonRow[] = [];
+  for (const [author, prs] of byAuthor) {
+    if (prs.length < 2) continue;
+    const totalAdditions = prs.reduce((a, p) => a + p.additions, 0);
+    const totalDeletions = prs.reduce((a, p) => a + p.deletions, 0);
+
+    // Find most common Jira component
+    const compCounts = new Map<string, number>();
+    for (const m of prs) {
+      const tickets = prToTickets.get(m.id!);
+      const comp = tickets?.[0]?.component;
+      if (comp) compCounts.set(comp, (compCounts.get(comp) ?? 0) + 1);
+    }
+    let primaryTeam: string | null = null;
+    let maxCount = 0;
+    for (const [comp, count] of compCounts) {
+      if (count > maxCount) { primaryTeam = comp; maxCount = count; }
+    }
+
+    rows.push({
+      author,
+      prCount: prs.length,
+      prsPerWeek: prs.length / weeksInRange,
+      avgCycleHours: avgBizCycleHours(prs),
+      medCycleHours: medBizCycleHours(prs),
+      totalAdditions,
+      totalDeletions,
+      totalLOC: totalAdditions + totalDeletions,
+      avgPRSize: Math.round((totalAdditions + totalDeletions) / prs.length),
+      aiPct: Math.round((prs.filter((p) => p.aiAssisted).length / prs.length) * 100),
+      avgReviewDays: avgReviewDays(prs),
+      weeklyTrend: weeklyTrendForPRs(prs),
+      primaryTeam,
+      productivityScore: null, // filled by productivityScore.ts
+    });
+  }
+
+  return rows;
+}
+
+export function computeCycleTimeAIComparison(metrics: PRMetric[]): CycleTimeAIComparison | null {
+  const ai = metrics.filter((m) => m.aiAssisted && m.mergedAt);
+  const nonAI = metrics.filter((m) => !m.aiAssisted && m.mergedAt);
+  if (ai.length < 3 || nonAI.length < 3) return null;
+
+  const aiAvgCycle = avgBizCycleHours(ai) ?? 0;
+  const nonAIAvgCycle = avgBizCycleHours(nonAI) ?? 0;
+  const aiAvgReview = avgFirstReview(ai) ?? 0;
+  const nonAIAvgReview = avgFirstReview(nonAI) ?? 0;
+
+  const cycleDelta = nonAIAvgCycle > 0 ? ((aiAvgCycle - nonAIAvgCycle) / nonAIAvgCycle) * 100 : 0;
+  const reviewDelta = nonAIAvgReview > 0 ? ((aiAvgReview - nonAIAvgReview) / nonAIAvgReview) * 100 : 0;
+
+  return {
+    aiPRs: {
+      count: ai.length,
+      avgCycleHours: aiAvgCycle,
+      avgFirstReviewHours: aiAvgReview,
+      avgSize: Math.round(ai.reduce((a, p) => a + p.additions + p.deletions, 0) / ai.length),
+    },
+    nonAIPRs: {
+      count: nonAI.length,
+      avgCycleHours: nonAIAvgCycle,
+      avgFirstReviewHours: nonAIAvgReview,
+      avgSize: Math.round(nonAI.reduce((a, p) => a + p.additions + p.deletions, 0) / nonAI.length),
+    },
+    cycleTimeDeltaPct: cycleDelta,
+    firstReviewDeltaPct: reviewDelta,
+  };
+}
+
+export function computeLOCStats(metrics: PRMetric[], timeRange: number): LOCStatsData {
+  const weeksInRange = Math.max(1, Math.ceil(timeRange / 7));
+  const totalAdditions = metrics.reduce((a, m) => a + m.additions, 0);
+  const totalDeletions = metrics.reduce((a, m) => a + m.deletions, 0);
+  const sizes = metrics.map((m) => m.additions + m.deletions);
+  const sorted = [...sizes].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  const medPRSize = sorted.length
+    ? sorted.length % 2 !== 0
+      ? sorted[mid]
+      : Math.round((sorted[mid - 1] + sorted[mid]) / 2)
+    : 0;
+
+  const prSizeBuckets = PR_SIZE_BUCKETS.map((b) => ({ label: b.label, count: 0, color: b.color }));
+  for (const s of sizes) {
+    for (let i = 0; i < PR_SIZE_BUCKETS.length; i++) {
+      if (s < PR_SIZE_BUCKETS[i].max) { prSizeBuckets[i].count++; break; }
+    }
+  }
+
+  // Weekly LOC
+  const weeklyMap = new Map<string, { additions: number; deletions: number }>();
+  const weeklyCountMap = new Map<string, number>();
+  for (const m of metrics) {
+    if (!m.mergedAt) continue;
+    const key = weekKey(new Date(m.mergedAt));
+    const existing = weeklyMap.get(key) ?? { additions: 0, deletions: 0 };
+    existing.additions += m.additions;
+    existing.deletions += m.deletions;
+    weeklyMap.set(key, existing);
+    weeklyCountMap.set(key, (weeklyCountMap.get(key) ?? 0) + 1);
+  }
+
+  const weeklyLOC = Array.from(weeklyMap.entries())
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([key, v]) => ({ label: weekLabel(new Date(key + "T12:00:00")), ...v }))
+    .slice(-Math.ceil(timeRange / 7));
+
+  const weeklyPRCount = Array.from(weeklyCountMap.entries())
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([key, count]) => ({ label: weekLabel(new Date(key + "T12:00:00")), count }))
+    .slice(-Math.ceil(timeRange / 7));
+
+  return {
+    totalAdditions,
+    totalDeletions,
+    netLOC: totalAdditions - totalDeletions,
+    totalPRs: metrics.length,
+    avgPRSize: metrics.length ? Math.round((totalAdditions + totalDeletions) / metrics.length) : 0,
+    medPRSize,
+    prsPerWeek: metrics.length / weeksInRange,
+    prSizeBuckets,
+    weeklyLOC,
+    weeklyPRCount,
+  };
+}
+
+export function computeProductivityMatrix(personRows: PersonRow[]): MatrixPoint[] {
+  if (personRows.length < 3) return [];
+  return personRows
+    .filter((r) => r.avgCycleHours !== null && r.avgCycleHours > 0)
+    .map((r) => ({
+      author: r.author,
+      x: r.prsPerWeek,
+      y: 1 / (r.avgCycleHours! / 24), // efficiency: inverse of cycle time in days
+      size: Math.max(6, Math.min(20, Math.log2(r.totalLOC + 1) * 2)),
+      aiPct: r.aiPct,
+    }));
+}
+
 // ─── Computed helpers for team/author data ───
 
 export function computeTeamRows(
