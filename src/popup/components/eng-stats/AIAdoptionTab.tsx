@@ -22,7 +22,7 @@ import {
   type AIAdoptionScore as ScoreResult,
   type ActionItem,
 } from "./aiAdoptionScore";
-import { ScoreGauge } from "./charts";
+import { ScoreGauge, InfoTip } from "./charts";
 
 interface AIAdoptionTabProps extends TabProps {
   AIAdoptionChart: React.ComponentType<{
@@ -433,7 +433,7 @@ export function AIAdoptionTab({
             marginBottom: 2,
           }}
         >
-          Weekly AI Adoption
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>Weekly AI Adoption <InfoTip dark={darkMode} text="Percentage of merged PRs that used AI tools (Copilot, Cursor, CodeRabbit, etc.), calculated weekly. Detection is based on commit trailers, PR labels, and bot comments. Dashed line shows linear trend; dotted section is a forecast." /></span>
         </div>
         <div
           style={{
@@ -468,7 +468,7 @@ export function AIAdoptionTab({
               marginBottom: 10,
             }}
           >
-            By Team
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>By Team <InfoTip dark={darkMode} text="AI adoption percentage per Jira component/team. Shows what fraction of each team's merged PRs were AI-assisted. Teams are sorted lowest-first to highlight adoption gaps." /></span>
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             {teamByAI.map((r) => (
@@ -553,7 +553,7 @@ export function AIAdoptionTab({
                 marginBottom: 10,
               }}
             >
-              Engineer Segments
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>Engineer Segments <InfoTip dark={darkMode} text="Engineers grouped by AI tool usage rate. Power: ≥75% of PRs AI-assisted, Frequent: ≥40%, Light: >0%, Non-users: 0%. Helps identify adoption gaps and coaching opportunities." /></span>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
               {([
@@ -594,7 +594,7 @@ export function AIAdoptionTab({
                 marginBottom: 8,
               }}
             >
-              By Tool
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>By Tool <InfoTip dark={darkMode} text="Count of merged PRs per detected AI tool. Tools are identified from commit trailers, PR body markers, and bot review comments. A single PR can count toward multiple tools." /></span>
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
               {displayToolEntries.map(([tool, count]) => (
@@ -644,7 +644,7 @@ export function AIAdoptionTab({
               color: dk(darkMode, "rgba(255,255,255,0.6)", OS.secondary),
             }}
           >
-            Per-Author AI Adoption
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>Per-Author AI Adoption <InfoTip dark={darkMode} text="Each engineer's AI tool usage rate. AI % is the fraction of their merged PRs that were AI-assisted. Tier badges: Power (≥75%), Frequent (≥40%), Light (>0%), None (0%). Click a row to expand tool breakdown." /></span>
           </div>
           {zeroAdoptionCount > 0 && (
             <div
@@ -999,7 +999,7 @@ export function AIAdoptionTab({
               marginBottom: 10,
             }}
           >
-            Insights
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>Insights <InfoTip dark={darkMode} text="Auto-generated recommendations based on adoption score pillars (utilization, impact, quality). Priority reflects how much the issue affects overall score. Address high-priority items first for the biggest gains." /></span>
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             {adoptionScore.actionItems.map((item, idx) => {
@@ -1048,7 +1048,7 @@ export function AIAdoptionTab({
               marginBottom: 10,
             }}
           >
-            AI Reviews
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>AI Reviews <InfoTip dark={darkMode} text="Count of AI-generated code reviews per tool (CodeRabbit, Copilot, etc.). Detected from bot review comments on merged PRs. Higher counts indicate stronger automated review coverage." /></span>
           </div>
           <div
             style={{
