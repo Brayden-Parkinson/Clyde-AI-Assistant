@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from "react";
 import type { AIReviewComment } from "@shared/types";
-import { TabProps, dk, weekKey, categoryColors, toolColors } from "./shared";
+import { TabProps, dk, weekKey, categoryColors, toolColors, isWeekday } from "./shared";
 import { OS } from "@shared/tokens";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db } from "@shared/db";
@@ -45,9 +45,10 @@ export function AIReviewsTab({
   const [authorSortAsc, setAuthorSortAsc] = useState(false);
   const [showAllAuthors, setShowAllAuthors] = useState(false);
 
-  // ─── Query AI review comments from DB ───
+  // ─── Query AI review comments from DB (weekdays only) ───
   const allReviewComments = useLiveQuery(
-    () => db.ai_review_comments.where("createdAt").aboveOrEqual(since).toArray(),
+    () => db.ai_review_comments.where("createdAt").aboveOrEqual(since).toArray()
+      .then((comments) => comments.filter((c) => isWeekday(c.createdAt))),
     [since, queryKey],
     [] as AIReviewComment[],
   );

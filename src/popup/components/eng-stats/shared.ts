@@ -104,6 +104,23 @@ export function median(values: number[]): number {
     : (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
+export function isWeekday(isoDate: string): boolean {
+  const day = new Date(isoDate).getDay();
+  return day !== 0 && day !== 6;
+}
+
+export function businessDaysInRange(totalDays: number): number {
+  const fullWeeks = Math.floor(totalDays / 7);
+  const remainder = totalDays % 7;
+  let bizDays = fullWeeks * 5;
+  const today = new Date().getDay(); // 0=Sun..6=Sat
+  for (let i = 0; i < remainder; i++) {
+    const d = ((today - remainder + i) % 7 + 7) % 7;
+    if (d !== 0 && d !== 6) bizDays++;
+  }
+  return Math.max(bizDays, 1); // avoid div-by-zero
+}
+
 export function weekendDaysBetween(startISO: string, endISO: string): number {
   const start = new Date(startISO);
   const end = new Date(endISO);

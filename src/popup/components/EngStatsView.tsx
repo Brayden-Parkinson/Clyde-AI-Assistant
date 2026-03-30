@@ -10,7 +10,7 @@ import { db } from "@shared/db";
 import { OS } from "@shared/tokens";
 import type { PRMetric, JiraTicket, PRJiraLink, OpenPRSnapshot } from "@shared/types";
 import {
-  dk, daysAgoISO,
+  dk, daysAgoISO, isWeekday,
   type EngStatsConfig, type SectionId, type KpiId, type TeamColumnId,
 } from "./eng-stats/shared";
 import { KPICard, CycleTimeChart, AIAdoptionChart, PRSizeChart, PRFlowChart } from "./eng-stats/charts";
@@ -105,6 +105,7 @@ export function EngStatsView({ darkMode = false }: EngStatsViewProps) {
         .where("mergedAt")
         .aboveOrEqual(since)
         .toArray()
+        .then((prs) => prs.filter((p) => p.mergedAt && isWeekday(p.mergedAt)))
         .catch(() => []),
     [since, queryKey],
     [] as PRMetric[],
@@ -122,6 +123,7 @@ export function EngStatsView({ darkMode = false }: EngStatsViewProps) {
         .where("date")
         .aboveOrEqual(since.slice(0, 10))
         .toArray()
+        .then((rows) => rows.filter((r) => isWeekday(r.date)))
         .catch(() => []),
     [since],
     [],

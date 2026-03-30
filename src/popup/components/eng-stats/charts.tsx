@@ -1,6 +1,68 @@
-import React, { useState } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { OS } from "@shared/tokens";
 import { dk, predictPoints, linearRegression, type WeekBucket } from "./shared";
+
+// ─── InfoTip ───
+
+export function InfoTip({ text, dark }: { text: string; dark: boolean }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  return (
+    <div ref={ref} style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
+      <div
+        onClick={() => setOpen(!open)}
+        style={{
+          width: 16,
+          height: 16,
+          borderRadius: "50%",
+          border: `1.5px solid ${dk(dark, "rgba(255,255,255,0.35)", "rgba(0,0,0,0.3)")}`,
+          background: dk(dark, "rgba(255,255,255,0.06)", "rgba(0,0,0,0.04)"),
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          cursor: "pointer",
+          flexShrink: 0,
+        }}
+      >
+        <span style={{ fontSize: 10, fontWeight: 700, fontFamily: OS.mono, color: dk(dark, "rgba(255,255,255,0.6)", OS.muted), lineHeight: 1 }}>i</span>
+      </div>
+      {open && (
+        <div
+          style={{
+            position: "absolute",
+            top: "calc(100% + 6px)",
+            left: "50%",
+            transform: "translateX(-50%)",
+            width: 240,
+            padding: "10px 12px",
+            borderRadius: 8,
+            background: dk(dark, "rgba(30,30,38,0.97)", "rgba(255,255,255,0.98)"),
+            border: `1px solid ${dk(dark, "rgba(255,255,255,0.12)", OS.border)}`,
+            boxShadow: dk(dark, "0 4px 16px rgba(0,0,0,0.5)", "0 4px 16px rgba(0,0,0,0.12)"),
+            zIndex: 100,
+            fontSize: 11,
+            lineHeight: 1.5,
+            color: dk(dark, "rgba(255,255,255,0.7)", OS.secondary),
+            fontFamily: OS.font,
+            fontWeight: 400,
+          }}
+        >
+          {text}
+        </div>
+      )}
+    </div>
+  );
+}
 
 // ─── Sub-components ───
 

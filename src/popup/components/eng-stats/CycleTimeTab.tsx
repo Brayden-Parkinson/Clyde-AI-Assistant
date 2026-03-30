@@ -11,6 +11,7 @@ import {
   fmtHours,
 } from "./shared";
 import { OS } from "@shared/tokens";
+import { InfoTip } from "./charts";
 
 interface CycleTimeTabProps extends TabProps {
   CycleTimeChart: React.ComponentType<{
@@ -107,7 +108,10 @@ export function CycleTimeTab({
             marginBottom: 2,
           }}
         >
-          Weekly Average Cycle Time
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+            Weekly Average Cycle Time
+            <InfoTip dark={darkMode} text="Average time from PR creation to merge per week, in business hours (weekends/nights excluded). Outliers removed. Trend line shows linear regression; dotted section forecasts future weeks." />
+          </span>
         </div>
         <div
           style={{
@@ -138,7 +142,10 @@ export function CycleTimeTab({
           marginTop: 4,
         }}
       >
-        By Team
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+          By Team
+          <InfoTip dark={darkMode} text="Average cycle time per Jira component/team. Red border indicates teams averaging over 10 days. Sparkline shows the weekly trend over the selected period." />
+        </span>
       </div>
 
       <div
