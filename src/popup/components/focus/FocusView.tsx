@@ -11,8 +11,8 @@ import {
   DEMO_COMMITMENTS,
 } from "@shared/demo-data";
 import { dk } from "../../DarkModeContext";
+import { Overdue, classifyOverdue } from "./Overdue";
 import { RightNow } from "./RightNow";
-import { AutoResolved } from "./AutoResolved";
 import { UpcomingPrep } from "./UpcomingPrep";
 import { Duplicates } from "./Duplicates";
 import { CommandBar } from "./CommandBar";
@@ -38,22 +38,13 @@ export function FocusView({ darkMode, demoMode }: Props) {
   );
   const livePeople = useLiveQuery(() => db.people.toArray(), []);
   const liveCalendar = useLiveQuery(() => db.calendar_cache.toArray(), []);
-  const liveSuggestions = useLiveQuery(
-    () => db.completion_suggestions.where("status").equals("pending").toArray(),
-    []
-  );
 
   const commitments: Commitment[] = demoMode
     ? [...DEMO_COMMITMENTS]
     : (liveCommitments ?? []);
   const people: Person[] = demoMode ? DEMO_PEOPLE : (livePeople ?? []);
   const calendar: CalendarEvent[] = demoMode ? DEMO_CALENDAR_EVENTS : (liveCalendar ?? []);
-  const suggestions = demoMode ? DEMO_SUGGESTIONS : (liveSuggestions ?? []);
 
-  const peopleMap = useMemo(
-    () => new Map(people.map((p) => [p.id!, p])),
-    [people]
-  );
   const peopleByEmail = useMemo(
     () => new Map(people.filter((p) => p.email).map((p) => [p.email!, p])),
     [people]
@@ -66,23 +57,26 @@ export function FocusView({ darkMode, demoMode }: Props) {
     [commitments, markedDone]
   );
 
-  const ranked: RankedItem[] = useMemo(
-    () => rankCommitments(openCommitments, people, calendar, peopleByEmail, 5),
-    [openCommitments, people, calendar, peopleByEmail]
+  const overdueItems = useMemo(
+    () => classifyOverdue(openCommitments, people),
+    [openCommitments, people]
   );
 
-  const autoResolved = useMemo(() => {
-    // Items with completion suggestions or status=done
-    const doneItems = commitments.filter((c) => c.status === "done" || c.likely_completed);
-    return doneItems.slice(0, 5).map((c) => {
-      // Try to find the matching person via context
-      const person = people.find(
-        (p) => c.context.toLowerCase().includes(p.name.toLowerCase().split(" ")[0])
-      );
-      const suggestion = suggestions.find((s) => s.commitmentId === c.id);
-      return { commitment: c, person, evidence: suggestion?.evidence ?? c.completion_signal };
-    });
-  }, [commitments, people, suggestions]);
+  // IDs already shown in overdue — exclude from "Coming up"
+  const overdueIds = useMemo(
+    () => new Set(overdueItems.map((i) => i.commitment.id!)),
+    [overdueItems]
+  );
+
+  const nonOverdue = useMemo(
+    () => openCommitments.filter((c) => !overdueIds.has(c.id!)),
+    [openCommitments, overdueIds]
+  );
+
+  const ranked: RankedItem[] = useMemo(
+    () => rankCommitments(nonOverdue, people, calendar, peopleByEmail, 5),
+    [nonOverdue, people, calendar, peopleByEmail]
+  );
 
   const preps: MeetingPrep[] = useMemo(
     () => generateMeetingPreps(calendar, openCommitments, people, peopleByEmail),
@@ -97,6 +91,15 @@ export function FocusView({ darkMode, demoMode }: Props) {
   const totalOpen = openCommitments.length;
 
   // ── Filter for search ──
+
+  const filteredOverdue = searchQuery
+    ? overdueItems.filter(
+        (i) =>
+          i.commitment.text.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          (i.person?.name ?? "").toLowerCase().includes(searchQuery.toLowerCase()) ||
+          i.commitment.context.toLowerCase().includes(searchQuery.toLowerCase())
+      )
+    : overdueItems;
 
   const filteredRanked = searchQuery
     ? ranked.filter(
@@ -138,15 +141,11 @@ export function FocusView({ darkMode, demoMode }: Props) {
     >
       <CommandBar darkMode={darkMode} onSearch={setSearchQuery} />
 
-      <RightNow
-        items={filteredRanked}
+      <Overdue
+        items={filteredOverdue}
         darkMode={darkMode}
         onMarkDone={handleMarkDone}
       />
-
-      <AutoResolved items={autoResolved} darkMode={darkMode} />
-
-      <UpcomingPrep preps={preps} darkMode={darkMode} />
 
       <Duplicates
         groups={duplicates}
@@ -154,6 +153,14 @@ export function FocusView({ darkMode, demoMode }: Props) {
         onMerge={handleMerge}
         onIgnore={handleIgnore}
       />
+
+      <RightNow
+        items={filteredRanked}
+        darkMode={darkMode}
+        onMarkDone={handleMarkDone}
+      />
+
+      <UpcomingPrep preps={preps} darkMode={darkMode} />
 
       {/* Backlog footer */}
       <div
