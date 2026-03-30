@@ -1,87 +1,212 @@
 /**
- * Productivity Score — composite 0-100 score from PR data.
+ * Multi-dimensional productivity scoring system.
  *
- * Dimensions (all percentile-ranked within the cohort):
- *   Throughput  (25%) — PRs merged per week
- *   Efficiency  (25%) — inverse avg cycle time
- *   Volume      (15%) — log2(additions + 1)
- *   Consistency (20%) — weeks with ≥1 PR / total weeks
- *   AI Adoption (15%) — % of PRs that are AI-assisted
+ * 3 sub-scores + 1 composite, each 0-100:
  *
- * Returns null for all authors when cohort has <5 members.
+ * Velocity: shipping speed & throughput
+ *   - Throughput 35% (PRs/week)
+ *   - Speed 30% (inverse cycle time)
+ *   - Review responsiveness 20% (inverse first review time)
+ *   - Consistency 15% (active weeks ratio)
+ *
+ * Quality: clean, well-sized, durable PRs
+ *   - Non-revert rate 35% (revert penalty)
+ *   - PR sizing 30% (inverse PR size — smaller is better)
+ *   - Code efficiency 20% (deletion ratio — cleanup is valuable)
+ *   - Focus 15% (inverse files changed)
+ *
+ * Impact: meaningful, substantive contribution
+ *   - Weighted volume 30% (adds*1.0 + dels*0.6 + files*15)
+ *   - Non-trivial ratio 25% (PRs > 50 lines / total)
+ *   - Component breadth 20% (distinct Jira components)
+ *   - Sustained output 25% (PRs * (1 - revert_rate)^2)
+ *
+ * Overall: 0.35 * Velocity + 0.35 * Impact + 0.30 * Quality
  */
 
-import type { PersonRow } from "../shared";
+import type { PersonRow, ProductivityScores } from "../shared";
 import { weekKey } from "../shared";
-import type { PRMetric } from "@shared/types";
-
-const WEIGHTS = {
-  throughput: 0.25,
-  efficiency: 0.25,
-  volume: 0.15,
-  consistency: 0.20,
-  aiAdoption: 0.15,
-} as const;
+import type { PRMetric, JiraTicket } from "@shared/types";
 
 const MIN_AUTHORS = 5;
+
+// ─── Percentile helpers ───
 
 function percentileRank(value: number, allValues: number[]): number {
   if (allValues.length <= 1) return 50;
   const below = allValues.filter((v) => v < value).length;
   const equal = allValues.filter((v) => v === value).length;
-  // Midpoint percentile: handles ties gracefully
   return ((below + equal * 0.5) / allValues.length) * 100;
 }
 
-interface AuthorWeeklyActivity {
-  author: string;
-  weeksWithPRs: number;
+/** Percentile rank where lower raw value = higher score */
+function percentileRankInverse(value: number, allValues: number[]): number {
+  return 100 - percentileRank(value, allValues);
 }
 
-export function computeWeeklyActivity(
-  metrics: PRMetric[],
-  timeRange: number,
-): Map<string, number> {
-  const totalWeeks = Math.max(4, Math.ceil(timeRange / 7));
-  const authorWeeks = new Map<string, Set<string>>();
-  for (const m of metrics) {
-    if (!m.author || !m.mergedAt) continue;
-    if (!authorWeeks.has(m.author)) authorWeeks.set(m.author, new Set());
-    authorWeeks.get(m.author)!.add(weekKey(new Date(m.mergedAt)));
-  }
-  const result = new Map<string, number>();
-  for (const [author, weeks] of authorWeeks) {
-    result.set(author, weeks.size / totalWeeks);
-  }
-  return result;
+// ─── Per-author raw metrics ───
+
+interface AuthorRaw {
+  author: string;
+  prsPerWeek: number;
+  avgCycleHours: number;
+  avgFirstReviewHours: number;
+  activeWeeksRatio: number;
+  revertCount: number;
+  avgPRSize: number;
+  deletionRatio: number;
+  avgChangedFiles: number;
+  weightedVolume: number;
+  nontrivialRatio: number;
+  componentBreadth: number;
+  sustainedOutput: number;
 }
+
+function computeAuthorRaws(
+  rows: PersonRow[],
+  metrics: PRMetric[],
+  prToTickets: Map<number, JiraTicket[]>,
+  timeRange: number,
+): AuthorRaw[] {
+  const totalWeeks = Math.max(4, Math.ceil(timeRange / 7));
+
+  // Group metrics by author
+  const byAuthor = new Map<string, PRMetric[]>();
+  for (const m of metrics) {
+    if (!m.author) continue;
+    if (!byAuthor.has(m.author)) byAuthor.set(m.author, []);
+    byAuthor.get(m.author)!.push(m);
+  }
+
+  return rows.map((r) => {
+    const prs = byAuthor.get(r.author) ?? [];
+    const merged = prs.filter((p) => p.mergedAt);
+
+    // Active weeks
+    const weeks = new Set(merged.map((p) => weekKey(new Date(p.mergedAt!))));
+
+    // Revert count
+    const revertCount = prs.filter((p) => p.isRevert).length;
+    const revertRate = prs.length > 0 ? revertCount / prs.length : 0;
+
+    // Deletion ratio
+    const totalAdds = prs.reduce((s, p) => s + p.additions, 0);
+    const totalDels = prs.reduce((s, p) => s + p.deletions, 0);
+    const totalChanges = totalAdds + totalDels;
+    const deletionRatio = totalChanges > 0 ? totalDels / totalChanges : 0;
+
+    // Avg changed files
+    const avgChangedFiles = prs.length > 0
+      ? prs.reduce((s, p) => s + p.changedFiles, 0) / prs.length
+      : 0;
+
+    // Weighted volume (adds*1.0 + dels*0.6 + files*15, summed across PRs)
+    const weightedVolume = prs.reduce(
+      (s, p) => s + p.additions * 1.0 + p.deletions * 0.6 + p.changedFiles * 15,
+      0,
+    );
+
+    // Non-trivial ratio (PRs where adds+dels > 50)
+    const nontrivial = prs.filter((p) => p.additions + p.deletions > 50).length;
+    const nontrivialRatio = prs.length > 0 ? nontrivial / prs.length : 0;
+
+    // Component breadth (distinct Jira components)
+    const components = new Set<string>();
+    for (const p of prs) {
+      const tickets = prToTickets.get(p.id!);
+      const comp = tickets?.[0]?.component;
+      if (comp) components.add(comp);
+    }
+
+    // Sustained output: prs * (1 - revert_rate)^2
+    const sustainedOutput = prs.length * Math.pow(1 - revertRate, 2);
+
+    return {
+      author: r.author,
+      prsPerWeek: r.prsPerWeek,
+      avgCycleHours: r.avgCycleHours ?? 9999,
+      avgFirstReviewHours: prs.length > 0
+        ? prs.reduce((s, p) => s + (p.timeToFirstReviewHours ?? 0), 0) / prs.filter((p) => p.timeToFirstReviewHours !== null).length || 9999
+        : 9999,
+      activeWeeksRatio: weeks.size / totalWeeks,
+      revertCount,
+      avgPRSize: r.avgPRSize,
+      deletionRatio,
+      avgChangedFiles,
+      weightedVolume,
+      nontrivialRatio,
+      componentBreadth: components.size,
+      sustainedOutput,
+    };
+  });
+}
+
+// ─── Score computation ───
+
+function computeVelocity(raw: AuthorRaw, allRaws: AuthorRaw[]): number {
+  return (
+    0.35 * percentileRank(raw.prsPerWeek, allRaws.map((r) => r.prsPerWeek)) +
+    0.30 * percentileRankInverse(raw.avgCycleHours, allRaws.map((r) => r.avgCycleHours)) +
+    0.20 * percentileRankInverse(raw.avgFirstReviewHours, allRaws.map((r) => r.avgFirstReviewHours)) +
+    0.15 * percentileRank(raw.activeWeeksRatio, allRaws.map((r) => r.activeWeeksRatio))
+  );
+}
+
+function revertScore(count: number): number {
+  if (count === 0) return 90;
+  if (count === 1) return 60;
+  return Math.max(0, 90 - 30 * count);
+}
+
+function computeQuality(raw: AuthorRaw, allRaws: AuthorRaw[]): number {
+  const revertScores = allRaws.map((r) => revertScore(r.revertCount));
+  const thisRevertScore = revertScore(raw.revertCount);
+
+  return (
+    0.35 * percentileRank(thisRevertScore, revertScores) +
+    0.30 * percentileRankInverse(raw.avgPRSize, allRaws.map((r) => r.avgPRSize)) +
+    0.20 * percentileRank(raw.deletionRatio, allRaws.map((r) => r.deletionRatio)) +
+    0.15 * percentileRankInverse(raw.avgChangedFiles, allRaws.map((r) => r.avgChangedFiles))
+  );
+}
+
+function computeImpact(raw: AuthorRaw, allRaws: AuthorRaw[]): number {
+  return (
+    0.30 * percentileRank(raw.weightedVolume, allRaws.map((r) => r.weightedVolume)) +
+    0.25 * percentileRank(raw.nontrivialRatio, allRaws.map((r) => r.nontrivialRatio)) +
+    0.20 * percentileRank(raw.componentBreadth, allRaws.map((r) => r.componentBreadth)) +
+    0.25 * percentileRank(raw.sustainedOutput, allRaws.map((r) => r.sustainedOutput))
+  );
+}
+
+// ─── Public API ───
 
 export function applyProductivityScores(
   rows: PersonRow[],
   metrics: PRMetric[],
+  prToTickets: Map<number, JiraTicket[]>,
   timeRange: number,
 ): PersonRow[] {
   if (rows.length < MIN_AUTHORS) return rows;
 
-  const weeklyActivity = computeWeeklyActivity(metrics, timeRange);
-
-  // Extract raw dimension values
-  const throughputs = rows.map((r) => r.prsPerWeek);
-  const efficiencies = rows.map((r) =>
-    r.avgCycleHours !== null && r.avgCycleHours > 0 ? 1 / r.avgCycleHours : 0,
-  );
-  const volumes = rows.map((r) => Math.log2(r.totalAdditions + 1));
-  const consistencies = rows.map((r) => weeklyActivity.get(r.author) ?? 0);
-  const aiAdoptions = rows.map((r) => r.aiPct / 100);
+  const allRaws = computeAuthorRaws(rows, metrics, prToTickets, timeRange);
 
   return rows.map((r, i) => {
-    const score =
-      percentileRank(throughputs[i], throughputs) * WEIGHTS.throughput +
-      percentileRank(efficiencies[i], efficiencies) * WEIGHTS.efficiency +
-      percentileRank(volumes[i], volumes) * WEIGHTS.volume +
-      percentileRank(consistencies[i], consistencies) * WEIGHTS.consistency +
-      percentileRank(aiAdoptions[i], aiAdoptions) * WEIGHTS.aiAdoption;
+    const raw = allRaws[i];
+    const velocity = Math.round(computeVelocity(raw, allRaws));
+    const quality = Math.round(computeQuality(raw, allRaws));
+    const impact = Math.round(computeImpact(raw, allRaws));
+    const overall = Math.round(0.35 * velocity + 0.35 * impact + 0.30 * quality);
 
-    return { ...r, productivityScore: Math.round(score) };
+    return { ...r, scores: { velocity, quality, impact, overall } };
   });
 }
+
+// ─── Tooltip descriptions ───
+
+export const SCORE_TOOLTIPS = {
+  velocity: "Throughput (35%): PRs/week. Speed (30%): inverse cycle time. Review responsiveness (20%): how fast first reviews happen. Consistency (15%): weeks with activity.",
+  quality: "Non-revert rate (35%): PRs that don't get reverted. PR sizing (30%): smaller PRs = fewer defects. Code efficiency (20%): deletion ratio. Focus (15%): fewer files per PR.",
+  impact: "Weighted volume (30%): code weighted by type. Non-trivial ratio (25%): substantive vs trivial PRs. Breadth (20%): cross-component work. Sustained output (25%): volume adjusted for reverts.",
+  overall: "Balanced composite: Velocity (35%) + Impact (35%) + Quality (30%). AI adoption shown separately.",
+} as const;

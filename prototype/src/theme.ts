@@ -1,0 +1,33 @@
+export const theme = {
+  bg: '#0a0a0b',
+  cardBg: '#141416',
+  cardBgHover: '#1a1a1e',
+  cardBorder: 'rgba(255, 255, 255, 0.06)',
+  cardBorderHover: 'rgba(255, 255, 255, 0.1)',
+  surface: '#111113',
+  text: '#e4e4e7',
+  textSecondary: '#a1a1aa',
+  textMuted: '#71717a',
+  textDim: '#52525b',
+  red: '#ef4444',
+  redMuted: 'rgba(239, 68, 68, 0.15)',
+  amber: '#f59e0b',
+  amberMuted: 'rgba(245, 158, 11, 0.15)',
+  green: '#22c55e',
+  greenMuted: 'rgba(34, 197, 94, 0.15)',
+  purple: '#a78bfa',
+  purpleMuted: 'rgba(167, 139, 250, 0.15)',
+  blue: '#3b82f6',
+  blueMuted: 'rgba(59, 130, 246, 0.15)',
+  radius: 12,
+  radiusSm: 8,
+  radiusXs: 6,
+  transition: '150ms ease',
+} as const
+
+export const tierColors: Record<string, string> = {
+  boss: '#f59e0b',
+  direct: '#a78bfa',
+  peer: '#3b82f6',
+  other: '#71717a',
+}

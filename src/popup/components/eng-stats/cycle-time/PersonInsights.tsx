@@ -2,7 +2,7 @@ import React, { useMemo, useState, useCallback } from "react";
 import type { PRMetric, JiraTicket } from "@shared/types";
 import { OS } from "@shared/tokens";
 import { dk, fmtHours, computePersonRows, type PersonRow } from "../shared";
-import { applyProductivityScores } from "./productivityScore";
+import { applyProductivityScores, SCORE_TOOLTIPS } from "./productivityScore";
 import { Sparkline, InfoTip } from "../charts";
 
 interface PersonInsightsProps {
@@ -12,14 +12,14 @@ interface PersonInsightsProps {
   timeRange: number;
 }
 
-type SortKey = "author" | "prCount" | "prsPerWeek" | "avgCycleHours" | "totalLOC" | "avgPRSize" | "aiPct" | "avgReviewDays" | "productivityScore";
+type SortKey = "author" | "prCount" | "prsPerWeek" | "avgCycleHours" | "totalLOC" | "avgPRSize" | "aiPct" | "avgReviewDays" | "velocity" | "quality" | "impact" | "overall";
 
 const MIN_AUTHORS_FOR_SCORE = 5;
 
 export function PersonInsights({ darkMode, metrics, prToTickets, timeRange }: PersonInsightsProps) {
   const rows = useMemo(() => {
     const base = computePersonRows(metrics, prToTickets, timeRange);
-    return applyProductivityScores(base, metrics, timeRange);
+    return applyProductivityScores(base, metrics, prToTickets, timeRange);
   }, [metrics, prToTickets, timeRange]);
 
   const nullAuthorCount = useMemo(
@@ -27,7 +27,7 @@ export function PersonInsights({ darkMode, metrics, prToTickets, timeRange }: Pe
     [metrics],
   );
 
-  const showScore = rows.length >= MIN_AUTHORS_FOR_SCORE;
+  const showScores = rows.length >= MIN_AUTHORS_FOR_SCORE;
 
   const [sortKey, setSortKey] = useState<SortKey>("author");
   const [sortAsc, setSortAsc] = useState(true);
@@ -40,8 +40,13 @@ export function PersonInsights({ darkMode, metrics, prToTickets, timeRange }: Pe
   const sorted = useMemo(() => {
     const arr = [...rows];
     arr.sort((a, b) => {
-      const av = a[sortKey] ?? -Infinity;
-      const bv = b[sortKey] ?? -Infinity;
+      if (sortKey === "velocity" || sortKey === "quality" || sortKey === "impact" || sortKey === "overall") {
+        const av = a.scores?.[sortKey] ?? -Infinity;
+        const bv = b.scores?.[sortKey] ?? -Infinity;
+        return sortAsc ? av - bv : bv - av;
+      }
+      const av = a[sortKey as keyof PersonRow] ?? -Infinity;
+      const bv = b[sortKey as keyof PersonRow] ?? -Infinity;
       if (typeof av === "string" && typeof bv === "string") return sortAsc ? av.localeCompare(bv) : bv.localeCompare(av);
       return sortAsc ? (av as number) - (bv as number) : (bv as number) - (av as number);
     });
@@ -53,20 +58,33 @@ export function PersonInsights({ darkMode, metrics, prToTickets, timeRange }: Pe
   const headerColor = dk(darkMode, "rgba(255,255,255,0.45)", OS.muted);
   const textColor = dk(darkMode, "#fff", OS.text);
 
-  const columns: [SortKey, string, boolean][] = [
-    ["author", "Person", true],
-    ["prCount", "PRs", false],
-    ["prsPerWeek", "PRs/wk", false],
-    ["avgCycleHours", "Avg Cycle", false],
-    ["totalLOC", "Total LOC", false],
-    ["avgPRSize", "Avg Size", false],
-    ["aiPct", "AI %", false],
-    ["avgReviewDays", "Rev Days", false],
+  type ColDef = { key: SortKey; label: string; left?: boolean; tip?: string };
+
+  const columns: ColDef[] = [
+    { key: "author", label: "Person", left: true },
+    { key: "prCount", label: "PRs" },
+    { key: "prsPerWeek", label: "PRs/wk" },
+    { key: "avgCycleHours", label: "Avg Cycle" },
+    { key: "totalLOC", label: "Total LOC" },
+    { key: "avgPRSize", label: "Avg Size" },
+    { key: "aiPct", label: "AI %" },
+    { key: "avgReviewDays", label: "Rev Days" },
   ];
-  if (showScore) columns.push(["productivityScore", "Score", false]);
+  if (showScores) {
+    columns.push(
+      { key: "velocity", label: "V", tip: SCORE_TOOLTIPS.velocity },
+      { key: "quality", label: "Q", tip: SCORE_TOOLTIPS.quality },
+      { key: "impact", label: "I", tip: SCORE_TOOLTIPS.impact },
+      { key: "overall", label: "Overall", tip: SCORE_TOOLTIPS.overall },
+    );
+  }
 
   function fmtLOC(n: number): string {
     return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
+  }
+
+  function scoreVal(r: PersonRow, key: "velocity" | "quality" | "impact" | "overall"): string {
+    return r.scores ? String(r.scores[key]) : "—";
   }
 
   return (
@@ -79,9 +97,9 @@ export function PersonInsights({ darkMode, metrics, prToTickets, timeRange }: Pe
         <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
           Developer Insights
           <InfoTip dark={darkMode} text={
-            showScore
-              ? "Per-developer metrics. Productivity Score (0-100) combines throughput, efficiency, volume, consistency, and AI adoption — all percentile-ranked within the team. Requires 2+ PRs per person."
-              : "Per-developer metrics. Productivity Score requires 5+ contributors to display."
+            showScores
+              ? "Per-developer metrics with multi-dimensional scoring. V=Velocity (shipping speed), Q=Quality (clean PRs), I=Impact (substantive contribution), Overall=composite. Hover each score header for formula details."
+              : "Per-developer metrics. Scoring requires 5+ contributors to display."
           } />
         </span>
       </div>
@@ -108,14 +126,17 @@ export function PersonInsights({ darkMode, metrics, prToTickets, timeRange }: Pe
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
             <thead>
               <tr>
-                {columns.map(([key, label, isLeft]) => (
-                  <th key={key} onClick={() => handleSort(key)} style={{
-                    padding: "8px 10px", textAlign: isLeft ? "left" : "right",
+                {columns.map((col) => (
+                  <th key={col.key} onClick={() => handleSort(col.key)} style={{
+                    padding: "8px 10px", textAlign: col.left ? "left" : "right",
                     color: headerColor, fontWeight: 600, cursor: "pointer",
                     borderBottom: `1px solid ${dk(darkMode, "rgba(255,255,255,0.06)", OS.border)}`,
                     userSelect: "none", fontSize: 10, whiteSpace: "nowrap",
                   }}>
-                    {label}{sortKey === key ? (sortAsc ? " \u25B2" : " \u25BC") : ""}
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
+                      {col.label}{sortKey === col.key ? (sortAsc ? " \u25B2" : " \u25BC") : ""}
+                      {col.tip && <InfoTip dark={darkMode} text={col.tip} />}
+                    </span>
                   </th>
                 ))}
                 <th style={{
@@ -143,15 +164,13 @@ export function PersonInsights({ darkMode, metrics, prToTickets, timeRange }: Pe
                   <td style={{ padding: "8px 10px", textAlign: "right", color: textColor, fontFamily: OS.mono }}>{fmtLOC(r.avgPRSize)}</td>
                   <td style={{ padding: "8px 10px", textAlign: "right", color: textColor, fontFamily: OS.mono }}>{r.aiPct}%</td>
                   <td style={{ padding: "8px 10px", textAlign: "right", color: textColor, fontFamily: OS.mono }}>{r.avgReviewDays.toFixed(1)}</td>
-                  {showScore && (
-                    <td style={{ padding: "8px 10px", textAlign: "right" }}>
-                      <span style={{
-                        display: "inline-block", padding: "2px 8px", borderRadius: 4,
-                        fontSize: 11, fontWeight: 600, fontFamily: OS.mono,
-                        color: dk(darkMode, "rgba(255,255,255,0.7)", OS.secondary),
-                        background: dk(darkMode, "rgba(255,255,255,0.06)", "rgba(0,0,0,0.04)"),
-                      }}>{r.productivityScore ?? "—"}</span>
-                    </td>
+                  {showScores && (
+                    <>
+                      <ScoreCell value={scoreVal(r, "velocity")} darkMode={darkMode} />
+                      <ScoreCell value={scoreVal(r, "quality")} darkMode={darkMode} />
+                      <ScoreCell value={scoreVal(r, "impact")} darkMode={darkMode} />
+                      <ScoreCell value={scoreVal(r, "overall")} darkMode={darkMode} bold />
+                    </>
                   )}
                   <td style={{ padding: "8px 10px", textAlign: "right" }}>
                     {r.weeklyTrend.length >= 2 && (
@@ -165,14 +184,27 @@ export function PersonInsights({ darkMode, metrics, prToTickets, timeRange }: Pe
         </div>
       )}
 
-      {!showScore && rows.length > 0 && (
+      {!showScores && rows.length > 0 && (
         <div style={{
           fontSize: 10, color: dk(darkMode, "rgba(255,255,255,0.3)", OS.faint),
           textAlign: "center", marginTop: -4,
         }}>
-          Productivity Score requires 5+ contributors
+          Productivity scores require 5+ contributors
         </div>
       )}
     </>
+  );
+}
+
+function ScoreCell({ value, darkMode, bold }: { value: string; darkMode: boolean; bold?: boolean }) {
+  return (
+    <td style={{ padding: "8px 6px", textAlign: "right" }}>
+      <span style={{
+        display: "inline-block", padding: "2px 6px", borderRadius: 4,
+        fontSize: 10, fontWeight: bold ? 700 : 600, fontFamily: OS.mono,
+        color: dk(darkMode, "rgba(255,255,255,0.7)", OS.secondary),
+        background: dk(darkMode, "rgba(255,255,255,0.06)", "rgba(0,0,0,0.04)"),
+      }}>{value}</span>
+    </td>
   );
 }
