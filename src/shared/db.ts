@@ -287,6 +287,27 @@ class ClydeDB extends Dexie {
     this.version(25).stores({
       open_pr_snapshots: "++id, repo, snapshotAt",
     });
+
+    // AI News: multi-source (replaces X-only tweetId schema)
+    this.version(26).stores({
+      news_posts: "++id, &sourceId, source, relevanceScore, postedAt, fetchedAt",
+    }).upgrade(async (tx) => {
+      await tx.table("news_posts").toCollection().modify((post: Record<string, unknown>) => {
+        if (post.tweetId && !post.sourceId) {
+          post.sourceId = `x:${post.tweetId}`;
+          post.source = "hacker-news"; // legacy X posts bucketed here
+          post.sourceName = `@${post.author}`;
+          post.title = typeof post.rawText === "string" ? post.rawText.slice(0, 80) : "";
+          post.fetchedAt = (post.scrapedAt as string) ?? new Date().toISOString();
+          post.topicTag = "Industry";
+          post.author = post.authorDisplayName ?? post.author ?? null;
+        }
+        delete post.tweetId;
+        delete post.scrapedAt;
+        delete post.links;
+        delete post.authorDisplayName;
+      });
+    });
   }
 }
 
