@@ -18,7 +18,7 @@ export function AIImpactSection({ darkMode, metrics }: AIImpactProps) {
     <>
       <div style={{
         fontSize: 12, fontWeight: 600,
-        color: dk(darkMode, "rgba(255,255,255,0.6)", OS.secondary),
+        color: dk(darkMode, "rgba(255,255,255,0.5)", OS.secondary),
         marginTop: 4,
       }}>
         <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
@@ -93,11 +93,11 @@ function ComparisonCard({
   accent: string;
 }) {
   const cardBg = dk(darkMode, "#1c1c22", OS.white);
-  const cardBorder = `1px solid ${dk(darkMode, "rgba(255,255,255,0.08)", OS.border)}`;
+  const cardBorder = `1px solid ${dk(darkMode, "rgba(255,255,255,0.12)", OS.border)}`;
 
   return (
     <div style={{
-      flex: 1, padding: "14px 16px", borderRadius: 10,
+      flex: 1, padding: "12px 14px", borderRadius: 8,
       border: cardBorder, background: cardBg,
     }}>
       <div style={{

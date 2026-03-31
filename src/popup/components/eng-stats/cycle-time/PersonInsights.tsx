@@ -90,7 +90,7 @@ export function PersonInsights({ darkMode, metrics, prToTickets, timeRange }: Pe
 
   const [sortKey, setSortKey] = useState<SortKey>(showScores ? "overall" : "author");
   const [sortAsc, setSortAsc] = useState(showScores ? false : true);
-  const [compact, setCompact] = useState(false);
+  const [compact, setCompact] = useState(true);
 
   const handleSort = useCallback((key: SortKey) => {
     if (sortKey === key) setSortAsc(!sortAsc);
@@ -178,7 +178,7 @@ export function PersonInsights({ darkMode, metrics, prToTickets, timeRange }: Pe
       {/* ─── Section header ─── */}
       <div style={{
         fontSize: 12, fontWeight: 600,
-        color: dk(darkMode, "rgba(255,255,255,0.6)", OS.secondary),
+        color: dk(darkMode, "rgba(255,255,255,0.5)", OS.secondary),
         marginTop: 4,
         display: "flex", alignItems: "center", justifyContent: "space-between",
       }}>
@@ -317,9 +317,9 @@ export function PersonInsights({ darkMode, metrics, prToTickets, timeRange }: Pe
 function SummaryCard({ dark, label, value, subtitle }: { dark: boolean; label: string; value: string; subtitle: string }) {
   return (
     <div style={{
-      padding: "10px 12px", borderRadius: 8,
+      padding: "12px 14px", borderRadius: 8,
       background: dk(dark, "#1c1c22", OS.white),
-      border: `1px solid ${dk(dark, "rgba(255,255,255,0.08)", OS.border)}`,
+      border: `1px solid ${dk(dark, "rgba(255,255,255,0.12)", OS.border)}`,
     }}>
       <div style={{ fontSize: 12, color: dk(dark, "rgba(255,255,255,0.4)", OS.muted), marginBottom: 2 }}>{label}</div>
       <div style={{ fontSize: 20, fontWeight: 700, color: dk(dark, "#fff", OS.text), fontFamily: OS.mono }}>{value}</div>
@@ -366,7 +366,7 @@ function PersonRowComponent({ row: r, index, darkMode, showScores, compact, colu
           }}>
             {getInitials(r.author)}
           </div>
-          <span style={{ fontWeight: 500, color: dk(darkMode, "rgba(255,255,255,0.7)", OS.secondary) }}>
+          <span style={{ fontWeight: 500, color: dk(darkMode, "rgba(255,255,255,0.7)", OS.secondary), maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "inline-block" }} title={r.author}>
             {r.author}
             {r.primaryTeam && (
               <span style={{ fontSize: 9, color: dk(darkMode, "rgba(255,255,255,0.25)", OS.faint), marginLeft: 6 }}>
@@ -448,7 +448,7 @@ function PersonRowComponent({ row: r, index, darkMode, showScores, compact, colu
       {!compact && (
         <td style={{ padding: "8px 10px", textAlign: "right" }}>
           {r.weeklyTrend.length >= 2 && (
-            <Sparkline data={r.weeklyTrend} width={64} height={22} color={OS.blue} />
+            <Sparkline data={r.weeklyTrend} width={100} height={22} color={OS.blue} />
           )}
         </td>
       )}
