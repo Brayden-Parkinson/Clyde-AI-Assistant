@@ -296,6 +296,25 @@ export function KPICard({
   );
 }
 
+// ─── Nice Scale helper ───
+
+function niceScale(min: number, max: number, tickCount: number): number[] {
+  if (max <= min) return [0];
+  const range = max - min;
+  const roughStep = range / tickCount;
+  // Round to nearest "nice" number: 0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50...
+  const mag = Math.pow(10, Math.floor(Math.log10(roughStep)));
+  const residual = roughStep / mag;
+  const niceStep = residual <= 1.5 ? mag : residual <= 3 ? 2 * mag : residual <= 7 ? 5 * mag : 10 * mag;
+  const niceMin = Math.floor(min / niceStep) * niceStep;
+  const niceMax = Math.ceil(max / niceStep) * niceStep;
+  const ticks: number[] = [];
+  for (let v = niceMin; v <= niceMax + niceStep * 0.01; v += niceStep) {
+    ticks.push(Math.round(v * 1000) / 1000); // avoid float drift
+  }
+  return ticks;
+}
+
 // ─── Cycle Time Area Chart (pure SVG) ───
 
 export function CycleTimeChart({
@@ -323,7 +342,8 @@ export function CycleTimeChart({
 
   const allVals = [...days, ...predicted];
   const dataMax = Math.max(...allVals, 1);
-  const maxVal = Math.max(dataMax * 1.25, 1);
+  const yTicks = niceScale(0, dataMax, 5);
+  const maxVal = Math.max(yTicks[yTicks.length - 1], 1);
 
   const chartW = W - PAD.left - PAD.right;
   const chartH = H - PAD.top - PAD.bottom;
@@ -348,7 +368,7 @@ export function CycleTimeChart({
   const trendEnd = intercept + slope * (totalPts - 1);
 
   const textColor = dk(dark, "rgba(255,255,255,0.4)", OS.muted);
-  const predColor = dk(dark, "rgba(91,156,246,0.4)", "rgba(94,106,210,0.4)");
+  const predColor = dk(dark, "rgba(91,156,246,0.6)", "rgba(94,106,210,0.55)");
 
   return (
     <svg
@@ -357,16 +377,15 @@ export function CycleTimeChart({
       style={{ display: "block" }}
       onMouseLeave={() => setHover(null)}
     >
-      {/* Y-axis grid + labels (5 evenly-spaced lines like AI adoption) */}
-      {[0, 1, 2, 3, 4].map((i) => {
-        const y = PAD.top + (i / 4) * chartH;
-        const val = maxVal - (i / 4) * maxVal;
+      {/* Y-axis grid + labels (nice round numbers) */}
+      {yTicks.map((val) => {
+        const y = toY(val);
         return (
-          <g key={`ygrid_${i}`}>
+          <g key={`ygrid_${val}`}>
             <line x1={PAD.left} y1={y} x2={W - PAD.right} y2={y}
               stroke={dk(dark, "rgba(255,255,255,0.06)", "rgba(0,0,0,0.06)")} />
             <text x={PAD.left - 6} y={y + 3} textAnchor="end" fill={textColor} fontSize={9} fontFamily={OS.mono}>
-              {val < 10 ? val.toFixed(1) : Math.round(val)}d
+              {val < 10 ? (Number.isInteger(val) ? val : val.toFixed(1)) : Math.round(val)}d
             </text>
           </g>
         );
@@ -398,15 +417,15 @@ export function CycleTimeChart({
         />
       )}
 
-      {/* Prediction line (dashed, faded) */}
+      {/* Prediction line (dashed, more visible) */}
       {days.length >= 3 && (
-        <path d={predPathD} fill="none" stroke={predColor} strokeWidth={1.5} strokeDasharray="4,3" strokeLinejoin="round" />
+        <path d={predPathD} fill="none" stroke={predColor} strokeWidth={1.5} strokeDasharray="8,4" strokeLinejoin="round" />
       )}
 
-      {/* Prediction data points (hollow) */}
+      {/* Prediction data points (filled subtle) */}
       {days.length >= 3 && predicted.map((d, i) => (
-        <circle key={`pred_${i}`} cx={toX(days.length + i)} cy={toY(d)} r={2.5}
-          fill="none" stroke={predColor} strokeWidth={1.5} />
+        <circle key={`pred_${i}`} cx={toX(days.length + i)} cy={toY(d)} r={3}
+          fill={dk(dark, "rgba(91,156,246,0.15)", "rgba(94,106,210,0.1)")} stroke={predColor} strokeWidth={1.5} />
       ))}
 
       {/* Annotation lines */}
@@ -466,7 +485,7 @@ export function CycleTimeChart({
       {/* Prediction label */}
       {days.length >= 3 && (
         <text x={toX(days.length + Math.floor(predCount / 2))} y={H - 6} textAnchor="middle"
-          fontSize={8} fill={predColor} fontFamily={OS.mono} fontStyle="italic">
+          fontSize={9} fill={predColor} fontFamily={OS.mono} fontStyle="italic">
           forecast
         </text>
       )}
@@ -1199,34 +1218,39 @@ export function LOCBarChart({
   const chartW = W - PAD.left - PAD.right;
   const chartH = H - PAD.top - PAD.bottom;
 
-  const maxVal = Math.max(...data.map((d) => Math.max(d.additions, d.deletions)), 1);
+  // 95th percentile cap to prevent outlier weeks from crushing other bars
+  const allVals = data.map((d) => Math.max(d.additions, d.deletions)).sort((a, b) => a - b);
+  const p95Idx = Math.floor(allVals.length * 0.95);
+  const p95 = allVals[Math.min(p95Idx, allVals.length - 1)];
+  const rawMax = Math.max(...allVals, 1);
+  const cappedMax = allVals.length >= 5 ? Math.max(p95 * 1.1, 1) : rawMax;
+
+  const yTickValues = niceScale(0, cappedMax, 4);
+  const maxVal = yTickValues[yTickValues.length - 1];
+
   const barW = Math.max(8, Math.min(28, chartW / data.length * 0.7));
   const gap = (chartW - barW * data.length) / Math.max(data.length - 1, 1);
 
   const toX = (i: number) => PAD.left + i * (barW + gap);
-  const toH = (v: number) => (v / maxVal) * chartH;
+  const toH = (v: number) => Math.min((v / maxVal) * chartH, chartH);
 
   const textColor = dk(dark, "rgba(255,255,255,0.45)", OS.muted);
   const gridColor = dk(dark, "rgba(255,255,255,0.06)", "rgba(0,0,0,0.06)");
 
-  // Y-axis labels
-  const yTicks = 4;
-  const yLabels = Array.from({ length: yTicks + 1 }, (_, i) => Math.round((maxVal / yTicks) * i));
-
   return (
     <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{ display: "block" }}>
       {/* Grid lines */}
-      {yLabels.map((v, i) => (
-        <line key={i} x1={PAD.left} x2={W - PAD.right}
+      {yTickValues.map((v) => (
+        <line key={`g${v}`} x1={PAD.left} x2={W - PAD.right}
           y1={PAD.top + chartH - toH(v)} y2={PAD.top + chartH - toH(v)}
           stroke={gridColor} strokeWidth={1} />
       ))}
 
       {/* Y-axis labels */}
-      {yLabels.map((v, i) => (
-        <text key={`y${i}`} x={PAD.left - 6} y={PAD.top + chartH - toH(v) + 3}
+      {yTickValues.map((v) => (
+        <text key={`y${v}`} x={PAD.left - 6} y={PAD.top + chartH - toH(v) + 3}
           textAnchor="end" fill={textColor} fontSize={9} fontFamily={OS.mono}>
-          {v >= 1000 ? `${(v / 1000).toFixed(1)}k` : v}
+          {v >= 1000 ? `${(v / 1000).toFixed(v % 1000 === 0 ? 0 : 1)}k` : v}
         </text>
       ))}
 
@@ -1240,9 +1264,9 @@ export function LOCBarChart({
             {/* Additions bar (grows up from baseline) */}
             <rect x={x} y={PAD.top + chartH - addH} width={barW * 0.45}
               height={addH} rx={2} fill="#10B981" opacity={hover === i ? 1 : 0.8} />
-            {/* Deletions bar (next to additions) */}
-            <rect x={x + barW * 0.5} y={PAD.top + chartH - delH} width={barW * 0.45}
-              height={delH} rx={2} fill="#EF4444" opacity={hover === i ? 1 : 0.8} />
+            {/* Deletions bar (next to additions, min 2px visible) */}
+            <rect x={x + barW * 0.5} y={PAD.top + chartH - Math.max(2, delH)} width={barW * 0.45}
+              height={Math.max(2, delH)} rx={2} fill="#EF4444" opacity={hover === i ? 1 : 0.8} />
           </g>
         );
       })}
