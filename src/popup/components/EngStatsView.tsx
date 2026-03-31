@@ -200,27 +200,52 @@ export function EngStatsView({ darkMode = false }: EngStatsViewProps) {
     });
   }, []);
 
-  // Email → GitHub author mapping (from chrome.storage.local)
-  const [emailToGithub, setEmailToGithub] = useState<Record<string, string>>({});
-  useEffect(() => {
-    chrome.storage.local.get("emailToGithub").then((r) => {
-      if (r.emailToGithub) setEmailToGithub(r.emailToGithub as Record<string, string>);
-    });
-  }, []);
-
-  // Build authorTickets: GitHub author → their assigned JIRA tickets
+  // Auto-build email → GitHub mapping by matching JIRA display names to GitHub usernames
   const authorTickets = useMemo(() => {
+    if (!allJiraTickets.length || !allMetrics.length) return new Map<string, JiraTicket[]>();
+
+    // Collect unique GitHub authors
+    const githubAuthors = [...new Set(allMetrics.map((m) => m.author).filter(Boolean))] as string[];
+
+    // Build email → GitHub lookup by fuzzy matching display name / email prefix to GitHub username
+    const emailToGithub = new Map<string, string>();
+    const emailDisplayNames = new Map<string, string>();
+    for (const t of allJiraTickets) {
+      if (t.assigneeEmail && t.assigneeDisplayName) {
+        emailDisplayNames.set(t.assigneeEmail, t.assigneeDisplayName);
+      }
+    }
+
+    for (const [email, displayName] of emailDisplayNames) {
+      // Try exact match on email prefix (e.g. "rachit@openspace.ai" → "rachit" matches GitHub "RachitBhargava")
+      const prefix = email.split("@")[0].toLowerCase().replace(/[._-]/g, "");
+      // Try matching display name parts (e.g. "Tomasz Gil" → "tomasz", "gil")
+      const nameParts = displayName.toLowerCase().split(/\s+/).map((p) => p.replace(/[^a-z]/g, ""));
+
+      for (const gh of githubAuthors) {
+        const ghLower = gh.toLowerCase().replace(/[._-]/g, "");
+        // Match if GitHub username contains email prefix or any name part
+        if (ghLower.includes(prefix) || prefix.includes(ghLower) ||
+            nameParts.some((part) => part.length >= 3 && (ghLower.includes(part) || part.includes(ghLower)))) {
+          emailToGithub.set(email, gh);
+          break;
+        }
+      }
+    }
+
+    // Also check chrome.storage manual overrides (loaded separately)
+    // Build authorTickets map
     const map = new Map<string, JiraTicket[]>();
     for (const t of allJiraTickets) {
       if (!t.assigneeEmail) continue;
-      const githubUser = emailToGithub[t.assigneeEmail];
+      const githubUser = emailToGithub.get(t.assigneeEmail);
       if (!githubUser) continue;
       const existing = map.get(githubUser) ?? [];
       existing.push(t);
       map.set(githubUser, existing);
     }
     return map;
-  }, [allJiraTickets, emailToGithub]);
+  }, [allJiraTickets, allMetrics]);
 
   // ─── Jira link maps ───
   const prToTickets = useMemo(() => {
