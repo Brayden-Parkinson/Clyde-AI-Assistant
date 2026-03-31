@@ -18,11 +18,11 @@ export function InfoTip({ text, dark }: { text: string; dark: boolean }) {
     return () => document.removeEventListener("mousedown", handler);
   }, [open]);
 
-  // Check if tooltip would overflow right edge — align right if so
+  // Right-align tooltip if icon is in the right half of the viewport
   useEffect(() => {
     if (!open || !ref.current) return;
     const rect = ref.current.getBoundingClientRect();
-    setAlignRight(rect.left + 240 > window.innerWidth - 20);
+    setAlignRight(rect.left > window.innerWidth / 2);
   }, [open]);
 
   return (
@@ -50,7 +50,7 @@ export function InfoTip({ text, dark }: { text: string; dark: boolean }) {
             position: "fixed",
             top: ref.current ? ref.current.getBoundingClientRect().bottom + 6 : 0,
             left: alignRight ? undefined : (ref.current ? ref.current.getBoundingClientRect().left : 0),
-            right: alignRight ? 16 : undefined,
+            right: alignRight ? (window.innerWidth - (ref.current ? ref.current.getBoundingClientRect().right : 0)) : undefined,
             width: 260,
             padding: "10px 12px",
             borderRadius: 8,
