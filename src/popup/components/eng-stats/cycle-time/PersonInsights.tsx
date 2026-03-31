@@ -72,9 +72,9 @@ export function PersonInsights({ darkMode, metrics, prToTickets, timeRange }: Pe
   ];
   if (showScores) {
     columns.push(
-      { key: "velocity", label: "V", tip: SCORE_TOOLTIPS.velocity },
-      { key: "quality", label: "Q", tip: SCORE_TOOLTIPS.quality },
-      { key: "impact", label: "I", tip: SCORE_TOOLTIPS.impact },
+      { key: "velocity", label: "Velocity", tip: SCORE_TOOLTIPS.velocity },
+      { key: "quality", label: "Quality", tip: SCORE_TOOLTIPS.quality },
+      { key: "impact", label: "Impact", tip: SCORE_TOOLTIPS.impact },
       { key: "overall", label: "Overall", tip: SCORE_TOOLTIPS.overall },
     );
   }
