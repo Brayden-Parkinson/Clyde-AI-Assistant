@@ -11,9 +11,10 @@ interface PersonInsightsProps {
   prToTickets: Map<number, JiraTicket[]>;
   timeRange: number;
   reviews?: PRReview[];
+  authorTickets?: Map<string, JiraTicket[]>;
 }
 
-type SortKey = "author" | "prCount" | "prsPerWeek" | "avgCycleHours" | "aiPct" | "avgReviewDays" | "velocity" | "quality" | "impact" | "collaboration" | "overall";
+type SortKey = "author" | "prCount" | "prsPerWeek" | "avgCycleHours" | "aiPct" | "avgReviewDays" | "velocity" | "quality" | "impact" | "collaboration" | "overall" | "ticketsPerWeek";
 
 const MIN_AUTHORS_FOR_SCORE = 5;
 
@@ -76,11 +77,25 @@ const COMPACT_KEYS = new Set<SortKey>(["author", "prsPerWeek", "aiPct", "overall
 
 const SORT_CYCLE: SortKey[] = ["overall", "aiPct", "velocity", "quality", "impact", "collaboration", "avgReviewDays", "prsPerWeek", "prCount"];
 
-export function PersonInsights({ darkMode, metrics, prToTickets, timeRange, reviews = [] }: PersonInsightsProps) {
+const EMPTY_AUTHOR_TICKETS = new Map<string, JiraTicket[]>();
+
+export function PersonInsights({ darkMode, metrics, prToTickets, timeRange, reviews = [], authorTickets }: PersonInsightsProps) {
+  const safeAuthorTickets = authorTickets ?? EMPTY_AUTHOR_TICKETS;
+
   const rows = useMemo(() => {
     const base = computePersonRows(metrics, prToTickets, timeRange);
-    return applyProductivityScores(base, metrics, prToTickets, timeRange, reviews);
-  }, [metrics, prToTickets, timeRange, reviews]);
+    return applyProductivityScores(base, metrics, prToTickets, timeRange, reviews, safeAuthorTickets);
+  }, [metrics, prToTickets, timeRange, reviews, safeAuthorTickets]);
+
+  const ticketsPerWeekMap = useMemo(() => {
+    const weeksInRange = Math.max(1, Math.ceil(timeRange / 7));
+    const map = new Map<string, number>();
+    for (const [author, tickets] of safeAuthorTickets) {
+      const closed = tickets.filter((t) => t.statusCategory === "done").length;
+      map.set(author, closed / weeksInRange);
+    }
+    return map;
+  }, [safeAuthorTickets, timeRange]);
 
   const nullAuthorCount = useMemo(
     () => metrics.filter((m) => !m.author).length,
@@ -113,13 +128,18 @@ export function PersonInsights({ darkMode, metrics, prToTickets, timeRange, revi
         const bv = b.scores?.[sortKey] ?? -Infinity;
         return sortAsc ? av - bv : bv - av;
       }
+      if (sortKey === "ticketsPerWeek") {
+        const av = ticketsPerWeekMap.get(a.author) ?? -Infinity;
+        const bv = ticketsPerWeekMap.get(b.author) ?? -Infinity;
+        return sortAsc ? av - bv : bv - av;
+      }
       const av = a[sortKey as keyof PersonRow] ?? -Infinity;
       const bv = b[sortKey as keyof PersonRow] ?? -Infinity;
       if (typeof av === "string" && typeof bv === "string") return sortAsc ? av.localeCompare(bv) : bv.localeCompare(av);
       return sortAsc ? (av as number) - (bv as number) : (bv as number) - (av as number);
     });
     return arr;
-  }, [rows, sortKey, sortAsc]);
+  }, [rows, sortKey, sortAsc, ticketsPerWeekMap]);
 
   // ─── Summary card stats ───
 
@@ -154,6 +174,7 @@ export function PersonInsights({ darkMode, metrics, prToTickets, timeRange, revi
       { key: "avgCycleHours", label: "Cycle" },
       { key: "aiPct", label: "AI %" },
       { key: "avgReviewDays", label: "Rev Days" },
+      { key: "ticketsPerWeek", label: "Tickets/wk", tip: "Jira tickets closed per week (assigned to this person)" },
     ];
     if (showScores) {
       cols.push(
@@ -294,6 +315,7 @@ export function PersonInsights({ darkMode, metrics, prToTickets, timeRange, revi
                     altRowBg={altRowBg}
                     rowHoverBg={rowHoverBg}
                     borderColor={borderColor}
+                    ticketsPerWeek={ticketsPerWeekMap.get(r.author) ?? null}
                   />
                 ))}
               </tbody>
@@ -343,9 +365,10 @@ interface PersonRowProps {
   altRowBg: string;
   rowHoverBg: string;
   borderColor: string;
+  ticketsPerWeek: number | null;
 }
 
-function PersonRowComponent({ row: r, index, darkMode, showScores, compact, columns, textColor, altRowBg, rowHoverBg, borderColor }: PersonRowProps) {
+function PersonRowComponent({ row: r, index, darkMode, showScores, compact, columns, textColor, altRowBg, rowHoverBg, borderColor, ticketsPerWeek }: PersonRowProps) {
   const [hovered, setHovered] = useState(false);
   const bg = hovered ? rowHoverBg : index % 2 === 1 ? altRowBg : "transparent";
 
@@ -411,6 +434,13 @@ function PersonRowComponent({ row: r, index, darkMode, showScores, compact, colu
       {colKeys.has("avgReviewDays") && (
         <td style={{ padding: "8px 10px", textAlign: "right", fontFamily: OS.mono, ...revDaysStyle(r.avgReviewDays, darkMode) }}>
           {r.avgReviewDays.toFixed(1)}d
+        </td>
+      )}
+
+      {/* Tickets/wk */}
+      {colKeys.has("ticketsPerWeek") && (
+        <td style={{ padding: "8px 10px", textAlign: "right", fontFamily: OS.mono, color: dk(darkMode, "rgba(255,255,255,0.55)", OS.secondary) }}>
+          {ticketsPerWeek != null ? ticketsPerWeek.toFixed(1) : "—"}
         </td>
       )}
 

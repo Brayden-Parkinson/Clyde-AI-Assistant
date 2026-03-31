@@ -25,8 +25,13 @@
     "https://gmail.googleapis.com/*",
     "https://api.github.com/*",
     "https://*.atlassian.net/*",
-    "https://x.com/*",
-    "https://twitter.com/*"
+    "https://www.anthropic.com/*",
+    "https://hacker-news.firebaseio.com/*",
+    "https://export.arxiv.org/*",
+    "https://openai.com/*",
+    "https://huggingface.co/*",
+    "https://www.theverge.com/*",
+    "https://techcrunch.com/*"
   ],
   "background": {
     "service_worker": "service-worker-loader.js",
@@ -54,20 +59,10 @@
     },
     {
       "js": [
-        "assets/gmail.ts-loader-BNxFUWSY.js"
+        "assets/gmail.ts-loader-bv3_rN4I.js"
       ],
       "matches": [
         "https://mail.google.com/*"
-      ],
-      "run_at": "document_idle"
-    },
-    {
-      "js": [
-        "assets/x-scraper.ts-B1OR6pxj.js"
-      ],
-      "matches": [
-        "https://x.com/*",
-        "https://twitter.com/*"
       ],
       "run_at": "document_idle"
     }
@@ -122,18 +117,8 @@
         "https://mail.google.com/*"
       ],
       "resources": [
-        "assets/constants-BaWRtU74.js",
-        "assets/gmail.ts-DRs_Y5cJ.js"
-      ],
-      "use_dynamic_url": false
-    },
-    {
-      "matches": [
-        "https://twitter.com/*",
-        "https://x.com/*"
-      ],
-      "resources": [
-        "assets/x-scraper.ts-B1OR6pxj.js"
+        "assets/constants-BeAyBgJb.js",
+        "assets/gmail.ts-DLD-OCjT.js"
       ],
       "use_dynamic_url": false
     }

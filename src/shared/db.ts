@@ -336,8 +336,18 @@ class ClydeDB extends Dexie {
       });
     });
 
-    // Eng Stats: PR reviews for collaboration scoring
+    // Jira assignee sync: add assigneeEmail index + backfill nulls
     this.version(28).stores({
+      jira_tickets: "++id, &key, component, projectKey, status, issueType, assigneeEmail, syncedAt",
+    }).upgrade((tx) => {
+      return tx.table("jira_tickets").toCollection().modify((ticket: Record<string, unknown>) => {
+        if (ticket.assigneeEmail === undefined) ticket.assigneeEmail = null;
+        if (ticket.assigneeDisplayName === undefined) ticket.assigneeDisplayName = null;
+      });
+    });
+
+    // Eng Stats: PR reviews for collaboration scoring
+    this.version(29).stores({
       pr_reviews: "++id, [repo+prNumber+reviewer+submittedAt], repo, reviewer, prAuthor, submittedAt, syncedAt",
     });
   }

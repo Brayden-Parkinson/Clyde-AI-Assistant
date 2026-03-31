@@ -18,7 +18,8 @@
  * Impact: meaningful, substantive contribution
  *   - Capped volume 30% (adds*1.0 + dels*0.6 + files*15, capped at 800/PR)
  *   - Non-trivial ratio 25% (PRs > 50 lines / total)
- *   - Component breadth 20% (distinct Jira components)
+ *   - Component breadth 10% (distinct Jira components)
+ *   - Ticket throughput 10% (Jira tickets closed in period)
  *   - Sustained output 25% (PRs * (1 - revert_rate)^2)
  *
  * Overall: 0.35 * Velocity + 0.35 * Impact + 0.30 * Quality
@@ -60,6 +61,8 @@ interface AuthorRaw {
   nontrivialRatio: number;
   componentBreadth: number;
   sustainedOutput: number;
+  ticketsClosedPerWeek: number;
+  ticketThroughput: number;
   // Collaboration metrics
   reviewsGivenPerWeek: number;
   avgReviewTurnaroundHours: number;
@@ -73,6 +76,7 @@ function computeAuthorRaws(
   prToTickets: Map<number, JiraTicket[]>,
   timeRange: number,
   reviews: PRReview[],
+  authorTickets: Map<string, JiraTicket[]> = new Map(),
 ): AuthorRaw[] {
   const totalWeeks = Math.max(4, Math.ceil(timeRange / 7));
 
@@ -142,6 +146,12 @@ function computeAuthorRaws(
     // Sustained output: prs * (1 - revert_rate)^2
     const sustainedOutput = prs.length * Math.pow(1 - revertRate, 2);
 
+    // Ticket metrics from JIRA assignee data
+    const myTickets = authorTickets.get(r.author) ?? [];
+    const closedTickets = myTickets.filter((t) => t.statusCategory === "done");
+    const ticketsClosedPerWeek = closedTickets.length / totalWeeks;
+    const ticketThroughput = closedTickets.length;
+
     // ─── Collaboration metrics ───
     const authorReviews = reviewsByReviewer.get(r.author) ?? [];
     const reviewsGivenPerWeek = authorReviews.length / totalWeeks;
@@ -187,6 +197,8 @@ function computeAuthorRaws(
       nontrivialRatio,
       componentBreadth: components.size,
       sustainedOutput,
+      ticketsClosedPerWeek,
+      ticketThroughput,
       reviewsGivenPerWeek,
       avgReviewTurnaroundHours,
       thoroughnessRatio,
@@ -228,7 +240,8 @@ function computeImpact(raw: AuthorRaw, allRaws: AuthorRaw[]): number {
   return (
     0.30 * percentileRank(raw.weightedVolume, allRaws.map((r) => r.weightedVolume)) +
     0.25 * percentileRank(raw.nontrivialRatio, allRaws.map((r) => r.nontrivialRatio)) +
-    0.20 * percentileRank(raw.componentBreadth, allRaws.map((r) => r.componentBreadth)) +
+    0.10 * percentileRank(raw.componentBreadth, allRaws.map((r) => r.componentBreadth)) +
+    0.10 * percentileRank(raw.ticketThroughput, allRaws.map((r) => r.ticketThroughput)) +
     0.25 * percentileRank(raw.sustainedOutput, allRaws.map((r) => r.sustainedOutput))
   );
 }
@@ -250,10 +263,11 @@ export function applyProductivityScores(
   prToTickets: Map<number, JiraTicket[]>,
   timeRange: number,
   reviews: PRReview[] = [],
+  authorTickets: Map<string, JiraTicket[]> = new Map(),
 ): PersonRow[] {
   if (rows.length < MIN_AUTHORS) return rows;
 
-  const allRaws = computeAuthorRaws(rows, metrics, prToTickets, timeRange, reviews);
+  const allRaws = computeAuthorRaws(rows, metrics, prToTickets, timeRange, reviews, authorTickets);
 
   // Graceful degradation: if no reviews data, fall back to 3-score weights
   const hasReviews = reviews.length > 0;
@@ -278,7 +292,7 @@ export function applyProductivityScores(
 export const SCORE_TOOLTIPS = {
   velocity: "Throughput (35%): PRs/week. Speed (30%): inverse cycle time. Review responsiveness (20%): how fast first reviews happen. Consistency (15%): weeks with activity.",
   quality: "PR sizing (35%): smaller PRs = fewer defects. Non-revert rate (30%): PRs that don't get reverted. Code efficiency (20%): deletion ratio. Focus (15%): fewer files per PR.",
-  impact: "Capped volume (30%): code output with per-PR cap at 800 lines — 10 small PRs beat 1 giant PR. Non-trivial ratio (25%): substantive vs trivial PRs. Breadth (20%): cross-component work. Sustained output (25%): volume adjusted for reverts.",
+  impact: "Capped volume (30%): code output with per-PR cap at 800 lines — 10 small PRs beat 1 giant PR. Non-trivial ratio (25%): substantive vs trivial PRs. Breadth (10%): cross-component work. Ticket throughput (10%): Jira tickets closed. Sustained output (25%): volume adjusted for reverts.",
   collaboration: "Reviews given/week (35%): volume of reviews contributed. Turnaround (30%): inverse time to review — faster is better. Thoroughness (20%): fraction of non-rubber-stamp reviews. Breadth (15%): distinct authors reviewed.",
   overall: "Balanced composite: Velocity (30%) + Impact (30%) + Quality (20%) + Collaboration (20%). Falls back to 35/35/30 without review data. Score tiers: 65+ Elite (green) · 55–64 Good (blue) · 45–54 Average (gray) · <45 Needs Attention (red).",
 } as const;
