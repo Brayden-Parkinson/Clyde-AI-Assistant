@@ -18,6 +18,7 @@ import { ProductivityMatrixSection } from "./cycle-time/ProductivityMatrix";
 
 interface CycleTimeTabProps extends TabProps {
   reviews?: PRReview[];
+  authorTickets?: Map<string, JiraTicket[]>;
   CycleTimeChart: React.ComponentType<{
     buckets: WeekBucket[];
     dark: boolean;
@@ -34,6 +35,7 @@ export function CycleTimeTab({
   selectedRepo,
   prToTickets,
   reviews = [],
+  authorTickets,
   CycleTimeChart,
 }: CycleTimeTabProps) {
   const cardBg = dk(darkMode, "#1c1c22", OS.white);
@@ -86,7 +88,7 @@ export function CycleTimeTab({
       <ComponentBreakdown darkMode={darkMode} metrics={metrics} prToTickets={prToTickets} />
 
       {/* Developer Insights */}
-      <PersonInsights darkMode={darkMode} metrics={metrics} prToTickets={prToTickets} timeRange={timeRange} reviews={reviews} />
+      <PersonInsights darkMode={darkMode} metrics={metrics} prToTickets={prToTickets} timeRange={timeRange} reviews={reviews} authorTickets={authorTickets} />
 
       {/* Productivity Matrix */}
       <ProductivityMatrixSection darkMode={darkMode} personRows={personRows} />

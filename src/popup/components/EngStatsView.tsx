@@ -169,6 +169,17 @@ export function EngStatsView({ darkMode = false }: EngStatsViewProps) {
     [] as OpenPRSnapshot[],
   );
 
+  // All JIRA tickets with assignees (for ticket-per-author metrics)
+  const allJiraTickets = useLiveQuery(
+    () =>
+      db.jira_tickets
+        .toArray()
+        .then((tickets) => tickets.filter((t) => t.assigneeEmail))
+        .catch(() => []),
+    [queryKey],
+    [] as JiraTicket[],
+  );
+
   // PR reviews for collaboration scoring
   const prReviews = useLiveQuery(
     () =>
@@ -188,6 +199,28 @@ export function EngStatsView({ darkMode = false }: EngStatsViewProps) {
       if (r.openPRCreatedDates) setOpenPRCreatedDates(r.openPRCreatedDates as Record<string, string[]>);
     });
   }, []);
+
+  // Email → GitHub author mapping (from chrome.storage.local)
+  const [emailToGithub, setEmailToGithub] = useState<Record<string, string>>({});
+  useEffect(() => {
+    chrome.storage.local.get("emailToGithub").then((r) => {
+      if (r.emailToGithub) setEmailToGithub(r.emailToGithub as Record<string, string>);
+    });
+  }, []);
+
+  // Build authorTickets: GitHub author → their assigned JIRA tickets
+  const authorTickets = useMemo(() => {
+    const map = new Map<string, JiraTicket[]>();
+    for (const t of allJiraTickets) {
+      if (!t.assigneeEmail) continue;
+      const githubUser = emailToGithub[t.assigneeEmail];
+      if (!githubUser) continue;
+      const existing = map.get(githubUser) ?? [];
+      existing.push(t);
+      map.set(githubUser, existing);
+    }
+    return map;
+  }, [allJiraTickets, emailToGithub]);
 
   // ─── Jira link maps ───
   const prToTickets = useMemo(() => {
@@ -917,7 +950,7 @@ export function EngStatsView({ darkMode = false }: EngStatsViewProps) {
           )}
 
           {activeTab === "Cycle Time" && !noData && (
-            <CycleTimeTab {...tabProps} reviews={prReviews} CycleTimeChart={CycleTimeChart} />
+            <CycleTimeTab {...tabProps} reviews={prReviews} authorTickets={authorTickets} CycleTimeChart={CycleTimeChart} />
           )}
 
           {activeTab === "AI Adoption" && !noData && (
