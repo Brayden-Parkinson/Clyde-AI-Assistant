@@ -34,6 +34,7 @@ import type {
   NewsPost,
   AIReviewComment,
   OpenPRSnapshot,
+  PRReview,
 } from "./types";
 
 class ClydeDB extends Dexie {
@@ -71,6 +72,7 @@ class ClydeDB extends Dexie {
   news_posts!: EntityTable<NewsPost, "id">;
   ai_review_comments!: EntityTable<AIReviewComment, "id">;
   open_pr_snapshots!: EntityTable<OpenPRSnapshot, "id">;
+  pr_reviews!: EntityTable<PRReview, "id">;
 
   constructor() {
     super("CommitmentTracker");
@@ -342,6 +344,11 @@ class ClydeDB extends Dexie {
         if (ticket.assigneeEmail === undefined) ticket.assigneeEmail = null;
         if (ticket.assigneeDisplayName === undefined) ticket.assigneeDisplayName = null;
       });
+    });
+
+    // Eng Stats: PR reviews for collaboration scoring
+    this.version(29).stores({
+      pr_reviews: "++id, [repo+prNumber+reviewer+submittedAt], repo, reviewer, prAuthor, submittedAt, syncedAt",
     });
   }
 }
