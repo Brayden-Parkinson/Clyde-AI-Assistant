@@ -253,7 +253,7 @@ export function PersonInsights({ darkMode, metrics, prToTickets, timeRange }: Pe
           )}
 
           {/* ─── Table ─── */}
-          <div style={{ borderRadius: 10, border: cardBorder, background: cardBg, overflow: "hidden" }}>
+          <div style={{ borderRadius: 10, border: cardBorder, background: cardBg }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, tableLayout: "fixed" }}>
               <thead>
                 <tr>

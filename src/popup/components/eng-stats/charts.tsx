@@ -91,6 +91,8 @@ export function InfoTip({ text, dark }: { text: string; dark: boolean }) {
             color: dk(dark, "rgba(255,255,255,0.7)", OS.secondary),
             fontFamily: OS.font,
             fontWeight: 400,
+            whiteSpace: "normal",
+            wordWrap: "break-word",
           }}
         >
           {text}
