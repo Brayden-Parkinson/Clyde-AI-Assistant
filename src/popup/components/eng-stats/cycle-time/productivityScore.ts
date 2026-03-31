@@ -18,7 +18,8 @@
  * Impact: meaningful, substantive contribution
  *   - Capped volume 30% (adds*1.0 + dels*0.6 + files*15, capped at 800/PR)
  *   - Non-trivial ratio 25% (PRs > 50 lines / total)
- *   - Component breadth 20% (distinct Jira components)
+ *   - Component breadth 10% (distinct Jira components)
+ *   - Ticket throughput 10% (Jira tickets closed in period)
  *   - Sustained output 25% (PRs * (1 - revert_rate)^2)
  *
  * Overall: 0.35 * Velocity + 0.35 * Impact + 0.30 * Quality
@@ -60,6 +61,8 @@ interface AuthorRaw {
   nontrivialRatio: number;
   componentBreadth: number;
   sustainedOutput: number;
+  ticketsClosedPerWeek: number;
+  ticketThroughput: number;
 }
 
 function computeAuthorRaws(
@@ -67,6 +70,7 @@ function computeAuthorRaws(
   metrics: PRMetric[],
   prToTickets: Map<number, JiraTicket[]>,
   timeRange: number,
+  authorTickets: Map<string, JiraTicket[]> = new Map(),
 ): AuthorRaw[] {
   const totalWeeks = Math.max(4, Math.ceil(timeRange / 7));
 
@@ -123,6 +127,12 @@ function computeAuthorRaws(
     // Sustained output: prs * (1 - revert_rate)^2
     const sustainedOutput = prs.length * Math.pow(1 - revertRate, 2);
 
+    // Ticket metrics from JIRA assignee data
+    const myTickets = authorTickets.get(r.author) ?? [];
+    const closedTickets = myTickets.filter((t) => t.statusCategory === "done");
+    const ticketsClosedPerWeek = closedTickets.length / totalWeeks;
+    const ticketThroughput = closedTickets.length;
+
     return {
       author: r.author,
       prsPerWeek: r.prsPerWeek,
@@ -139,6 +149,8 @@ function computeAuthorRaws(
       nontrivialRatio,
       componentBreadth: components.size,
       sustainedOutput,
+      ticketsClosedPerWeek,
+      ticketThroughput,
     };
   });
 }
@@ -176,7 +188,8 @@ function computeImpact(raw: AuthorRaw, allRaws: AuthorRaw[]): number {
   return (
     0.30 * percentileRank(raw.weightedVolume, allRaws.map((r) => r.weightedVolume)) +
     0.25 * percentileRank(raw.nontrivialRatio, allRaws.map((r) => r.nontrivialRatio)) +
-    0.20 * percentileRank(raw.componentBreadth, allRaws.map((r) => r.componentBreadth)) +
+    0.10 * percentileRank(raw.componentBreadth, allRaws.map((r) => r.componentBreadth)) +
+    0.10 * percentileRank(raw.ticketThroughput, allRaws.map((r) => r.ticketThroughput)) +
     0.25 * percentileRank(raw.sustainedOutput, allRaws.map((r) => r.sustainedOutput))
   );
 }
@@ -188,10 +201,11 @@ export function applyProductivityScores(
   metrics: PRMetric[],
   prToTickets: Map<number, JiraTicket[]>,
   timeRange: number,
+  authorTickets: Map<string, JiraTicket[]> = new Map(),
 ): PersonRow[] {
   if (rows.length < MIN_AUTHORS) return rows;
 
-  const allRaws = computeAuthorRaws(rows, metrics, prToTickets, timeRange);
+  const allRaws = computeAuthorRaws(rows, metrics, prToTickets, timeRange, authorTickets);
 
   return rows.map((r, i) => {
     const raw = allRaws[i];
@@ -209,6 +223,6 @@ export function applyProductivityScores(
 export const SCORE_TOOLTIPS = {
   velocity: "Throughput (35%): PRs/week. Speed (30%): inverse cycle time. Review responsiveness (20%): how fast first reviews happen. Consistency (15%): weeks with activity.",
   quality: "PR sizing (35%): smaller PRs = fewer defects. Non-revert rate (30%): PRs that don't get reverted. Code efficiency (20%): deletion ratio. Focus (15%): fewer files per PR.",
-  impact: "Capped volume (30%): code output with per-PR cap at 800 lines — 10 small PRs beat 1 giant PR. Non-trivial ratio (25%): substantive vs trivial PRs. Breadth (20%): cross-component work. Sustained output (25%): volume adjusted for reverts.",
+  impact: "Capped volume (30%): code output with per-PR cap at 800 lines — 10 small PRs beat 1 giant PR. Non-trivial ratio (25%): substantive vs trivial PRs. Breadth (10%): cross-component work. Ticket throughput (10%): Jira tickets closed. Sustained output (25%): volume adjusted for reverts.",
   overall: "Balanced composite: Velocity (35%) + Impact (35%) + Quality (30%). AI adoption shown separately. Score tiers: 65+ Elite (green) · 55–64 Good (blue) · 45–54 Average (gray) · <45 Needs Attention (red).",
 } as const;

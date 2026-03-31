@@ -28,6 +28,11 @@ interface JiraProject {
   key: string;
 }
 
+interface JiraAssignee {
+  emailAddress: string;
+  displayName: string;
+}
+
 interface JiraIssueFields {
   summary: string;
   status: JiraStatus;
@@ -36,6 +41,7 @@ interface JiraIssueFields {
   priority: { name: string } | null;
   project: JiraProject;
   parent?: { key: string } | null;
+  assignee: JiraAssignee | null;
   created: string;
   updated: string;
   resolutiondate: string | null;
@@ -75,7 +81,7 @@ export async function searchJiraIssues(
   const allIssues: JiraIssueResponse[] = [];
   let nextPageToken: string | null = null;
   const maxResults = 100;
-  const fields = "summary,status,issuetype,components,priority,project,parent,created,updated,resolutiondate";
+  const fields = "summary,status,issuetype,components,priority,project,parent,assignee,created,updated,resolutiondate";
 
   // Normalize baseUrl — remove trailing slash
   const base = baseUrl.replace(/\/+$/, "");
@@ -137,6 +143,8 @@ export function mapJiraFields(
     priority: f.priority?.name ?? "Medium",
     epicKey: f.parent?.key ?? null,
     projectKey: f.project.key,
+    assigneeEmail: f.assignee?.emailAddress ?? null,
+    assigneeDisplayName: f.assignee?.displayName ?? null,
     createdAt: f.created,
     updatedAt: f.updated,
     resolvedAt: f.resolutiondate,

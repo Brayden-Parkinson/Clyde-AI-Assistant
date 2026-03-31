@@ -333,6 +333,16 @@ class ClydeDB extends Dexie {
         delete post.authorDisplayName;
       });
     });
+
+    // Jira assignee sync: add assigneeEmail index + backfill nulls
+    this.version(28).stores({
+      jira_tickets: "++id, &key, component, projectKey, status, issueType, assigneeEmail, syncedAt",
+    }).upgrade((tx) => {
+      return tx.table("jira_tickets").toCollection().modify((ticket: Record<string, unknown>) => {
+        if (ticket.assigneeEmail === undefined) ticket.assigneeEmail = null;
+        if (ticket.assigneeDisplayName === undefined) ticket.assigneeDisplayName = null;
+      });
+    });
   }
 }
 
