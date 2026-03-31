@@ -10,13 +10,13 @@
  *   - Consistency 15% (active weeks ratio)
  *
  * Quality: clean, well-sized, durable PRs
- *   - Non-revert rate 35% (revert penalty)
- *   - PR sizing 30% (inverse PR size — smaller is better)
+ *   - PR sizing 35% (inverse PR size — smaller is better)
+ *   - Non-revert rate 30% (revert penalty)
  *   - Code efficiency 20% (deletion ratio — cleanup is valuable)
  *   - Focus 15% (inverse files changed)
  *
  * Impact: meaningful, substantive contribution
- *   - Weighted volume 30% (adds*1.0 + dels*0.6 + files*15)
+ *   - Capped volume 30% (adds*1.0 + dels*0.6 + files*15, capped at 800/PR)
  *   - Non-trivial ratio 25% (PRs > 50 lines / total)
  *   - Component breadth 20% (distinct Jira components)
  *   - Sustained output 25% (PRs * (1 - revert_rate)^2)
@@ -100,9 +100,11 @@ function computeAuthorRaws(
       ? prs.reduce((s, p) => s + p.changedFiles, 0) / prs.length
       : 0;
 
-    // Weighted volume (adds*1.0 + dels*0.6 + files*15, summed across PRs)
+    // Weighted volume — cap each PR at 800 lines equivalent so giant PRs
+    // don't dominate. 10 small PRs should score higher than 1 massive PR.
+    const PR_CAP = 800;
     const weightedVolume = prs.reduce(
-      (s, p) => s + p.additions * 1.0 + p.deletions * 0.6 + p.changedFiles * 15,
+      (s, p) => s + Math.min(PR_CAP, p.additions * 1.0 + p.deletions * 0.6 + p.changedFiles * 15),
       0,
     );
 
@@ -163,8 +165,8 @@ function computeQuality(raw: AuthorRaw, allRaws: AuthorRaw[]): number {
   const thisRevertScore = revertScore(raw.revertCount);
 
   return (
-    0.35 * percentileRank(thisRevertScore, revertScores) +
-    0.30 * percentileRankInverse(raw.avgPRSize, allRaws.map((r) => r.avgPRSize)) +
+    0.30 * percentileRank(thisRevertScore, revertScores) +
+    0.35 * percentileRankInverse(raw.avgPRSize, allRaws.map((r) => r.avgPRSize)) +
     0.20 * percentileRank(raw.deletionRatio, allRaws.map((r) => r.deletionRatio)) +
     0.15 * percentileRankInverse(raw.avgChangedFiles, allRaws.map((r) => r.avgChangedFiles))
   );
@@ -206,7 +208,7 @@ export function applyProductivityScores(
 
 export const SCORE_TOOLTIPS = {
   velocity: "Throughput (35%): PRs/week. Speed (30%): inverse cycle time. Review responsiveness (20%): how fast first reviews happen. Consistency (15%): weeks with activity.",
-  quality: "Non-revert rate (35%): PRs that don't get reverted. PR sizing (30%): smaller PRs = fewer defects. Code efficiency (20%): deletion ratio. Focus (15%): fewer files per PR.",
-  impact: "Weighted volume (30%): code weighted by type. Non-trivial ratio (25%): substantive vs trivial PRs. Breadth (20%): cross-component work. Sustained output (25%): volume adjusted for reverts.",
+  quality: "PR sizing (35%): smaller PRs = fewer defects. Non-revert rate (30%): PRs that don't get reverted. Code efficiency (20%): deletion ratio. Focus (15%): fewer files per PR.",
+  impact: "Capped volume (30%): code output with per-PR cap at 800 lines — 10 small PRs beat 1 giant PR. Non-trivial ratio (25%): substantive vs trivial PRs. Breadth (20%): cross-component work. Sustained output (25%): volume adjusted for reverts.",
   overall: "Balanced composite: Velocity (35%) + Impact (35%) + Quality (30%). AI adoption shown separately. Score tiers: 65+ Elite (green) · 55–64 Good (blue) · 45–54 Average (gray) · <45 Needs Attention (red).",
 } as const;
