@@ -728,6 +728,8 @@ export interface JiraTicket {
   projectKey: string;
   createdAt: string;
   updatedAt: string;
+  assigneeEmail: string | null;
+  assigneeDisplayName: string | null;
   resolvedAt: string | null;
   syncedAt: string;
 }
