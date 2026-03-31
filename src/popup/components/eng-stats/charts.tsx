@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useLayoutEffect, useCallback } from "react";
 import { OS } from "@shared/tokens";
 import { dk, predictPoints, linearRegression, fmtHours, type WeekBucket, type MatrixPoint } from "./shared";
 
@@ -8,6 +8,7 @@ export function InfoTip({ text, dark }: { text: string; dark: boolean }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const tipRef = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -18,31 +19,44 @@ export function InfoTip({ text, dark }: { text: string; dark: boolean }) {
     return () => document.removeEventListener("mousedown", handler);
   }, [open]);
 
-  // Clamp tooltip within viewport after render
-  useEffect(() => {
+  // Position tooltip before paint to avoid flash
+  useLayoutEffect(() => {
     if (!open || !ref.current || !tipRef.current) return;
     const icon = ref.current.getBoundingClientRect();
-    const tip = tipRef.current;
+    const tipEl = tipRef.current;
     const pad = 8;
     const tipWidth = 260;
+    const tipHeight = tipEl.offsetHeight;
 
     let top = icon.bottom + 6;
-    if (top + tip.offsetHeight > window.innerHeight - pad) {
-      top = icon.top - tip.offsetHeight - 6;
+    if (top + tipHeight > window.innerHeight - pad) {
+      top = icon.top - tipHeight - 6;
     }
-    tip.style.top = `${Math.max(pad, top)}px`;
 
     let left = icon.left;
     if (left + tipWidth > window.innerWidth - pad) {
       left = window.innerWidth - pad - tipWidth;
     }
-    tip.style.left = `${Math.max(pad, left)}px`;
+
+    setPos({ top: Math.max(pad, top), left: Math.max(pad, left) });
+  }, [open]);
+
+  // Reset position when closing so stale coords don't flash on reopen
+  const handleClick = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (open) {
+      setOpen(false);
+      setPos(null);
+    } else {
+      setPos(null);
+      setOpen(true);
+    }
   }, [open]);
 
   return (
     <div ref={ref} style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
       <div
-        onClick={(e) => { e.stopPropagation(); setOpen(!open); }}
+        onClick={handleClick}
         style={{
           width: 16,
           height: 16,
@@ -63,8 +77,8 @@ export function InfoTip({ text, dark }: { text: string; dark: boolean }) {
           ref={tipRef}
           style={{
             position: "fixed",
-            top: 0,
-            left: 0,
+            top: pos?.top ?? -9999,
+            left: pos?.left ?? -9999,
             width: 260,
             padding: "10px 12px",
             borderRadius: 8,
