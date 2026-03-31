@@ -4,7 +4,7 @@
  */
 
 import { db } from "@shared/db";
-import type { PRMetric, CopilotDailyMetric, AIReviewComment, OpenPRSnapshot } from "@shared/types";
+import type { PRMetric, PRReview, CopilotDailyMetric, AIReviewComment, OpenPRSnapshot } from "@shared/types";
 import {
   fetchMergedPRs,
   fetchOpenPRs,
@@ -171,6 +171,41 @@ export async function syncGitHubData(): Promise<{
 
           await db.pr_metrics.add(metric);
           synced++;
+
+          // Persist human reviews for collaboration scoring (best-effort)
+          try {
+            const prAuthor = pull.user?.login ?? null;
+            const reviewRecords: PRReview[] = [];
+            for (const r of humanReviews) {
+              if (!r.user) continue;
+              const reviewer = r.user.login;
+              // Skip self-reviews (author reviewing their own PR)
+              if (prAuthor && reviewer === prAuthor) continue;
+              reviewRecords.push({
+                repo,
+                prNumber: pull.number,
+                reviewer,
+                prAuthor,
+                state: r.state,
+                submittedAt: r.submitted_at,
+                syncedAt,
+              });
+            }
+            if (reviewRecords.length > 0) {
+              // De-duplicate on [repo, prNumber, reviewer, submittedAt]
+              for (const rec of reviewRecords) {
+                const existing = await db.pr_reviews
+                  .where("[repo+prNumber+reviewer+submittedAt]")
+                  .equals([rec.repo, rec.prNumber, rec.reviewer, rec.submittedAt])
+                  .first();
+                if (!existing) {
+                  await db.pr_reviews.add(rec);
+                }
+              }
+            }
+          } catch (_reviewErr) {
+            // Non-fatal — review persistence is supplemental
+          }
 
           // Fetch and store AI review comments (best-effort, don't block sync)
           if (aiReviewers.length > 0) {

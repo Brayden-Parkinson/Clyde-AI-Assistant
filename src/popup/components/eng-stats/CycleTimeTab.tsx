@@ -1,5 +1,5 @@
 import React, { useMemo } from "react";
-import type { PRMetric, JiraTicket } from "@shared/types";
+import type { PRMetric, PRReview, JiraTicket } from "@shared/types";
 import {
   TabProps,
   WeekBucket,
@@ -17,6 +17,7 @@ import { PersonInsights } from "./cycle-time/PersonInsights";
 import { ProductivityMatrixSection } from "./cycle-time/ProductivityMatrix";
 
 interface CycleTimeTabProps extends TabProps {
+  reviews?: PRReview[];
   CycleTimeChart: React.ComponentType<{
     buckets: WeekBucket[];
     dark: boolean;
@@ -32,6 +33,7 @@ export function CycleTimeTab({
   timeRange,
   selectedRepo,
   prToTickets,
+  reviews = [],
   CycleTimeChart,
 }: CycleTimeTabProps) {
   const cardBg = dk(darkMode, "#1c1c22", OS.white);
@@ -45,8 +47,8 @@ export function CycleTimeTab({
   // Person rows are computed here and shared between PersonInsights and ProductivityMatrix
   const personRows = useMemo(() => {
     const base = computePersonRows(metrics, prToTickets, timeRange);
-    return applyProductivityScores(base, metrics, prToTickets, timeRange);
-  }, [metrics, prToTickets, timeRange]);
+    return applyProductivityScores(base, metrics, prToTickets, timeRange, reviews);
+  }, [metrics, prToTickets, timeRange, reviews]);
 
   return (
     <>
@@ -84,7 +86,7 @@ export function CycleTimeTab({
       <ComponentBreakdown darkMode={darkMode} metrics={metrics} prToTickets={prToTickets} />
 
       {/* Developer Insights */}
-      <PersonInsights darkMode={darkMode} metrics={metrics} prToTickets={prToTickets} timeRange={timeRange} />
+      <PersonInsights darkMode={darkMode} metrics={metrics} prToTickets={prToTickets} timeRange={timeRange} reviews={reviews} />
 
       {/* Productivity Matrix */}
       <ProductivityMatrixSection darkMode={darkMode} personRows={personRows} />

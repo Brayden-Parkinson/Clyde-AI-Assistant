@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useCallback } from "react";
-import type { PRMetric, JiraTicket } from "@shared/types";
+import type { PRMetric, PRReview, JiraTicket } from "@shared/types";
 import { OS } from "@shared/tokens";
 import { dk, fmtHours, computePersonRows, type PersonRow } from "../shared";
 import { applyProductivityScores, SCORE_TOOLTIPS } from "./productivityScore";
@@ -10,9 +10,10 @@ interface PersonInsightsProps {
   metrics: PRMetric[];
   prToTickets: Map<number, JiraTicket[]>;
   timeRange: number;
+  reviews?: PRReview[];
 }
 
-type SortKey = "author" | "prCount" | "prsPerWeek" | "avgCycleHours" | "aiPct" | "avgReviewDays" | "velocity" | "quality" | "impact" | "overall";
+type SortKey = "author" | "prCount" | "prsPerWeek" | "avgCycleHours" | "aiPct" | "avgReviewDays" | "velocity" | "quality" | "impact" | "collaboration" | "overall";
 
 const MIN_AUTHORS_FOR_SCORE = 5;
 
@@ -73,13 +74,13 @@ function revDaysStyle(days: number, dark: boolean): React.CSSProperties {
 
 const COMPACT_KEYS = new Set<SortKey>(["author", "prsPerWeek", "aiPct", "overall", "avgReviewDays"]);
 
-const SORT_CYCLE: SortKey[] = ["overall", "aiPct", "velocity", "quality", "impact", "avgReviewDays", "prsPerWeek", "prCount"];
+const SORT_CYCLE: SortKey[] = ["overall", "aiPct", "velocity", "quality", "impact", "collaboration", "avgReviewDays", "prsPerWeek", "prCount"];
 
-export function PersonInsights({ darkMode, metrics, prToTickets, timeRange }: PersonInsightsProps) {
+export function PersonInsights({ darkMode, metrics, prToTickets, timeRange, reviews = [] }: PersonInsightsProps) {
   const rows = useMemo(() => {
     const base = computePersonRows(metrics, prToTickets, timeRange);
-    return applyProductivityScores(base, metrics, prToTickets, timeRange);
-  }, [metrics, prToTickets, timeRange]);
+    return applyProductivityScores(base, metrics, prToTickets, timeRange, reviews);
+  }, [metrics, prToTickets, timeRange, reviews]);
 
   const nullAuthorCount = useMemo(
     () => metrics.filter((m) => !m.author).length,
@@ -107,7 +108,7 @@ export function PersonInsights({ darkMode, metrics, prToTickets, timeRange }: Pe
   const sorted = useMemo(() => {
     const arr = [...rows];
     arr.sort((a, b) => {
-      if (sortKey === "velocity" || sortKey === "quality" || sortKey === "impact" || sortKey === "overall") {
+      if (sortKey === "velocity" || sortKey === "quality" || sortKey === "impact" || sortKey === "collaboration" || sortKey === "overall") {
         const av = a.scores?.[sortKey] ?? -Infinity;
         const bv = b.scores?.[sortKey] ?? -Infinity;
         return sortAsc ? av - bv : bv - av;
@@ -159,6 +160,7 @@ export function PersonInsights({ darkMode, metrics, prToTickets, timeRange }: Pe
         { key: "velocity", label: "Velocity", tip: SCORE_TOOLTIPS.velocity },
         { key: "quality", label: "Quality", tip: SCORE_TOOLTIPS.quality },
         { key: "impact", label: "Impact", tip: SCORE_TOOLTIPS.impact },
+        { key: "collaboration", label: "Collab", tip: SCORE_TOOLTIPS.collaboration },
         { key: "overall", label: "Overall", tip: SCORE_TOOLTIPS.overall },
       );
     }
@@ -425,6 +427,11 @@ function PersonRowComponent({ row: r, index, darkMode, showScores, compact, colu
       {/* Impact — mini bar */}
       {showScores && colKeys.has("impact") && (
         <ScoreBarCell value={r.scores?.impact ?? null} darkMode={darkMode} />
+      )}
+
+      {/* Collab — mini bar */}
+      {showScores && colKeys.has("collaboration") && (
+        <ScoreBarCell value={r.scores?.collaboration ?? null} darkMode={darkMode} />
       )}
 
       {/* Overall — tier badge */}

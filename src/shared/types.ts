@@ -817,6 +817,21 @@ export interface RawNewsItem {
 
 // ─── Eng Stats: Open PR Snapshots ───
 
+/** A human PR review persisted for collaboration scoring */
+export interface PRReview {
+  id?: number;
+  repo: string;
+  prNumber: number;
+  /** GitHub login of the reviewer */
+  reviewer: string;
+  /** GitHub login of the PR author */
+  prAuthor: string | null;
+  /** APPROVED | CHANGES_REQUESTED | COMMENTED | DISMISSED */
+  state: string;
+  submittedAt: string;
+  syncedAt: string;
+}
+
 /** Point-in-time snapshot of open PR count per repo */
 export interface OpenPRSnapshot {
   id?: number;

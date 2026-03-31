@@ -8,7 +8,7 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import { useLiveQuery } from "dexie-react-hooks";
 import { db } from "@shared/db";
 import { OS } from "@shared/tokens";
-import type { PRMetric, JiraTicket, PRJiraLink, OpenPRSnapshot } from "@shared/types";
+import type { PRMetric, PRReview, JiraTicket, PRJiraLink, OpenPRSnapshot } from "@shared/types";
 import {
   dk, daysAgoISO, isWeekday,
   type EngStatsConfig, type SectionId, type KpiId, type TeamColumnId,
@@ -167,6 +167,18 @@ export function EngStatsView({ darkMode = false }: EngStatsViewProps) {
         .catch(() => []),
     [queryKey, timeRange],
     [] as OpenPRSnapshot[],
+  );
+
+  // PR reviews for collaboration scoring
+  const prReviews = useLiveQuery(
+    () =>
+      db.pr_reviews
+        .where("submittedAt")
+        .aboveOrEqual(since)
+        .toArray()
+        .catch(() => []),
+    [since, queryKey],
+    [] as PRReview[],
   );
 
   // Open PR created dates from chrome.storage (set during sync)
@@ -905,7 +917,7 @@ export function EngStatsView({ darkMode = false }: EngStatsViewProps) {
           )}
 
           {activeTab === "Cycle Time" && !noData && (
-            <CycleTimeTab {...tabProps} CycleTimeChart={CycleTimeChart} />
+            <CycleTimeTab {...tabProps} reviews={prReviews} CycleTimeChart={CycleTimeChart} />
           )}
 
           {activeTab === "AI Adoption" && !noData && (

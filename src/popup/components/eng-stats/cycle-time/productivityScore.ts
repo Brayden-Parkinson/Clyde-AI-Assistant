@@ -26,7 +26,7 @@
 
 import type { PersonRow, ProductivityScores } from "../shared";
 import { weekKey } from "../shared";
-import type { PRMetric, JiraTicket } from "@shared/types";
+import type { PRMetric, PRReview, JiraTicket } from "@shared/types";
 
 const MIN_AUTHORS = 5;
 
@@ -60,6 +60,11 @@ interface AuthorRaw {
   nontrivialRatio: number;
   componentBreadth: number;
   sustainedOutput: number;
+  // Collaboration metrics
+  reviewsGivenPerWeek: number;
+  avgReviewTurnaroundHours: number;
+  thoroughnessRatio: number;
+  reviewBreadth: number;
 }
 
 function computeAuthorRaws(
@@ -67,6 +72,7 @@ function computeAuthorRaws(
   metrics: PRMetric[],
   prToTickets: Map<number, JiraTicket[]>,
   timeRange: number,
+  reviews: PRReview[],
 ): AuthorRaw[] {
   const totalWeeks = Math.max(4, Math.ceil(timeRange / 7));
 
@@ -76,6 +82,19 @@ function computeAuthorRaws(
     if (!m.author) continue;
     if (!byAuthor.has(m.author)) byAuthor.set(m.author, []);
     byAuthor.get(m.author)!.push(m);
+  }
+
+  // Group reviews by reviewer (excluding self-reviews already filtered at sync)
+  const reviewsByReviewer = new Map<string, PRReview[]>();
+  for (const rv of reviews) {
+    if (!reviewsByReviewer.has(rv.reviewer)) reviewsByReviewer.set(rv.reviewer, []);
+    reviewsByReviewer.get(rv.reviewer)!.push(rv);
+  }
+
+  // Build a map of PR createdAt by [repo, prNumber] for turnaround calculation
+  const prCreatedAtMap = new Map<string, string>();
+  for (const m of metrics) {
+    prCreatedAtMap.set(`${m.repo}:${m.prNumber}`, m.createdAt);
   }
 
   return rows.map((r) => {
@@ -123,6 +142,35 @@ function computeAuthorRaws(
     // Sustained output: prs * (1 - revert_rate)^2
     const sustainedOutput = prs.length * Math.pow(1 - revertRate, 2);
 
+    // ─── Collaboration metrics ───
+    const authorReviews = reviewsByReviewer.get(r.author) ?? [];
+    const reviewsGivenPerWeek = authorReviews.length / totalWeeks;
+
+    // Avg review turnaround: hours between PR creation and this person's review
+    const turnarounds: number[] = [];
+    for (const rv of authorReviews) {
+      const prCreated = prCreatedAtMap.get(`${rv.repo}:${rv.prNumber}`);
+      if (prCreated) {
+        const hours = (new Date(rv.submittedAt).getTime() - new Date(prCreated).getTime()) / (1000 * 60 * 60);
+        if (hours >= 0) turnarounds.push(hours);
+      }
+    }
+    const avgReviewTurnaroundHours = turnarounds.length > 0
+      ? turnarounds.reduce((a, b) => a + b, 0) / turnarounds.length
+      : 9999;
+
+    // Thoroughness: fraction of reviews that are CHANGES_REQUESTED or COMMENTED
+    const thoroughReviews = authorReviews.filter(
+      (rv) => rv.state === "CHANGES_REQUESTED" || rv.state === "COMMENTED",
+    ).length;
+    const thoroughnessRatio = authorReviews.length > 0
+      ? thoroughReviews / authorReviews.length
+      : 0;
+
+    // Review breadth: distinct PR authors reviewed
+    const reviewedAuthors = new Set(authorReviews.map((rv) => rv.prAuthor).filter(Boolean));
+    const reviewBreadth = reviewedAuthors.size;
+
     return {
       author: r.author,
       prsPerWeek: r.prsPerWeek,
@@ -139,6 +187,10 @@ function computeAuthorRaws(
       nontrivialRatio,
       componentBreadth: components.size,
       sustainedOutput,
+      reviewsGivenPerWeek,
+      avgReviewTurnaroundHours,
+      thoroughnessRatio,
+      reviewBreadth,
     };
   });
 }
@@ -181,6 +233,15 @@ function computeImpact(raw: AuthorRaw, allRaws: AuthorRaw[]): number {
   );
 }
 
+function computeCollaboration(raw: AuthorRaw, allRaws: AuthorRaw[]): number {
+  return (
+    0.35 * percentileRank(raw.reviewsGivenPerWeek, allRaws.map((r) => r.reviewsGivenPerWeek)) +
+    0.30 * percentileRankInverse(raw.avgReviewTurnaroundHours, allRaws.map((r) => r.avgReviewTurnaroundHours)) +
+    0.20 * percentileRank(raw.thoroughnessRatio, allRaws.map((r) => r.thoroughnessRatio)) +
+    0.15 * percentileRank(raw.reviewBreadth, allRaws.map((r) => r.reviewBreadth))
+  );
+}
+
 // ─── Public API ───
 
 export function applyProductivityScores(
@@ -188,19 +249,27 @@ export function applyProductivityScores(
   metrics: PRMetric[],
   prToTickets: Map<number, JiraTicket[]>,
   timeRange: number,
+  reviews: PRReview[] = [],
 ): PersonRow[] {
   if (rows.length < MIN_AUTHORS) return rows;
 
-  const allRaws = computeAuthorRaws(rows, metrics, prToTickets, timeRange);
+  const allRaws = computeAuthorRaws(rows, metrics, prToTickets, timeRange, reviews);
+
+  // Graceful degradation: if no reviews data, fall back to 3-score weights
+  const hasReviews = reviews.length > 0;
 
   return rows.map((r, i) => {
     const raw = allRaws[i];
     const velocity = Math.round(computeVelocity(raw, allRaws));
     const quality = Math.round(computeQuality(raw, allRaws));
     const impact = Math.round(computeImpact(raw, allRaws));
-    const overall = Math.round(0.35 * velocity + 0.35 * impact + 0.30 * quality);
+    const collaboration = hasReviews ? Math.round(computeCollaboration(raw, allRaws)) : 0;
 
-    return { ...r, scores: { velocity, quality, impact, overall } };
+    const overall = hasReviews
+      ? Math.round(0.30 * velocity + 0.30 * impact + 0.20 * quality + 0.20 * collaboration)
+      : Math.round(0.35 * velocity + 0.35 * impact + 0.30 * quality);
+
+    return { ...r, scores: { velocity, quality, impact, collaboration, overall } };
   });
 }
 
@@ -210,5 +279,6 @@ export const SCORE_TOOLTIPS = {
   velocity: "Throughput (35%): PRs/week. Speed (30%): inverse cycle time. Review responsiveness (20%): how fast first reviews happen. Consistency (15%): weeks with activity.",
   quality: "PR sizing (35%): smaller PRs = fewer defects. Non-revert rate (30%): PRs that don't get reverted. Code efficiency (20%): deletion ratio. Focus (15%): fewer files per PR.",
   impact: "Capped volume (30%): code output with per-PR cap at 800 lines — 10 small PRs beat 1 giant PR. Non-trivial ratio (25%): substantive vs trivial PRs. Breadth (20%): cross-component work. Sustained output (25%): volume adjusted for reverts.",
-  overall: "Balanced composite: Velocity (35%) + Impact (35%) + Quality (30%). AI adoption shown separately. Score tiers: 65+ Elite (green) · 55–64 Good (blue) · 45–54 Average (gray) · <45 Needs Attention (red).",
+  collaboration: "Reviews given/week (35%): volume of reviews contributed. Turnaround (30%): inverse time to review — faster is better. Thoroughness (20%): fraction of non-rubber-stamp reviews. Breadth (15%): distinct authors reviewed.",
+  overall: "Balanced composite: Velocity (30%) + Impact (30%) + Quality (20%) + Collaboration (20%). Falls back to 35/35/30 without review data. Score tiers: 65+ Elite (green) · 55–64 Good (blue) · 45–54 Average (gray) · <45 Needs Attention (red).",
 } as const;

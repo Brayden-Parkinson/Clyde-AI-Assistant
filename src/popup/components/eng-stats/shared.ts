@@ -229,6 +229,7 @@ export interface ProductivityScores {
   velocity: number;
   quality: number;
   impact: number;
+  collaboration: number;
   overall: number;
 }
 
