@@ -7,7 +7,7 @@ import { dk, predictPoints, linearRegression, fmtHours, type WeekBucket, type Ma
 export function InfoTip({ text, dark }: { text: string; dark: boolean }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
-  const [alignRight, setAlignRight] = useState(false);
+  const tipRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -18,11 +18,25 @@ export function InfoTip({ text, dark }: { text: string; dark: boolean }) {
     return () => document.removeEventListener("mousedown", handler);
   }, [open]);
 
-  // Right-align tooltip if icon is in the right half of the viewport
+  // Clamp tooltip within viewport after render
   useEffect(() => {
-    if (!open || !ref.current) return;
-    const rect = ref.current.getBoundingClientRect();
-    setAlignRight(rect.left > window.innerWidth / 2);
+    if (!open || !ref.current || !tipRef.current) return;
+    const icon = ref.current.getBoundingClientRect();
+    const tip = tipRef.current;
+    const pad = 8;
+    const tipWidth = 260;
+
+    let top = icon.bottom + 6;
+    if (top + tip.offsetHeight > window.innerHeight - pad) {
+      top = icon.top - tip.offsetHeight - 6;
+    }
+    tip.style.top = `${Math.max(pad, top)}px`;
+
+    let left = icon.left;
+    if (left + tipWidth > window.innerWidth - pad) {
+      left = window.innerWidth - pad - tipWidth;
+    }
+    tip.style.left = `${Math.max(pad, left)}px`;
   }, [open]);
 
   return (
@@ -46,11 +60,11 @@ export function InfoTip({ text, dark }: { text: string; dark: boolean }) {
       </div>
       {open && (
         <div
+          ref={tipRef}
           style={{
             position: "fixed",
-            top: ref.current ? ref.current.getBoundingClientRect().bottom + 6 : 0,
-            left: alignRight ? undefined : (ref.current ? ref.current.getBoundingClientRect().left : 0),
-            right: alignRight ? (window.innerWidth - (ref.current ? ref.current.getBoundingClientRect().right : 0)) : undefined,
+            top: 0,
+            left: 0,
             width: 260,
             padding: "10px 12px",
             borderRadius: 8,
