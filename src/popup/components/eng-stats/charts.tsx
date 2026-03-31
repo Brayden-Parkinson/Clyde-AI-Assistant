@@ -7,6 +7,7 @@ import { dk, predictPoints, linearRegression, fmtHours, type WeekBucket, type Ma
 export function InfoTip({ text, dark }: { text: string; dark: boolean }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const [alignRight, setAlignRight] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -17,10 +18,17 @@ export function InfoTip({ text, dark }: { text: string; dark: boolean }) {
     return () => document.removeEventListener("mousedown", handler);
   }, [open]);
 
+  // Check if tooltip would overflow right edge — align right if so
+  useEffect(() => {
+    if (!open || !ref.current) return;
+    const rect = ref.current.getBoundingClientRect();
+    setAlignRight(rect.left + 240 > window.innerWidth - 20);
+  }, [open]);
+
   return (
     <div ref={ref} style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
       <div
-        onClick={() => setOpen(!open)}
+        onClick={(e) => { e.stopPropagation(); setOpen(!open); }}
         style={{
           width: 16,
           height: 16,
@@ -39,17 +47,17 @@ export function InfoTip({ text, dark }: { text: string; dark: boolean }) {
       {open && (
         <div
           style={{
-            position: "absolute",
-            top: "calc(100% + 6px)",
-            left: "50%",
-            transform: "translateX(-50%)",
-            width: 240,
+            position: "fixed",
+            top: ref.current ? ref.current.getBoundingClientRect().bottom + 6 : 0,
+            left: alignRight ? undefined : (ref.current ? ref.current.getBoundingClientRect().left : 0),
+            right: alignRight ? 16 : undefined,
+            width: 260,
             padding: "10px 12px",
             borderRadius: 8,
             background: dk(dark, "rgba(30,30,38,0.97)", "rgba(255,255,255,0.98)"),
             border: `1px solid ${dk(dark, "rgba(255,255,255,0.12)", OS.border)}`,
             boxShadow: dk(dark, "0 4px 16px rgba(0,0,0,0.5)", "0 4px 16px rgba(0,0,0,0.12)"),
-            zIndex: 100,
+            zIndex: 9999,
             fontSize: 11,
             lineHeight: 1.5,
             color: dk(dark, "rgba(255,255,255,0.7)", OS.secondary),
