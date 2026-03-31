@@ -35,40 +35,50 @@ export function AIImpactSection({ darkMode, metrics }: AIImpactProps) {
           Need at least 3 AI-assisted and 3 human-only PRs to compare
         </div>
       ) : (
-        <div style={{ display: "flex", gap: 10 }}>
-          {/* AI-Assisted Card */}
-          <ComparisonCard
-            label="AI-Assisted"
-            data={comparison.aiPRs}
-            darkMode={darkMode}
-            accent={OS.blue}
-          />
-
-          {/* Delta column */}
-          <div style={{
-            display: "flex", flexDirection: "column", justifyContent: "center",
-            alignItems: "center", gap: 6, minWidth: 80,
-          }}>
-            <DeltaBadge
-              label="Cycle Time"
-              deltaPct={comparison.cycleTimeDeltaPct}
+        <>
+          <div style={{ display: "flex", gap: 10 }}>
+            {/* AI-Assisted Card */}
+            <ComparisonCard
+              label="AI-Assisted"
+              data={comparison.aiPRs}
               darkMode={darkMode}
+              accent={dk(darkMode, "rgba(255,255,255,0.5)", OS.secondary)}
             />
-            <DeltaBadge
-              label="First Review"
-              deltaPct={comparison.firstReviewDeltaPct}
+
+            {/* Delta column */}
+            <div style={{
+              display: "flex", flexDirection: "column", justifyContent: "center",
+              alignItems: "center", gap: 8, minWidth: 100,
+            }}>
+              <DeltaBadge
+                label="Cycle Time"
+                deltaPct={comparison.cycleTimeDeltaPct}
+                darkMode={darkMode}
+              />
+              <DeltaBadge
+                label="First Review"
+                deltaPct={comparison.firstReviewDeltaPct}
+                darkMode={darkMode}
+              />
+            </div>
+
+            {/* Human-Only Card */}
+            <ComparisonCard
+              label="Human-Only"
+              data={comparison.nonAIPRs}
               darkMode={darkMode}
+              accent={dk(darkMode, "rgba(255,255,255,0.5)", OS.secondary)}
             />
           </div>
 
-          {/* Human-Only Card */}
-          <ComparisonCard
-            label="Human-Only"
-            data={comparison.nonAIPRs}
-            darkMode={darkMode}
-            accent={dk(darkMode, "rgba(255,255,255,0.5)", OS.secondary)}
-          />
-        </div>
+          {/* Sample size footnote */}
+          <div style={{
+            fontSize: 10, color: dk(darkMode, "rgba(255,255,255,0.35)", OS.faint),
+            marginTop: -2,
+          }}>
+            AI sample: {comparison.aiPRs.count} PRs, avg {comparison.aiPRs.avgSize} lines · Human: {comparison.nonAIPRs.count} PRs, avg {comparison.nonAIPRs.avgSize} lines
+          </div>
+        </>
       )}
     </>
   );
@@ -123,12 +133,13 @@ function DeltaBadge({ label, deltaPct, darkMode }: { label: string; deltaPct: nu
 
   return (
     <div style={{ textAlign: "center" }}>
-      <div style={{ fontSize: 9, color: dk(darkMode, "rgba(255,255,255,0.35)", OS.muted), marginBottom: 2 }}>{label}</div>
+      <div style={{ fontSize: 11, fontWeight: 500, color: dk(darkMode, "rgba(255,255,255,0.45)", OS.muted), marginBottom: 3 }}>{label}</div>
       <div style={{
-        fontSize: 10, fontWeight: 600, fontFamily: OS.mono,
-        color, padding: "2px 6px", borderRadius: 4,
+        fontSize: 11, fontWeight: 600, fontFamily: OS.mono,
+        color, padding: "3px 8px", borderRadius: 4,
         background: dk(darkMode, "rgba(255,255,255,0.05)", "rgba(0,0,0,0.03)"),
       }}>{text}</div>
+      <div style={{ fontSize: 9, color: dk(darkMode, "rgba(255,255,255,0.25)", OS.faint), marginTop: 2 }}>vs Human</div>
     </div>
   );
 }

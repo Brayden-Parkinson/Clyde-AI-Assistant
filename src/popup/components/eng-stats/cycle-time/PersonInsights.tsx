@@ -246,7 +246,7 @@ export function PersonInsights({ darkMode, metrics, prToTickets, timeRange }: Pe
           {summaryStats && (
             <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10 }}>
               <SummaryCard dark={darkMode} label="Avg AI adoption" value={`${summaryStats.avgAi}%`} subtitle={`${summaryStats.aboveHalf} above 50%`} />
-              <SummaryCard dark={darkMode} label="Avg overall score" value={summaryStats.avgOverall != null ? String(summaryStats.avgOverall) : "—"} subtitle={`across ${summaryStats.devCount} devs`} />
+              <SummaryCard dark={darkMode} label="Avg overall score" value={summaryStats.avgOverall != null ? String(summaryStats.avgOverall) : "—"} subtitle={`out of 100 · ${summaryStats.devCount} devs`} />
               <SummaryCard dark={darkMode} label="Avg review days" value={`${summaryStats.avgRevDays}d`} subtitle={`${summaryStats.flaggedRev} flagged`} />
               <SummaryCard dark={darkMode} label="Total PRs" value={String(summaryStats.totalPRs)} subtitle="this period" />
             </div>

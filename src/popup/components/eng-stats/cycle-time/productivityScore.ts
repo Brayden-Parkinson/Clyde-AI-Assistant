@@ -208,5 +208,5 @@ export const SCORE_TOOLTIPS = {
   velocity: "Throughput (35%): PRs/week. Speed (30%): inverse cycle time. Review responsiveness (20%): how fast first reviews happen. Consistency (15%): weeks with activity.",
   quality: "Non-revert rate (35%): PRs that don't get reverted. PR sizing (30%): smaller PRs = fewer defects. Code efficiency (20%): deletion ratio. Focus (15%): fewer files per PR.",
   impact: "Weighted volume (30%): code weighted by type. Non-trivial ratio (25%): substantive vs trivial PRs. Breadth (20%): cross-component work. Sustained output (25%): volume adjusted for reverts.",
-  overall: "Balanced composite: Velocity (35%) + Impact (35%) + Quality (30%). AI adoption shown separately.",
+  overall: "Balanced composite: Velocity (35%) + Impact (35%) + Quality (30%). AI adoption shown separately. Score tiers: 65+ Elite (green) · 55–64 Good (blue) · 45–54 Average (gray) · <45 Needs Attention (red).",
 } as const;
