@@ -35,7 +35,7 @@ export function ProductivityMatrixSection({ darkMode, personRows }: Productivity
         </div>
       ) : (
         <div style={{ padding: "14px 16px", borderRadius: 10, border: cardBorder, background: cardBg }}>
-          <ProductivityMatrixChart points={points} dark={darkMode} height={280} />
+          <ProductivityMatrixChart points={points} dark={darkMode} height={200} />
         </div>
       )}
     </>

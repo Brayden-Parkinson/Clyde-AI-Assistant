@@ -1329,10 +1329,15 @@ export function ProductivityMatrixChart({
   const xs = points.map((p) => p.x);
   const ys = points.map((p) => p.y);
   const maxX = Math.max(...xs) * 1.15 || 1;
-  const maxY = Math.max(...ys) * 1.15 || 1;
+  const rawMinY = Math.min(...ys);
+  const rawMaxY = Math.max(...ys);
+  const yRange = rawMaxY - rawMinY || rawMaxY * 0.5 || 1;
+  const yPad = yRange * 0.2;
+  const minY = Math.max(0, rawMinY - yPad);
+  const maxY = rawMaxY + yPad;
 
   const toX = (v: number) => PAD.left + (v / maxX) * chartW;
-  const toY = (v: number) => PAD.top + chartH - (v / maxY) * chartH;
+  const toY = (v: number) => PAD.top + chartH - ((v - minY) / (maxY - minY)) * chartH;
 
   const medX = [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)];
   const medY = [...ys].sort((a, b) => a - b)[Math.floor(ys.length / 2)];
@@ -1340,7 +1345,7 @@ export function ProductivityMatrixChart({
   const textColor = dk(dark, "rgba(255,255,255,0.45)", OS.muted);
   const gridColor = dk(dark, "rgba(255,255,255,0.06)", "rgba(0,0,0,0.06)");
   const dashColor = dk(dark, "rgba(255,255,255,0.15)", "rgba(0,0,0,0.12)");
-  const labelColor = dk(dark, "rgba(255,255,255,0.08)", "rgba(0,0,0,0.04)");
+  const labelColor = dk(dark, "rgba(255,255,255,0.22)", "rgba(0,0,0,0.12)");
 
   // Bubble color: gray→blue based on AI %
   function bubbleColor(aiPct: number): string {
@@ -1356,7 +1361,7 @@ export function ProductivityMatrixChart({
       {/* Grid */}
       {[0.25, 0.5, 0.75, 1].map((f) => (
         <line key={`gy${f}`} x1={PAD.left} x2={W - PAD.right}
-          y1={toY(maxY * f)} y2={toY(maxY * f)} stroke={gridColor} />
+          y1={toY(minY + (maxY - minY) * f)} y2={toY(minY + (maxY - minY) * f)} stroke={gridColor} />
       ))}
       {[0.25, 0.5, 0.75, 1].map((f) => (
         <line key={`gx${f}`} y1={PAD.top} y2={PAD.top + chartH}
@@ -1370,19 +1375,19 @@ export function ProductivityMatrixChart({
         stroke={dashColor} strokeWidth={1} strokeDasharray="4,3" />
 
       {/* Quadrant labels */}
-      <text x={toX(medX / 2)} y={toY(medY + (maxY - medY) / 2)} textAnchor="middle"
-        fill={labelColor} fontSize={11} fontWeight={600}>Deep Work</text>
-      <text x={toX(medX + (maxX - medX) / 2)} y={toY(medY + (maxY - medY) / 2)} textAnchor="middle"
-        fill={labelColor} fontSize={11} fontWeight={600}>High Output</text>
-      <text x={toX(medX / 2)} y={toY(medY / 2)} textAnchor="middle"
-        fill={labelColor} fontSize={11} fontWeight={600}>Ramping Up</text>
-      <text x={toX(medX + (maxX - medX) / 2)} y={toY(medY / 2)} textAnchor="middle"
-        fill={labelColor} fontSize={11} fontWeight={600}>High Volume</text>
+      <text x={toX(medX / 2)} y={toY((medY + maxY) / 2)} textAnchor="middle"
+        fill={labelColor} fontSize={12} fontWeight={600}>Deep Work</text>
+      <text x={toX(medX + (maxX - medX) / 2)} y={toY((medY + maxY) / 2)} textAnchor="middle"
+        fill={labelColor} fontSize={12} fontWeight={600}>High Output</text>
+      <text x={toX(medX / 2)} y={toY((minY + medY) / 2)} textAnchor="middle"
+        fill={labelColor} fontSize={12} fontWeight={600}>Ramping Up</text>
+      <text x={toX(medX + (maxX - medX) / 2)} y={toY((minY + medY) / 2)} textAnchor="middle"
+        fill={labelColor} fontSize={12} fontWeight={600}>High Volume</text>
 
       {/* Bubbles */}
       {points.map((p, i) => (
-        <circle key={i} cx={toX(p.x)} cy={toY(p.y)} r={p.size}
-          fill={bubbleColor(p.aiPct)} opacity={hover === i ? 1 : 0.7}
+        <circle key={i} cx={toX(p.x)} cy={toY(p.y)} r={Math.min(p.size, 16)}
+          fill={bubbleColor(p.aiPct)} opacity={hover === i ? 0.9 : 0.55}
           stroke={hover === i ? dk(dark, "#fff", OS.text) : "none"} strokeWidth={1.5}
           style={{ cursor: "pointer", transition: "opacity 0.15s" }}
           onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)} />
@@ -1392,14 +1397,15 @@ export function ProductivityMatrixChart({
       {hover !== null && points[hover] && (() => {
         const p = points[hover];
         const tx = toX(p.x);
-        const ty = toY(p.y) - p.size - 8;
+        const ty = toY(p.y) - Math.min(p.size, 16) - 8;
         const lines = [
           p.author,
-          `${p.x.toFixed(1)} PRs/wk`,
-          `${fmtHours(1 / p.y * 24)} cycle`,
-          `${p.aiPct}% AI`,
+          `Throughput: ${p.x.toFixed(1)} PRs/wk`,
+          `Cycle: ${fmtHours(1 / p.y * 24)}`,
+          `Efficiency: ${p.y.toFixed(2)}`,
+          `AI: ${p.aiPct}%`,
         ];
-        const boxW = 120;
+        const boxW = 140;
         const boxH = lines.length * 14 + 8;
         return (
           <g>
