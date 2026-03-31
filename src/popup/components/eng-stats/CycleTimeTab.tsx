@@ -53,7 +53,7 @@ export function CycleTimeTab({
       {/* Weekly Average Cycle Time (existing) */}
       <div style={{ padding: "14px 16px", borderRadius: 10, border: cardBorder, background: cardBg }}>
         <div style={{
-          fontSize: 13, fontWeight: 600,
+          fontSize: 15, fontWeight: 700,
           color: dk(darkMode, "rgba(255,255,255,0.8)", OS.secondary),
           marginBottom: 2,
         }}>

@@ -13,15 +13,15 @@ interface LOCStatsProps {
 function MiniCard({ label, value, dark }: { label: string; value: string; dark: boolean }) {
   return (
     <div style={{
-      padding: "10px 14px",
+      padding: "12px 14px",
       borderRadius: 8,
-      border: `1px solid ${dk(dark, "rgba(255,255,255,0.08)", OS.border)}`,
+      border: `1px solid ${dk(dark, "rgba(255,255,255,0.12)", OS.border)}`,
       background: dk(dark, "#1c1c22", OS.white),
       flex: 1,
       minWidth: 0,
     }}>
-      <div style={{ fontSize: 10, color: dk(dark, "rgba(255,255,255,0.45)", OS.muted), marginBottom: 2 }}>{label}</div>
-      <div style={{ fontSize: 18, fontWeight: 700, color: dk(dark, "#fff", OS.text), fontFamily: OS.mono }}>{value}</div>
+      <div style={{ fontSize: 12, color: dk(dark, "rgba(255,255,255,0.55)", OS.muted), marginBottom: 2 }}>{label}</div>
+      <div style={{ fontSize: 18, fontWeight: 600, color: dk(dark, "#fff", OS.text), fontFamily: OS.mono }}>{value}</div>
     </div>
   );
 }
@@ -40,7 +40,7 @@ export function LOCStatsSection({ darkMode, metrics, timeRange }: LOCStatsProps)
     <>
       <div style={{
         fontSize: 12, fontWeight: 600,
-        color: dk(darkMode, "rgba(255,255,255,0.6)", OS.secondary),
+        color: dk(darkMode, "rgba(255,255,255,0.5)", OS.secondary),
         marginTop: 4,
       }}>
         <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
@@ -78,10 +78,10 @@ export function LOCStatsSection({ darkMode, metrics, timeRange }: LOCStatsProps)
             marginBottom: 10,
           }}>PR Size Distribution</div>
           <div style={{
-            fontSize: 9, color: dk(darkMode, "rgba(255,255,255,0.3)", OS.faint),
+            fontSize: 10, color: dk(darkMode, "rgba(255,255,255,0.4)", OS.faint),
             marginBottom: 8, fontFamily: OS.mono,
           }}>
-            Elite &lt;194 | Good &lt;400 | Fair &lt;800
+            S: Elite &lt;194 lines | M: Good &lt;400 | L: Fair &lt;800 | XL: 800+
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             {stats.prSizeBuckets.map((b) => {
@@ -104,7 +104,7 @@ export function LOCStatsSection({ darkMode, metrics, timeRange }: LOCStatsProps)
                     }} />
                   </div>
                   <span style={{
-                    fontSize: 10, fontFamily: OS.mono, width: 42, textAlign: "right", flexShrink: 0,
+                    fontSize: 10, fontFamily: OS.mono, width: 60, textAlign: "right", flexShrink: 0, paddingRight: 4,
                     color: dk(darkMode, "rgba(255,255,255,0.5)", OS.muted),
                   }}>{b.count} ({Math.round(pct)}%)</span>
                 </div>
