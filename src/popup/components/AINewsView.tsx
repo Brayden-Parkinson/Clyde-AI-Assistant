@@ -24,15 +24,6 @@ const SOURCE_COLORS: Record<string, string> = {
   "techcrunch-ai": "#0A9E2C",
 };
 
-const TOPIC_ORDER = [
-  "Claude & Anthropic",
-  "Agents & Workflows",
-  "Research",
-  "Tools & Infra",
-  "Industry",
-  "Open Source",
-];
-
 // ─── Helpers ───
 
 function timeAgo(iso: string): string {
@@ -46,7 +37,14 @@ function timeAgo(iso: string): string {
   return `${days}d ago`;
 }
 
-function relevanceBorder(score: number): string {
+function relevanceLabel(score: number): { text: string; color: string } {
+  if (score >= 9) return { text: "Must read", color: OS.green };
+  if (score >= 7) return { text: "High", color: OS.green };
+  if (score >= 5) return { text: "Medium", color: OS.warning };
+  return { text: "Low", color: OS.muted };
+}
+
+function relevanceBorderColor(score: number): string {
   if (score >= 8) return OS.green;
   if (score >= 5) return OS.warning;
   return "transparent";
@@ -60,7 +58,48 @@ function domainFromUrl(url: string): string {
   }
 }
 
-// ─── Source Stats type ───
+/** Categorize a post into a temporal bucket */
+function timeBucket(iso: string): "today" | "yesterday" | "this-week" | "older" {
+  const now = new Date();
+  const posted = new Date(iso);
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const startOfYesterday = new Date(startOfToday.getTime() - 86_400_000);
+  const startOfWeek = new Date(startOfToday.getTime() - startOfToday.getDay() * 86_400_000);
+  if (posted >= startOfToday) return "today";
+  if (posted >= startOfYesterday) return "yesterday";
+  if (posted >= startOfWeek) return "this-week";
+  return "older";
+}
+
+const TIME_BUCKET_LABELS: Record<string, string> = {
+  "today": "Today",
+  "yesterday": "Yesterday",
+  "this-week": "This Week",
+  "older": "Earlier",
+};
+
+const TIME_BUCKET_ORDER = ["today", "yesterday", "this-week", "older"];
+
+/** Highlight search matches in text */
+function highlightMatch(text: string, query: string, darkMode: boolean): React.ReactNode {
+  if (!query.trim()) return text;
+  const idx = text.toLowerCase().indexOf(query.toLowerCase());
+  if (idx === -1) return text;
+  return (
+    <>
+      {text.slice(0, idx)}
+      <span style={{
+        background: dk(darkMode, "rgba(192,122,0,0.25)", OS.yellowBg),
+        borderRadius: 2, padding: "0 1px",
+      }}>
+        {text.slice(idx, idx + query.length)}
+      </span>
+      {text.slice(idx + query.length)}
+    </>
+  );
+}
+
+// ─── Types ───
 
 interface SourceStat {
   source: string;
@@ -69,8 +108,6 @@ interface SourceStat {
   error: string | null;
   fetchedAt: string;
 }
-
-// ─── Source progress type (per-source loading) ───
 
 interface SourceProgress {
   source: string;
@@ -86,7 +123,7 @@ export function AINewsView({ darkMode = false, demoMode = false }: AINewsViewPro
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [activeFilter, setActiveFilter] = useState<string>("all");
   const [briefing, setBriefing] = useState<string | null>(null);
-  const [briefingExpanded, setBriefingExpanded] = useState(false);
+  const [briefingExpanded, setBriefingExpanded] = useState(true);
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [sourceStats, setSourceStats] = useState<SourceStat[]>([]);
   const [sourcesExpanded, setSourcesExpanded] = useState(false);
@@ -94,6 +131,7 @@ export function AINewsView({ darkMode = false, demoMode = false }: AINewsViewPro
   const [sourceProgress, setSourceProgress] = useState<SourceProgress[]>([]);
   const [focusedIndex, setFocusedIndex] = useState(-1);
   const [disabledSources, setDisabledSources] = useState<Set<string>>(new Set());
+  const [hoveredId, setHoveredId] = useState<number | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const postRefs = useRef<Map<number, HTMLDivElement>>(new Map());
 
@@ -104,11 +142,9 @@ export function AINewsView({ darkMode = false, demoMode = false }: AINewsViewPro
   const posts: NewsPost[] = demoMode ? DEMO_NEWS_POSTS : (livePosts ?? []);
 
   const lastFetched = posts?.[0]?.fetchedAt ?? null;
-
-  // Unread count
   const unreadCount = useMemo(() => posts.filter((p) => !p.readAt).length, [posts]);
 
-  // Load briefing + auto-refresh state + source stats
+  // Load persisted state
   useEffect(() => {
     if (demoMode) {
       setBriefing(DEMO_NEWS_BRIEFING);
@@ -122,7 +158,18 @@ export function AINewsView({ darkMode = false, demoMode = false }: AINewsViewPro
     });
   }, [demoMode]);
 
-  // ─── Toggle source enabled/disabled ───
+  // ─── Actions ───
+
+  const markRead = useCallback((post: NewsPost) => {
+    if (demoMode || post.readAt || post.id == null) return;
+    db.news_posts.update(post.id, { readAt: new Date().toISOString() });
+  }, [demoMode]);
+
+  const toggleBookmark = useCallback((e: React.MouseEvent, post: NewsPost) => {
+    e.stopPropagation();
+    if (demoMode || post.id == null) return;
+    db.news_posts.update(post.id, { bookmarked: !post.bookmarked });
+  }, [demoMode]);
 
   const toggleSource = useCallback((sourceKey: string) => {
     if (demoMode) return;
@@ -135,33 +182,13 @@ export function AINewsView({ darkMode = false, demoMode = false }: AINewsViewPro
     });
   }, [demoMode]);
 
-  // ─── Mark post as read ───
-
-  const markRead = useCallback((post: NewsPost) => {
-    if (demoMode || post.readAt) return;
-    if (post.id != null) {
-      db.news_posts.update(post.id, { readAt: new Date().toISOString() });
-    }
-  }, [demoMode]);
-
-  // ─── Toggle bookmark ───
-
-  const toggleBookmark = useCallback((e: React.MouseEvent, post: NewsPost) => {
-    e.stopPropagation();
-    if (demoMode || post.id == null) return;
-    db.news_posts.update(post.id, { bookmarked: !post.bookmarked });
-  }, [demoMode]);
-
   const handleRefresh = useCallback(() => {
     if (demoMode || refreshing) return;
     setRefreshing(true);
     setError(null);
-    // Initialize per-source progress
     const entries = Object.entries(NEWS_SOURCES).filter(([, cfg]) => cfg.enabled);
     setSourceProgress(entries.map(([key, cfg]) => ({
-      source: key,
-      name: cfg.name,
-      status: "fetching" as const,
+      source: key, name: cfg.name, status: "fetching" as const,
     })));
     chrome.runtime.sendMessage({ type: "REFRESH_NEWS" }).catch(() => {
       setRefreshing(false);
@@ -191,11 +218,7 @@ export function AINewsView({ darkMode = false, demoMode = false }: AINewsViewPro
         });
       } else if (msg.type === "NEWS_SOURCE_PROGRESS") {
         setSourceProgress((prev) =>
-          prev.map((s) =>
-            s.source === msg.source
-              ? { ...s, status: (msg.status as SourceProgress["status"]) ?? "done" }
-              : s,
-          ),
+          prev.map((s) => s.source === msg.source ? { ...s, status: (msg.status as SourceProgress["status"]) ?? "done" } : s),
         );
       }
     };
@@ -203,72 +226,52 @@ export function AINewsView({ darkMode = false, demoMode = false }: AINewsViewPro
     return () => chrome.runtime.onMessage.removeListener(listener);
   }, []);
 
-  // ─── Source counts for filter pills ───
+  // ─── Computed data ───
 
   const sourceCounts = useMemo(() => {
     const counts = new Map<string, number>();
-    for (const p of posts) {
-      counts.set(p.source, (counts.get(p.source) ?? 0) + 1);
-    }
+    for (const p of posts) counts.set(p.source, (counts.get(p.source) ?? 0) + 1);
     return counts;
   }, [posts]);
 
-  // ─── Bookmarked count ───
-
   const bookmarkedCount = useMemo(() => posts.filter((p) => p.bookmarked).length, [posts]);
-
-  // ─── Filtered + searched + grouped posts ───
 
   const filteredPosts = useMemo(() => {
     let result = posts;
-    if (activeFilter === "bookmarked") {
-      result = result.filter((p) => p.bookmarked);
-    } else if (activeFilter !== "all") {
-      result = result.filter((p) => p.source === activeFilter);
-    }
+    if (activeFilter === "bookmarked") result = result.filter((p) => p.bookmarked);
+    else if (activeFilter !== "all") result = result.filter((p) => p.source === activeFilter);
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
-      result = result.filter(
-        (p) => p.title.toLowerCase().includes(q) || p.summary.toLowerCase().includes(q),
-      );
+      result = result.filter((p) => p.title.toLowerCase().includes(q) || p.summary.toLowerCase().includes(q));
     }
     return result;
   }, [posts, activeFilter, searchQuery]);
 
-  const topicGroups = useMemo(() => {
-    if (activeFilter !== "all" || searchQuery.trim()) return null;
-    const groups = new Map<string, NewsPost[]>();
+  // Temporal → topic grouping
+  const timeGroups = useMemo(() => {
+    if (searchQuery.trim() || (activeFilter !== "all" && activeFilter !== "bookmarked")) return null;
+    const buckets = new Map<string, NewsPost[]>();
     for (const p of filteredPosts) {
-      const tag = p.topicTag || "Industry";
-      if (!groups.has(tag)) groups.set(tag, []);
-      groups.get(tag)!.push(p);
+      const bucket = timeBucket(p.postedAt);
+      if (!buckets.has(bucket)) buckets.set(bucket, []);
+      buckets.get(bucket)!.push(p);
     }
-    const sorted: Array<{ topic: string; items: NewsPost[] }> = [];
-    for (const topic of TOPIC_ORDER) {
-      const items = groups.get(topic);
+    const groups: Array<{ bucket: string; label: string; posts: NewsPost[] }> = [];
+    for (const bucket of TIME_BUCKET_ORDER) {
+      const items = buckets.get(bucket);
       if (items && items.length > 0) {
         items.sort((a, b) => b.relevanceScore - a.relevanceScore);
-        sorted.push({ topic, items });
+        groups.push({ bucket, label: TIME_BUCKET_LABELS[bucket], posts: items });
       }
     }
-    for (const [topic, items] of groups) {
-      if (!TOPIC_ORDER.includes(topic)) {
-        items.sort((a, b) => b.relevanceScore - a.relevanceScore);
-        sorted.push({ topic, items });
-      }
-    }
-    return sorted;
-  }, [filteredPosts, activeFilter, searchQuery]);
+    return groups;
+  }, [filteredPosts, searchQuery, activeFilter]);
 
   // Flat list for keyboard nav
   const flatPosts = useMemo(() => {
-    if (topicGroups) {
-      return topicGroups.flatMap((g) => g.items);
-    }
-    return [...filteredPosts].sort(
-      (a, b) => new Date(b.postedAt).getTime() - new Date(a.postedAt).getTime(),
-    );
-  }, [topicGroups, filteredPosts]);
+    if (timeGroups) return timeGroups.flatMap((g) => g.posts);
+    return [...filteredPosts].sort((a, b) => new Date(b.postedAt).getTime() - new Date(a.postedAt).getTime());
+  }, [timeGroups, filteredPosts]);
 
   const toggleExpand = useCallback((post: NewsPost) => {
     if (post.id == null) return;
@@ -283,15 +286,12 @@ export function AINewsView({ darkMode = false, demoMode = false }: AINewsViewPro
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.target instanceof HTMLInputElement) return;
-
     if (e.key === "ArrowDown" || e.key === "j") {
       e.preventDefault();
       setFocusedIndex((prev) => {
         const next = Math.min(prev + 1, flatPosts.length - 1);
         const post = flatPosts[next];
-        if (post?.id != null) {
-          postRefs.current.get(post.id)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
-        }
+        if (post?.id != null) postRefs.current.get(post.id)?.scrollIntoView({ block: "center", behavior: "smooth" });
         return next;
       });
     } else if (e.key === "ArrowUp" || e.key === "k") {
@@ -299,9 +299,7 @@ export function AINewsView({ darkMode = false, demoMode = false }: AINewsViewPro
       setFocusedIndex((prev) => {
         const next = Math.max(prev - 1, 0);
         const post = flatPosts[next];
-        if (post?.id != null) {
-          postRefs.current.get(post.id)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
-        }
+        if (post?.id != null) postRefs.current.get(post.id)?.scrollIntoView({ block: "center", behavior: "smooth" });
         return next;
       });
     } else if (e.key === "Enter") {
@@ -312,22 +310,20 @@ export function AINewsView({ darkMode = false, demoMode = false }: AINewsViewPro
       setExpandedId(null);
     } else if (e.key === "b" && focusedIndex >= 0) {
       const post = flatPosts[focusedIndex];
-      if (post && post.id != null && !demoMode) {
-        db.news_posts.update(post.id, { bookmarked: !post.bookmarked });
-      }
+      if (post?.id != null && !demoMode) db.news_posts.update(post.id, { bookmarked: !post.bookmarked });
     } else if (e.key === "o" && focusedIndex >= 0) {
       const post = flatPosts[focusedIndex];
-      if (post?.url) {
-        window.open(post.url, "_blank", "noopener,noreferrer");
-      }
+      if (post?.url) window.open(post.url, "_blank", "noopener,noreferrer");
     }
   }, [flatPosts, focusedIndex, toggleExpand, demoMode]);
 
-  // ─── Source list for filters ───
+  // ─── Filter pill entries ───
 
   const sourceEntries = Object.entries(NEWS_SOURCES)
     .filter(([key]) => sourceCounts.has(key) || demoMode)
     .map(([key, cfg]) => ({ key, shortName: cfg.shortName, count: sourceCounts.get(key) ?? 0 }));
+
+  // ─── Render ───
 
   return (
     <div
@@ -336,22 +332,22 @@ export function AINewsView({ darkMode = false, demoMode = false }: AINewsViewPro
       onKeyDown={handleKeyDown}
       style={{ fontFamily: OS.font, outline: "none" }}
     >
-      {/* Header */}
+      {/* ─── Header ─── */}
       <div style={{
         display: "flex", alignItems: "center", justifyContent: "space-between",
-        marginBottom: 12,
+        padding: "0 0 12px",
       }}>
         <div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <h2 style={{
-              margin: 0, fontSize: 15, fontWeight: 600,
+              margin: 0, fontSize: 18, fontWeight: 700,
               color: dk(darkMode, "#e0e0e0", OS.text),
             }}>
               AI News
             </h2>
             {unreadCount > 0 && (
               <span style={{
-                fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 9999,
+                fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 9999,
                 background: dk(darkMode, "rgba(94,106,210,0.25)", OS.blueBg),
                 color: dk(darkMode, "#8b95e0", OS.blue),
               }}>
@@ -359,20 +355,20 @@ export function AINewsView({ darkMode = false, demoMode = false }: AINewsViewPro
               </span>
             )}
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 2 }}>
             {lastFetched && (
-              <span style={{ fontSize: 11, color: OS.muted }}>
+              <span style={{ fontSize: 11, color: dk(darkMode, "rgba(255,255,255,0.45)", OS.muted) }}>
                 Updated {timeAgo(lastFetched)}
               </span>
             )}
             {autoRefresh && (
-              <span style={{ fontSize: 10, color: dk(darkMode, "rgba(255,255,255,0.25)", OS.faint) }}>
-                Auto-refreshes every 30m
+              <span style={{ fontSize: 10, color: dk(darkMode, "rgba(255,255,255,0.30)", OS.faint) }}>
+                Auto every 30m
               </span>
             )}
           </div>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <button
             onClick={handleAutoRefreshToggle}
             style={{
@@ -383,10 +379,8 @@ export function AINewsView({ darkMode = false, demoMode = false }: AINewsViewPro
                 : "transparent",
               border: `1px solid ${autoRefresh
                 ? dk(darkMode, "rgba(59,140,95,0.4)", OS.green + "40")
-                : dk(darkMode, "rgba(255,255,255,0.08)", OS.border)}`,
-              color: autoRefresh
-                ? OS.green
-                : dk(darkMode, "rgba(255,255,255,0.35)", OS.muted),
+                : dk(darkMode, "rgba(255,255,255,0.10)", OS.border)}`,
+              color: autoRefresh ? OS.green : dk(darkMode, "rgba(255,255,255,0.40)", OS.muted),
             }}
           >
             Auto
@@ -396,11 +390,11 @@ export function AINewsView({ darkMode = false, demoMode = false }: AINewsViewPro
             disabled={refreshing}
             style={{
               fontSize: 12, fontWeight: 600, fontFamily: OS.font,
-              padding: "5px 12px", borderRadius: 6, cursor: refreshing ? "default" : "pointer",
+              padding: "5px 14px", borderRadius: 6, cursor: refreshing ? "default" : "pointer",
               background: dk(darkMode, "rgba(94,106,210,0.15)", OS.blueBg),
               border: `1px solid ${dk(darkMode, "rgba(94,106,210,0.3)", OS.blue + "40")}`,
               color: dk(darkMode, "#8b95e0", OS.blue),
-              opacity: refreshing ? 0.6 : 1,
+              opacity: refreshing ? 0.6 : 1, transition: "all 150ms",
             }}
           >
             {refreshing ? "Refreshing..." : "Refresh"}
@@ -408,27 +402,20 @@ export function AINewsView({ darkMode = false, demoMode = false }: AINewsViewPro
         </div>
       </div>
 
-      {/* Search bar */}
+      {/* ─── Search ─── */}
       {posts.length > 0 && (
-        <div style={{ marginBottom: 12, position: "relative" }}>
-          <span style={{
-            position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)",
-            fontSize: 12, color: dk(darkMode, "rgba(255,255,255,0.25)", OS.faint),
-            pointerEvents: "none",
-          }}>
-            ⌕
-          </span>
+        <div style={{ marginBottom: 10, position: "relative" }}>
           <input
             type="text"
-            placeholder="Search headlines & summaries..."
+            placeholder="Search news..."
             value={searchQuery}
             onChange={(e) => { setSearchQuery(e.target.value); setFocusedIndex(-1); }}
             style={{
               width: "100%", boxSizing: "border-box",
-              padding: "7px 10px 7px 28px", borderRadius: 8,
+              padding: "7px 12px", borderRadius: 8,
               fontSize: 12, fontFamily: OS.font,
               background: dk(darkMode, "rgba(255,255,255,0.06)", OS.white),
-              border: `1px solid ${dk(darkMode, "rgba(255,255,255,0.08)", OS.border)}`,
+              border: `1px solid ${dk(darkMode, "rgba(255,255,255,0.10)", OS.border)}`,
               color: dk(darkMode, "#e0e0e0", OS.text),
               outline: "none",
             }}
@@ -436,60 +423,51 @@ export function AINewsView({ darkMode = false, demoMode = false }: AINewsViewPro
           {searchQuery && (
             <span style={{
               position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)",
-              fontSize: 10, color: OS.muted,
+              fontSize: 11, fontWeight: 500,
+              color: filteredPosts.length > 0
+                ? dk(darkMode, "rgba(255,255,255,0.45)", OS.muted)
+                : OS.red,
             }}>
-              {filteredPosts.length} result{filteredPosts.length !== 1 ? "s" : ""}
+              {filteredPosts.length} of {posts.length}
             </span>
           )}
         </div>
       )}
 
-      {/* Error */}
+      {/* ─── Error ─── */}
       {error && (
         <div style={{
           padding: "8px 12px", marginBottom: 10, borderRadius: 6, fontSize: 12,
-          background: darkMode ? "rgba(209,67,67,0.1)" : "#fef2f2",
-          border: `1px solid ${darkMode ? "rgba(209,67,67,0.2)" : "#fecaca"}`,
+          background: dk(darkMode, "rgba(209,67,67,0.1)", "#fef2f2"),
+          border: `1px solid ${dk(darkMode, "rgba(209,67,67,0.2)", "#fecaca")}`,
           color: OS.red,
         }}>
           {error}
         </div>
       )}
 
-      {/* Per-source loading progress */}
+      {/* ─── Per-source loading progress ─── */}
       {refreshing && sourceProgress.length > 0 && (
         <div style={{
-          padding: "10px 14px", marginBottom: 12, borderRadius: 10,
+          padding: "10px 14px", marginBottom: 10, borderRadius: 8,
           background: dk(darkMode, "rgba(255,255,255,0.04)", OS.white),
           border: `1px solid ${dk(darkMode, "rgba(255,255,255,0.08)", OS.border)}`,
         }}>
-          <div style={{
-            fontSize: 11, fontWeight: 600, textTransform: "uppercase",
-            letterSpacing: "0.08em", marginBottom: 8,
-            color: dk(darkMode, "rgba(255,255,255,0.35)", OS.muted),
-          }}>
-            Fetching sources
-          </div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
             {sourceProgress.map((sp) => (
-              <span
-                key={sp.source}
-                style={{
-                  display: "inline-flex", alignItems: "center", gap: 4,
-                  fontSize: 11, padding: "3px 8px", borderRadius: 6,
-                  background: sp.status === "done"
-                    ? dk(darkMode, "rgba(59,140,95,0.15)", "#e8f5ee")
-                    : sp.status === "error"
-                      ? dk(darkMode, "rgba(209,67,67,0.1)", "#fef2f2")
-                      : dk(darkMode, "rgba(255,255,255,0.06)", "#f5f5f7"),
-                  color: sp.status === "done"
-                    ? OS.green
-                    : sp.status === "error"
-                      ? OS.red
-                      : dk(darkMode, "rgba(255,255,255,0.45)", OS.secondary),
-                  transition: "all 300ms",
-                }}
-              >
+              <span key={sp.source} style={{
+                display: "inline-flex", alignItems: "center", gap: 4,
+                fontSize: 11, padding: "3px 8px", borderRadius: 6,
+                background: sp.status === "done"
+                  ? dk(darkMode, "rgba(59,140,95,0.15)", "#e8f5ee")
+                  : sp.status === "error"
+                    ? dk(darkMode, "rgba(209,67,67,0.1)", "#fef2f2")
+                    : dk(darkMode, "rgba(255,255,255,0.06)", OS.bg),
+                color: sp.status === "done" ? OS.green
+                  : sp.status === "error" ? OS.red
+                    : dk(darkMode, "rgba(255,255,255,0.50)", OS.secondary),
+                transition: "all 300ms",
+              }}>
                 <span style={{ fontSize: 10 }}>
                   {sp.status === "done" ? "✓" : sp.status === "error" ? "✗" : "⟳"}
                 </span>
@@ -500,7 +478,7 @@ export function AINewsView({ darkMode = false, demoMode = false }: AINewsViewPro
         </div>
       )}
 
-      {/* Section A: Daily Briefing */}
+      {/* ─── Briefing ─── */}
       {briefing && posts.length > 0 && (
         <BriefingCard
           briefing={briefing}
@@ -510,99 +488,107 @@ export function AINewsView({ darkMode = false, demoMode = false }: AINewsViewPro
         />
       )}
 
-      {/* Empty state */}
+      {/* ─── Empty state ─── */}
       {(!posts || posts.length === 0) && !refreshing && (
         <div style={{
-          textAlign: "center", padding: "40px 20px",
-          color: OS.muted, fontSize: 13,
+          textAlign: "center", padding: "48px 24px",
+          display: "flex", flexDirection: "column", alignItems: "center", gap: 8,
         }}>
-          <div style={{ fontSize: 24, marginBottom: 8 }}>📡</div>
-          <div>Click <strong>Refresh</strong> to fetch the latest AI news from {Object.keys(NEWS_SOURCES).length} sources</div>
           <div style={{
-            marginTop: 8, fontSize: 11, color: dk(darkMode, "rgba(255,255,255,0.25)", OS.faint),
-            lineHeight: 1.6,
+            width: 48, height: 48, borderRadius: "50%",
+            background: dk(darkMode, "rgba(94,106,210,0.15)", OS.blueBg),
+            display: "flex", alignItems: "center", justifyContent: "center",
           }}>
-            {Object.values(NEWS_SOURCES).map((s) => s.name).join(" · ")}
+            <span style={{ fontSize: 22 }}>📡</span>
+          </div>
+          <div style={{ fontSize: 15, fontWeight: 600, color: dk(darkMode, "#e0e0e0", OS.text) }}>
+            No news yet
+          </div>
+          <div style={{
+            fontSize: 13, color: dk(darkMode, "rgba(255,255,255,0.50)", OS.muted),
+            lineHeight: 1.6, maxWidth: 260,
+          }}>
+            Click Refresh to fetch AI news from {Object.keys(NEWS_SOURCES).length} sources
           </div>
         </div>
       )}
 
-      {/* Loading state (only when no posts yet and no progress tracker) */}
+      {/* ─── Loading skeleton ─── */}
       {refreshing && (!posts || posts.length === 0) && sourceProgress.length === 0 && (
-        <div style={{
-          textAlign: "center", padding: "40px 20px",
-          color: OS.muted, fontSize: 13,
-        }}>
-          Fetching from {Object.values(NEWS_SOURCES).map((s) => s.name).join(", ")}...
-        </div>
-      )}
-
-      {/* Section B: Source filter pills */}
-      {posts.length > 0 && (
-        <div style={{
-          display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap",
-        }}>
-          <FilterPill
-            label="All"
-            count={posts.length}
-            active={activeFilter === "all"}
-            color={OS.blue}
-            darkMode={darkMode}
-            onClick={() => { setActiveFilter("all"); setFocusedIndex(-1); }}
-          />
-          {bookmarkedCount > 0 && (
-            <FilterPill
-              label="★ Saved"
-              count={bookmarkedCount}
-              active={activeFilter === "bookmarked"}
-              color={OS.warning}
-              darkMode={darkMode}
-              onClick={() => { setActiveFilter("bookmarked"); setFocusedIndex(-1); }}
-            />
-          )}
-          {sourceEntries.map(({ key, shortName, count }) => (
-            <FilterPill
-              key={key}
-              label={shortName}
-              count={count}
-              active={activeFilter === key}
-              color={SOURCE_COLORS[key] ?? OS.muted}
-              darkMode={darkMode}
-              onClick={() => { setActiveFilter(key); setFocusedIndex(-1); }}
-            />
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: "12px 0" }}>
+          {[1, 2, 3].map((i) => (
+            <div key={i} style={{
+              height: 56, borderRadius: 8,
+              background: dk(darkMode, "rgba(255,255,255,0.04)", OS.bg),
+              border: `1px solid ${dk(darkMode, "rgba(255,255,255,0.06)", OS.border)}`,
+            }} />
           ))}
         </div>
       )}
 
-      {/* Keyboard hint */}
+      {/* ─── Filter pills ─── */}
       {posts.length > 0 && (
-        <div style={{
-          fontSize: 10, color: dk(darkMode, "rgba(255,255,255,0.15)", OS.faint),
-          marginBottom: 10, fontFamily: OS.font,
-        }}>
-          ↑↓ navigate · Enter expand · b bookmark · o open link
+        <div style={{ display: "flex", gap: 5, marginBottom: 10, flexWrap: "wrap" }}>
+          <FilterPill label="All" count={posts.length} active={activeFilter === "all"}
+            color={OS.blue} darkMode={darkMode}
+            onClick={() => { setActiveFilter("all"); setFocusedIndex(-1); }} />
+          {bookmarkedCount > 0 && (
+            <FilterPill label="★ Saved" count={bookmarkedCount} active={activeFilter === "bookmarked"}
+              color={OS.warning} darkMode={darkMode}
+              onClick={() => { setActiveFilter("bookmarked"); setFocusedIndex(-1); }} />
+          )}
+          {sourceEntries.map(({ key, shortName, count }) => (
+            <FilterPill key={key} label={shortName} count={count}
+              active={activeFilter === key} color={SOURCE_COLORS[key] ?? OS.muted}
+              darkMode={darkMode}
+              onClick={() => { setActiveFilter(key); setFocusedIndex(-1); }} />
+          ))}
         </div>
       )}
 
-      {/* Section B: Grouped or flat post list */}
-      {topicGroups ? (
-        topicGroups.map((group) => (
-          <div key={group.topic} style={{ marginBottom: 16 }}>
+      {/* ─── Keyboard hints ─── */}
+      {posts.length > 0 && (
+        <div style={{
+          fontSize: 10, color: dk(darkMode, "rgba(255,255,255,0.30)", OS.faint),
+          marginBottom: 8, padding: "4px 0",
+          borderBottom: `1px solid ${dk(darkMode, "rgba(255,255,255,0.06)", OS.border)}`,
+        }}>
+          ↑↓ or j/k navigate · Enter expand · b bookmark · o open · Esc close
+        </div>
+      )}
+
+      {/* ─── Post list: temporal groups or flat ─── */}
+      {timeGroups ? (
+        timeGroups.map((group) => (
+          <div key={group.bucket} style={{ marginBottom: 4 }}>
+            {/* Section header — Clyde SectionHeader pattern */}
             <div style={{
-              fontSize: 11, fontWeight: 600, textTransform: "uppercase",
-              letterSpacing: "0.08em", marginBottom: 8,
-              color: dk(darkMode, "rgba(255,255,255,0.35)", OS.muted),
-              fontFamily: OS.font,
+              display: "flex", alignItems: "center", gap: 6,
+              marginTop: 14, marginBottom: 8, paddingTop: 10,
+              borderTop: group.bucket !== "today"
+                ? `1px solid ${dk(darkMode, "rgba(255,255,255,0.06)", OS.border)}`
+                : "none",
             }}>
-              {group.topic}
+              <div style={{
+                width: 3, height: 14, borderRadius: 2,
+                background: group.bucket === "today" ? OS.blue : dk(darkMode, "rgba(255,255,255,0.15)", OS.faint),
+                flexShrink: 0,
+              }} />
               <span style={{
-                fontWeight: 400, marginLeft: 6,
-                color: dk(darkMode, "rgba(255,255,255,0.20)", OS.faint),
+                fontSize: 12, fontWeight: 600, textTransform: "uppercase",
+                letterSpacing: "0.04em",
+                color: dk(darkMode, "rgba(255,255,255,0.50)", OS.muted),
               }}>
-                {group.items.length}
+                {group.label}
+              </span>
+              <span style={{
+                fontSize: 11, fontWeight: 400,
+                color: dk(darkMode, "rgba(255,255,255,0.30)", OS.faint),
+              }}>
+                {group.posts.length}
               </span>
             </div>
-            {group.items.map((post) => {
+            {group.posts.map((post) => {
               const idx = flatPosts.indexOf(post);
               return (
                 <PostCard
@@ -610,9 +596,12 @@ export function AINewsView({ darkMode = false, demoMode = false }: AINewsViewPro
                   post={post}
                   expanded={expandedId === post.id}
                   focused={focusedIndex === idx}
+                  hovered={hoveredId === post.id}
                   onToggle={() => toggleExpand(post)}
                   onBookmark={(e) => toggleBookmark(e, post)}
+                  onHover={(h) => setHoveredId(h ? (post.id ?? null) : null)}
                   darkMode={darkMode}
+                  searchQuery={searchQuery}
                   refCallback={(el) => {
                     if (post.id != null) {
                       if (el) postRefs.current.set(post.id, el);
@@ -625,41 +614,42 @@ export function AINewsView({ darkMode = false, demoMode = false }: AINewsViewPro
           </div>
         ))
       ) : (
-        [...filteredPosts]
-          .sort((a, b) => new Date(b.postedAt).getTime() - new Date(a.postedAt).getTime())
-          .map((post) => {
-            const idx = flatPosts.indexOf(post);
-            return (
-              <PostCard
-                key={post.id}
-                post={post}
-                expanded={expandedId === post.id}
-                focused={focusedIndex === idx}
-                onToggle={() => toggleExpand(post)}
-                onBookmark={(e) => toggleBookmark(e, post)}
-                darkMode={darkMode}
-                refCallback={(el) => {
-                  if (post.id != null) {
-                    if (el) postRefs.current.set(post.id, el);
-                    else postRefs.current.delete(post.id!);
-                  }
-                }}
-              />
-            );
-          })
+        flatPosts.map((post) => {
+          const idx = flatPosts.indexOf(post);
+          return (
+            <PostCard
+              key={post.id}
+              post={post}
+              expanded={expandedId === post.id}
+              focused={focusedIndex === idx}
+              hovered={hoveredId === post.id}
+              onToggle={() => toggleExpand(post)}
+              onBookmark={(e) => toggleBookmark(e, post)}
+              onHover={(h) => setHoveredId(h ? (post.id ?? null) : null)}
+              darkMode={darkMode}
+              searchQuery={searchQuery}
+              refCallback={(el) => {
+                if (post.id != null) {
+                  if (el) postRefs.current.set(post.id, el);
+                  else postRefs.current.delete(post.id!);
+                }
+              }}
+            />
+          );
+        })
       )}
 
-      {/* No search results */}
+      {/* ─── No search results ─── */}
       {searchQuery && filteredPosts.length === 0 && (
         <div style={{
           textAlign: "center", padding: "24px 20px",
-          color: OS.muted, fontSize: 12,
+          color: dk(darkMode, "rgba(255,255,255,0.45)", OS.muted), fontSize: 13,
         }}>
           No posts matching "{searchQuery}"
         </div>
       )}
 
-      {/* Section C: Sources footer */}
+      {/* ─── Sources footer ─── */}
       {(sourceStats.length > 0 || demoMode) && (
         <SourcesFooter
           stats={demoMode ? demoSourceStats() : sourceStats}
@@ -682,51 +672,46 @@ function BriefingCard({
   briefing: string; expanded: boolean; onToggle: () => void; darkMode: boolean;
 }) {
   const bullets = briefing.split("\n").filter((l) => l.trim());
-  const preview = bullets[0] ?? "";
-  const rest = bullets.slice(1);
+  const preview = bullets.slice(0, 3);
+  const rest = bullets.slice(3);
 
   return (
     <div
       onClick={onToggle}
       style={{
-        padding: "12px 14px", marginBottom: 14, borderRadius: 12, cursor: "pointer",
-        background: dk(darkMode, "rgba(255,255,255,0.04)", OS.white),
-        border: `1px solid ${dk(darkMode, "rgba(255,255,255,0.08)", OS.border)}`,
+        padding: "10px 14px", marginBottom: 10, borderRadius: 8, cursor: "pointer",
+        background: dk(darkMode, "rgba(94,106,210,0.06)", OS.blueBg),
+        border: `1px solid ${dk(darkMode, "rgba(94,106,210,0.15)", OS.blue + "20")}`,
         borderLeft: `3px solid ${OS.blue}`,
       }}
     >
       <div style={{
         fontSize: 11, fontWeight: 600, textTransform: "uppercase",
-        letterSpacing: "0.08em", marginBottom: 8,
-        color: dk(darkMode, "rgba(94,106,210,0.7)", OS.blue),
-        fontFamily: OS.font,
+        letterSpacing: "0.04em", marginBottom: 6,
+        color: dk(darkMode, "rgba(94,106,210,0.8)", OS.blue),
       }}>
-        Your Briefing
+        Daily Briefing
       </div>
-      <div style={{
-        fontSize: 13, lineHeight: 1.6,
-        color: dk(darkMode, "rgba(255,255,255,0.80)", OS.text),
-        fontFamily: OS.font,
-      }}>
-        {preview}
-      </div>
-      {expanded && rest.length > 0 && (
-        <div style={{ marginTop: 4 }}>
-          {rest.map((line, i) => (
-            <div key={i} style={{
-              fontSize: 13, lineHeight: 1.6,
-              color: dk(darkMode, "rgba(255,255,255,0.80)", OS.text),
-              fontFamily: OS.font,
-            }}>
-              {line}
-            </div>
-          ))}
+      {preview.map((line, i) => (
+        <div key={i} style={{
+          fontSize: 12, lineHeight: 1.55,
+          color: dk(darkMode, "rgba(255,255,255,0.80)", OS.text),
+        }}>
+          {line}
         </div>
-      )}
+      ))}
+      {expanded && rest.length > 0 && rest.map((line, i) => (
+        <div key={`r${i}`} style={{
+          fontSize: 12, lineHeight: 1.55,
+          color: dk(darkMode, "rgba(255,255,255,0.80)", OS.text),
+        }}>
+          {line}
+        </div>
+      ))}
       {!expanded && rest.length > 0 && (
         <div style={{
-          fontSize: 11, color: dk(darkMode, "rgba(255,255,255,0.25)", OS.faint),
-          marginTop: 4, fontFamily: OS.font,
+          fontSize: 11, color: dk(darkMode, "rgba(255,255,255,0.30)", OS.faint),
+          marginTop: 4,
         }}>
           +{rest.length} more
         </div>
@@ -746,65 +731,70 @@ function FilterPill({
     <button
       onClick={onClick}
       style={{
-        display: "flex", alignItems: "center", gap: 5,
-        padding: "4px 10px", borderRadius: 9999, cursor: "pointer",
-        fontSize: 11, fontWeight: 500, fontFamily: OS.font,
+        display: "flex", alignItems: "center", gap: 4,
+        padding: "3px 8px", borderRadius: 9999, cursor: "pointer",
+        fontSize: 10, fontWeight: 500, fontFamily: OS.font,
         transition: "all 150ms",
         background: active ? color + "20" : "transparent",
-        border: `1px solid ${active ? color + "50" : dk(darkMode, "rgba(255,255,255,0.08)", OS.border)}`,
-        color: active ? color : dk(darkMode, "rgba(255,255,255,0.45)", OS.secondary),
+        border: `1px solid ${active ? color + "50" : dk(darkMode, "rgba(255,255,255,0.10)", OS.border)}`,
+        color: active ? color : dk(darkMode, "rgba(255,255,255,0.50)", OS.secondary),
       }}
     >
       {!label.startsWith("★") && (
         <span style={{
-          width: 6, height: 6, borderRadius: "50%",
+          width: 5, height: 5, borderRadius: "50%",
           background: color, flexShrink: 0,
         }} />
       )}
       {label}
-      <span style={{ fontSize: 10, opacity: 0.6 }}>
-        {count}
-      </span>
+      <span style={{ fontSize: 9, opacity: 0.6 }}>{count}</span>
     </button>
   );
 }
 
-// ─── Post Card (tiered: hero / standard / compact) ───
+// ─── Post Card — Clyde-native, tiered by relevance ───
 
 function PostCard({
-  post, expanded, focused, onToggle, onBookmark, darkMode, refCallback,
+  post, expanded, focused, hovered, onToggle, onBookmark, onHover, darkMode, searchQuery, refCallback,
 }: {
   post: NewsPost;
   expanded: boolean;
   focused: boolean;
+  hovered: boolean;
   onToggle: () => void;
   onBookmark: (e: React.MouseEvent) => void;
+  onHover: (h: boolean) => void;
   darkMode: boolean;
+  searchQuery: string;
   refCallback: (el: HTMLDivElement | null) => void;
 }) {
   const sourceColor = SOURCE_COLORS[post.source] ?? OS.muted;
   const isRead = !!post.readAt;
   const isHero = post.relevanceScore >= 9;
   const isCompact = post.relevanceScore <= 4;
+  const rl = relevanceLabel(post.relevanceScore);
 
-  const focusRing = focused
-    ? `0 0 0 2px ${dk(darkMode, "rgba(94,106,210,0.5)", OS.blue + "50")}`
-    : "none";
+  const isActive = expanded || hovered || focused;
+  const bgBase = dk(darkMode, "transparent", "transparent");
+  const bgHover = dk(darkMode, "rgba(255,255,255,0.04)", OS.bg);
+  const bgExpanded = dk(darkMode, "rgba(255,255,255,0.06)", OS.bg);
 
-  // ─── Compact card for low-relevance posts ───
-  if (isCompact) {
+  // ─── Compact card ───
+  if (isCompact && !expanded) {
     return (
       <div
         ref={refCallback}
         onClick={onToggle}
+        onMouseEnter={() => onHover(true)}
+        onMouseLeave={() => onHover(false)}
         style={{
           display: "flex", alignItems: "center", gap: 8,
-          padding: "6px 10px", marginBottom: 3, borderRadius: 6, cursor: "pointer",
-          background: dk(darkMode, "rgba(255,255,255,0.02)", "rgba(0,0,0,0.01)"),
-          border: `1px solid ${dk(darkMode, "rgba(255,255,255,0.04)", "rgba(0,0,0,0.04)")}`,
-          opacity: isRead ? 0.6 : 0.85,
-          boxShadow: focusRing,
-          transition: "box-shadow 100ms",
+          padding: "5px 16px", cursor: "pointer",
+          background: isActive ? bgHover : bgBase,
+          borderBottom: `1px solid ${dk(darkMode, "rgba(255,255,255,0.04)", "rgba(0,0,0,0.04)")}`,
+          opacity: isRead ? 0.55 : 0.75,
+          boxShadow: focused ? `inset 3px 0 0 ${OS.blue}` : "none",
+          transition: "background 0.1s ease, box-shadow 0.1s ease",
         }}
       >
         <span style={{
@@ -813,272 +803,250 @@ function PostCard({
         }} />
         <span style={{
           fontSize: 12, fontWeight: isRead ? 400 : 500,
-          color: dk(darkMode, "rgba(255,255,255,0.50)", OS.secondary),
+          color: dk(darkMode, "rgba(255,255,255,0.55)", OS.secondary),
           flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-          fontFamily: OS.font,
         }}>
-          {post.title}
+          {highlightMatch(post.title, searchQuery, darkMode)}
         </span>
-        <span style={{
-          fontSize: 10, color: OS.muted, flexShrink: 0,
-        }}>
+        <span style={{ fontSize: 10, color: dk(darkMode, "rgba(255,255,255,0.30)", OS.faint), flexShrink: 0 }}>
           {post.postedAt ? timeAgo(post.postedAt) : ""}
         </span>
-        {post.bookmarked && (
-          <span style={{ fontSize: 10, color: OS.warning, flexShrink: 0 }}>★</span>
-        )}
+        {post.bookmarked && <span style={{ fontSize: 10, color: OS.warning, flexShrink: 0 }}>★</span>}
       </div>
     );
   }
 
-  // ─── Hero card for high-relevance posts (9-10) ───
+  // ─── Hero card (9-10) — elevated, tinted background ───
   if (isHero) {
     return (
       <div
         ref={refCallback}
         onClick={onToggle}
+        onMouseEnter={() => onHover(true)}
+        onMouseLeave={() => onHover(false)}
         style={{
-          padding: "14px 16px", marginBottom: 10, borderRadius: 12, cursor: "pointer",
-          background: dk(darkMode, "rgba(255,255,255,0.06)", OS.white),
-          border: `1px solid ${dk(darkMode, "rgba(255,255,255,0.10)", OS.border)}`,
-          borderLeft: `4px solid ${relevanceBorder(post.relevanceScore)}`,
-          opacity: isRead ? 0.75 : 1,
-          boxShadow: focused
-            ? `0 0 0 2px ${dk(darkMode, "rgba(94,106,210,0.5)", OS.blue + "50")}, 0 2px 8px rgba(0,0,0,0.06)`
-            : "0 2px 8px rgba(0,0,0,0.04)",
-          transition: "box-shadow 100ms, opacity 150ms",
+          padding: expanded ? "14px 16px" : "11px 16px",
+          cursor: "pointer",
+          background: expanded
+            ? dk(darkMode, "rgba(59,140,95,0.06)", "#f0faf4")
+            : isActive
+              ? dk(darkMode, "rgba(59,140,95,0.04)", "#f5fbf7")
+              : bgBase,
+          borderBottom: `1px solid ${dk(darkMode, "rgba(255,255,255,0.06)", OS.border)}`,
+          borderLeft: `${expanded ? 6 : 4}px solid ${OS.green}`,
+          opacity: isRead ? 0.8 : 1,
+          boxShadow: focused ? `0 0 0 2px ${dk(darkMode, "rgba(94,106,210,0.4)", OS.blue + "40")}` : "none",
+          transition: "background 0.1s ease, border-left-width 0.15s ease, box-shadow 0.1s ease",
         }}
       >
-        {/* Top row */}
-        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
-          <span style={{
-            width: 7, height: 7, borderRadius: "50%",
-            background: sourceColor, flexShrink: 0,
-          }} />
-          <span style={{
-            fontSize: 11, fontWeight: 600,
-            color: dk(darkMode, "rgba(255,255,255,0.50)", OS.muted),
-          }}>
-            {post.sourceName}
-          </span>
-          <span style={{
-            fontSize: 10, padding: "2px 7px", borderRadius: 4, fontWeight: 700,
-            background: dk(darkMode, "rgba(59,140,95,0.25)", "#e0f5e8"),
-            color: OS.green,
-          }}>
-            {post.relevanceScore}
-          </span>
-          {post.topicTag && (
-            <span style={{
-              fontSize: 10, padding: "1px 6px", borderRadius: 4,
-              background: dk(darkMode, "rgba(255,255,255,0.06)", "#f0f0f5"),
-              color: dk(darkMode, "rgba(255,255,255,0.40)", OS.secondary),
-              fontFamily: OS.font,
+        {/* Main row */}
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+          <div style={{ flex: 1 }}>
+            {/* Title */}
+            <div style={{
+              fontSize: 15, lineHeight: 1.4, fontWeight: 700,
+              color: dk(darkMode, "#f0f0f0", OS.text),
             }}>
-              {post.topicTag}
-            </span>
-          )}
-          <span style={{ flex: 1 }} />
+              {!isRead && (
+                <span style={{
+                  display: "inline-block", width: 6, height: 6, borderRadius: "50%",
+                  background: OS.blue, marginRight: 6, verticalAlign: "middle",
+                }} />
+              )}
+              {highlightMatch(post.title, searchQuery, darkMode)}
+            </div>
+            {/* Metadata row */}
+            <div style={{
+              display: "flex", alignItems: "center", gap: 5, marginTop: 4,
+              fontSize: 11, color: dk(darkMode, "rgba(255,255,255,0.55)", OS.secondary),
+              flexWrap: "wrap", rowGap: 2,
+            }}>
+              <span style={{
+                width: 6, height: 6, borderRadius: "50%",
+                background: sourceColor, flexShrink: 0,
+              }} />
+              <span style={{ fontWeight: 500 }}>{post.sourceName}</span>
+              <span style={{
+                fontSize: 10, fontWeight: 600, padding: "1px 5px", borderRadius: 3,
+                background: rl.color + "18", color: rl.color,
+              }}>
+                {rl.text}
+              </span>
+              {post.topicTag && (
+                <span style={{
+                  fontSize: 10, color: dk(darkMode, "rgba(255,255,255,0.35)", OS.muted),
+                }}>
+                  {post.topicTag}
+                </span>
+              )}
+              <span style={{ marginLeft: "auto", fontSize: 11, color: dk(darkMode, "rgba(255,255,255,0.35)", OS.faint) }}>
+                {post.postedAt ? timeAgo(post.postedAt) : ""}
+              </span>
+            </div>
+            {/* Summary always visible for hero */}
+            <div style={{
+              fontSize: 13, lineHeight: 1.55, marginTop: 6,
+              color: dk(darkMode, "rgba(255,255,255,0.65)", OS.secondary),
+            }}>
+              {highlightMatch(post.summary, searchQuery, darkMode)}
+            </div>
+          </div>
+          {/* Bookmark */}
           <button
             onClick={onBookmark}
             style={{
-              background: "none", border: "none", cursor: "pointer", padding: "2px 4px",
-              fontSize: 13, color: post.bookmarked ? OS.warning : dk(darkMode, "rgba(255,255,255,0.15)", OS.faint),
-              transition: "color 150ms",
+              background: "none", border: "none", cursor: "pointer", padding: "4px 8px",
+              fontSize: 14, color: post.bookmarked ? OS.warning : dk(darkMode, "rgba(255,255,255,0.15)", OS.faint),
+              transition: "color 150ms", flexShrink: 0,
             }}
           >
             {post.bookmarked ? "★" : "☆"}
           </button>
-          <span style={{ fontSize: 11, color: OS.muted }}>
-            {post.postedAt ? timeAgo(post.postedAt) : ""}
-          </span>
         </div>
 
-        {/* Title — larger for hero */}
-        <div style={{
-          fontSize: 15, lineHeight: 1.4, fontWeight: 700,
-          color: dk(darkMode, "#f0f0f0", OS.text),
-          marginBottom: 6, fontFamily: OS.font,
-        }}>
-          {post.title}
-          {!isRead && (
-            <span style={{
-              display: "inline-block", width: 6, height: 6, borderRadius: "50%",
-              background: OS.blue, marginLeft: 6, verticalAlign: "middle",
-            }} />
-          )}
-        </div>
-
-        {/* Summary */}
-        <div style={{
-          fontSize: 13, lineHeight: 1.6, fontWeight: 400,
-          color: dk(darkMode, "rgba(255,255,255,0.65)", OS.secondary),
-          fontFamily: OS.font,
-        }}>
-          {post.summary}
-        </div>
-
-        {/* Bottom: author + link */}
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
-          {post.author && (
-            <span style={{
-              fontSize: 11, color: dk(darkMode, "rgba(255,255,255,0.30)", OS.faint),
-              fontFamily: OS.font,
-            }}>
-              {post.author}
-            </span>
-          )}
-          <a
-            href={post.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              fontSize: 11, color: OS.blue, textDecoration: "none",
-              fontWeight: 600, marginLeft: "auto", fontFamily: OS.font,
-            }}
-          >
-            {domainFromUrl(post.url)} →
-          </a>
-        </div>
-
-        {/* Expanded: raw text */}
-        {expanded && post.rawText && post.rawText !== post.title && (
+        {/* Expanded detail */}
+        {expanded && (
           <div style={{
             marginTop: 10, paddingTop: 10,
             borderTop: `1px solid ${dk(darkMode, "rgba(255,255,255,0.06)", OS.border)}`,
           }}>
-            <div style={{
-              fontSize: 12, lineHeight: 1.5,
-              color: dk(darkMode, "#aaa", OS.secondary),
-              fontFamily: OS.font,
-            }}>
-              {post.rawText.slice(0, 500)}
-              {post.rawText.length > 500 && "..."}
-            </div>
+            {post.author && (
+              <div style={{ fontSize: 11, color: dk(darkMode, "rgba(255,255,255,0.40)", OS.faint), marginBottom: 6 }}>
+                by {post.author}
+              </div>
+            )}
+            {post.rawText && post.rawText !== post.title && (
+              <div style={{
+                fontSize: 12, lineHeight: 1.55,
+                color: dk(darkMode, "rgba(255,255,255,0.50)", OS.secondary),
+                paddingLeft: 12, borderLeft: `2px solid ${dk(darkMode, "rgba(255,255,255,0.10)", OS.faint)}`,
+                fontStyle: "italic",
+              }}>
+                {post.rawText.slice(0, 400)}{post.rawText.length > 400 && "..."}
+              </div>
+            )}
+            <a
+              href={post.url} target="_blank" rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                display: "inline-block", marginTop: 8,
+                fontSize: 11, color: OS.blue, textDecoration: "none", fontWeight: 600,
+              }}
+            >
+              {domainFromUrl(post.url)} →
+            </a>
           </div>
         )}
       </div>
     );
   }
 
-  // ─── Standard card (relevance 5-8) ───
+  // ─── Standard card (5-8) — progressive disclosure ───
   return (
     <div
       ref={refCallback}
       onClick={onToggle}
+      onMouseEnter={() => onHover(true)}
+      onMouseLeave={() => onHover(false)}
       style={{
-        padding: "10px 12px", marginBottom: 6, borderRadius: 8, cursor: "pointer",
-        background: dk(darkMode, "rgba(255,255,255,0.04)", OS.white),
-        border: `1px solid ${dk(darkMode, "rgba(255,255,255,0.08)", OS.border)}`,
-        borderLeft: `3px solid ${relevanceBorder(post.relevanceScore)}`,
+        padding: expanded ? "14px 16px" : "11px 16px",
+        cursor: "pointer",
+        background: expanded ? bgExpanded : isActive ? bgHover : bgBase,
+        borderBottom: `1px solid ${dk(darkMode, "rgba(255,255,255,0.06)", OS.border)}`,
+        borderLeft: `3px solid ${relevanceBorderColor(post.relevanceScore)}`,
         opacity: isRead ? 0.7 : 1,
-        boxShadow: focusRing,
-        transition: "box-shadow 100ms, opacity 150ms",
+        boxShadow: focused ? `0 0 0 2px ${dk(darkMode, "rgba(94,106,210,0.4)", OS.blue + "40")}` : "none",
+        transition: "background 0.1s ease, box-shadow 0.1s ease",
       }}
     >
-      {/* Top row */}
-      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
-        <span style={{
-          width: 6, height: 6, borderRadius: "50%",
-          background: sourceColor, flexShrink: 0,
-        }} />
-        <span style={{
-          fontSize: 11, fontWeight: 500,
-          color: dk(darkMode, "rgba(255,255,255,0.45)", OS.muted),
-        }}>
-          {post.sourceName}
-        </span>
-        <span style={{
-          fontSize: 10, padding: "1px 6px", borderRadius: 4, fontWeight: 700,
-          background: post.relevanceScore >= 8
-            ? dk(darkMode, "rgba(59,140,95,0.2)", "#e8f5ee")
-            : post.relevanceScore >= 5
-              ? dk(darkMode, "rgba(192,122,0,0.15)", OS.yellowBg)
-              : dk(darkMode, "rgba(119,119,119,0.15)", "#f0f0f0"),
-          color: post.relevanceScore >= 8 ? OS.green
-            : post.relevanceScore >= 5 ? OS.warning : OS.muted,
-        }}>
-          {post.relevanceScore}
-        </span>
-        <span style={{ flex: 1 }} />
+      {/* Main row */}
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+        <div style={{ flex: 1 }}>
+          {/* Title */}
+          <div style={{
+            fontSize: 14, lineHeight: 1.4, fontWeight: isRead ? 500 : 600,
+            color: dk(darkMode, isRead ? "rgba(255,255,255,0.70)" : "#e0e0e0", isRead ? OS.secondary : OS.text),
+          }}>
+            {!isRead && (
+              <span style={{
+                display: "inline-block", width: 5, height: 5, borderRadius: "50%",
+                background: OS.blue, marginRight: 6, verticalAlign: "middle",
+              }} />
+            )}
+            {highlightMatch(post.title, searchQuery, darkMode)}
+          </div>
+          {/* Metadata row */}
+          <div style={{
+            display: "flex", alignItems: "center", gap: 5, marginTop: 3,
+            fontSize: 12, color: dk(darkMode, "rgba(255,255,255,0.55)", OS.secondary),
+            flexWrap: "wrap", rowGap: 2,
+          }}>
+            <span style={{
+              width: 6, height: 6, borderRadius: "50%",
+              background: sourceColor, flexShrink: 0,
+            }} />
+            <span>{post.sourceName}</span>
+            <span style={{
+              fontSize: 10, fontWeight: 600, padding: "1px 5px", borderRadius: 3,
+              background: rl.color + "18", color: rl.color,
+            }}>
+              {rl.text}
+            </span>
+            <span style={{ marginLeft: "auto", fontSize: 11, color: dk(darkMode, "rgba(255,255,255,0.35)", OS.faint) }}>
+              {post.postedAt ? timeAgo(post.postedAt) : ""}
+            </span>
+          </div>
+        </div>
+        {/* Bookmark */}
         <button
           onClick={onBookmark}
           style={{
-            background: "none", border: "none", cursor: "pointer", padding: "2px 4px",
-            fontSize: 12, color: post.bookmarked ? OS.warning : dk(darkMode, "rgba(255,255,255,0.15)", OS.faint),
-            transition: "color 150ms",
+            background: "none", border: "none", cursor: "pointer", padding: "4px 8px",
+            fontSize: 13, color: post.bookmarked ? OS.warning : dk(darkMode, "rgba(255,255,255,0.15)", OS.faint),
+            transition: "color 150ms", flexShrink: 0,
           }}
         >
           {post.bookmarked ? "★" : "☆"}
         </button>
-        <span style={{ fontSize: 11, color: OS.muted }}>
-          {post.postedAt ? timeAgo(post.postedAt) : ""}
-        </span>
       </div>
 
-      {/* Title */}
-      <div style={{
-        fontSize: 13, lineHeight: 1.4, fontWeight: isRead ? 500 : 600,
-        color: dk(darkMode, isRead ? "rgba(255,255,255,0.65)" : "#e0e0e0", isRead ? OS.secondary : OS.text),
-        marginBottom: 3, fontFamily: OS.font,
-      }}>
-        {post.title}
-        {!isRead && (
-          <span style={{
-            display: "inline-block", width: 5, height: 5, borderRadius: "50%",
-            background: OS.blue, marginLeft: 6, verticalAlign: "middle",
-          }} />
-        )}
-      </div>
-
-      {/* Summary */}
-      <div style={{
-        fontSize: 12, lineHeight: 1.5, fontWeight: 400,
-        color: dk(darkMode, "rgba(255,255,255,0.55)", OS.secondary),
-        fontFamily: OS.font,
-      }}>
-        {post.summary}
-      </div>
-
-      {/* Bottom: author + link */}
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>
-        {post.author && (
-          <span style={{
-            fontSize: 10, color: dk(darkMode, "rgba(255,255,255,0.25)", OS.faint),
-            fontFamily: OS.font,
-          }}>
-            {post.author}
-          </span>
-        )}
-        <a
-          href={post.url}
-          target="_blank"
-          rel="noopener noreferrer"
-          onClick={(e) => e.stopPropagation()}
-          style={{
-            fontSize: 10, color: OS.blue, textDecoration: "none",
-            fontWeight: 600, marginLeft: "auto", fontFamily: OS.font,
-          }}
-        >
-          {domainFromUrl(post.url)} →
-        </a>
-      </div>
-
-      {/* Expanded: raw text */}
-      {expanded && post.rawText && post.rawText !== post.title && (
+      {/* Expanded detail — summary + raw text + link */}
+      {expanded && (
         <div style={{
-          marginTop: 8, paddingTop: 8,
+          marginTop: 10, paddingTop: 10,
           borderTop: `1px solid ${dk(darkMode, "rgba(255,255,255,0.06)", OS.border)}`,
         }}>
           <div style={{
-            fontSize: 12, lineHeight: 1.5,
-            color: dk(darkMode, "#aaa", OS.secondary),
-            fontFamily: OS.font,
+            fontSize: 13, lineHeight: 1.55, marginBottom: 8,
+            color: dk(darkMode, "rgba(255,255,255,0.70)", OS.secondary),
           }}>
-            {post.rawText.slice(0, 300)}
-            {post.rawText.length > 300 && "..."}
+            {highlightMatch(post.summary, searchQuery, darkMode)}
           </div>
+          {post.author && (
+            <div style={{ fontSize: 11, color: dk(darkMode, "rgba(255,255,255,0.40)", OS.faint), marginBottom: 6 }}>
+              by {post.author}
+            </div>
+          )}
+          {post.rawText && post.rawText !== post.title && post.rawText !== post.summary && (
+            <div style={{
+              fontSize: 12, lineHeight: 1.55,
+              color: dk(darkMode, "rgba(255,255,255,0.45)", OS.secondary),
+              paddingLeft: 12, borderLeft: `2px solid ${dk(darkMode, "rgba(255,255,255,0.08)", OS.faint)}`,
+              fontStyle: "italic",
+            }}>
+              {post.rawText.slice(0, 300)}{post.rawText.length > 300 && "..."}
+            </div>
+          )}
+          <a
+            href={post.url} target="_blank" rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              display: "inline-block", marginTop: 8,
+              fontSize: 11, color: OS.blue, textDecoration: "none", fontWeight: 600,
+            }}
+          >
+            {domainFromUrl(post.url)} →
+          </a>
         </div>
       )}
     </div>
@@ -1103,7 +1071,7 @@ function SourcesFooter({
         }}
       >
         <span style={{
-          color: dk(darkMode, "rgba(255,255,255,0.25)", OS.faint),
+          color: dk(darkMode, "rgba(255,255,255,0.30)", OS.faint),
           fontSize: 9, transition: "transform 150ms",
           transform: expanded ? "rotate(0deg)" : "rotate(-90deg)",
           display: "inline-block",
@@ -1112,14 +1080,13 @@ function SourcesFooter({
         </span>
         <span style={{
           fontSize: 11, fontWeight: 600, textTransform: "uppercase",
-          letterSpacing: "0.08em",
-          color: dk(darkMode, "rgba(255,255,255,0.35)", OS.muted),
-          fontFamily: OS.font,
+          letterSpacing: "0.04em",
+          color: dk(darkMode, "rgba(255,255,255,0.40)", OS.muted),
         }}>
           Sources
         </span>
         <span style={{
-          fontSize: 11, color: dk(darkMode, "rgba(255,255,255,0.20)", OS.faint),
+          fontSize: 11, color: dk(darkMode, "rgba(255,255,255,0.25)", OS.faint),
           fontWeight: 400,
         }}>
           {stats.length}
@@ -1128,7 +1095,7 @@ function SourcesFooter({
       {expanded && (
         <div style={{
           background: dk(darkMode, "rgba(255,255,255,0.03)", OS.white),
-          borderRadius: 12,
+          borderRadius: 8,
           border: `1px solid ${dk(darkMode, "rgba(255,255,255,0.06)", OS.border)}`,
           overflow: "hidden",
         }}>
@@ -1148,19 +1115,17 @@ function SourcesFooter({
                 background: s.error ? OS.red : (SOURCE_COLORS[s.source] ?? OS.muted),
               }} />
               <span style={{
-                flex: 1, fontSize: 12, fontFamily: OS.font,
-                color: dk(darkMode, "rgba(255,255,255,0.55)", OS.secondary),
+                flex: 1, fontSize: 12,
+                color: dk(darkMode, "rgba(255,255,255,0.60)", OS.secondary),
               }}>
                 {s.name}
               </span>
               {s.error ? (
-                <span style={{ fontSize: 10, color: OS.red, fontFamily: OS.font }}>
-                  Failed
-                </span>
+                <span style={{ fontSize: 10, color: OS.red }}>Failed</span>
               ) : (
                 <span style={{
-                  fontSize: 10, fontFamily: OS.font,
-                  color: dk(darkMode, "rgba(255,255,255,0.25)", OS.faint),
+                  fontSize: 10,
+                  color: dk(darkMode, "rgba(255,255,255,0.30)", OS.faint),
                 }}>
                   {s.count} items · {timeAgo(s.fetchedAt)}
                 </span>
