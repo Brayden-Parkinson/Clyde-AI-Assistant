@@ -350,6 +350,14 @@ class ClydeDB extends Dexie {
     this.version(29).stores({
       pr_reviews: "++id, [repo+prNumber+reviewer+submittedAt], repo, reviewer, prAuthor, submittedAt, syncedAt",
     });
+
+    // AI News: add readAt + bookmarked fields for read tracking & bookmarks
+    this.version(30).stores({}).upgrade((tx) => {
+      return tx.table("news_posts").toCollection().modify((post: Record<string, unknown>) => {
+        if (post.readAt === undefined) post.readAt = null;
+        if (post.bookmarked === undefined) post.bookmarked = false;
+      });
+    });
   }
 }
 

@@ -803,6 +803,10 @@ export interface NewsPost {
   url: string;
   /** ISO timestamp when fetched */
   fetchedAt: string;
+  /** ISO timestamp when user read/expanded this post (null = unread) */
+  readAt?: string | null;
+  /** Whether user bookmarked this post */
+  bookmarked?: boolean;
 }
 
 /** Raw item from a news provider before Claude summarization */

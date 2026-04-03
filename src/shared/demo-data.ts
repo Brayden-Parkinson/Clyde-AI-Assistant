@@ -1521,6 +1521,8 @@ export const DEMO_NEWS_POSTS: NewsPost[] = [
     postedAt: hoursAgo(2),
     url: "https://www.anthropic.com/news/claude-code-worktrees",
     fetchedAt: hoursAgo(1),
+    readAt: null,
+    bookmarked: true,
   },
   {
     id: -101,
@@ -1536,6 +1538,8 @@ export const DEMO_NEWS_POSTS: NewsPost[] = [
     postedAt: hoursAgo(5),
     url: "https://news.ycombinator.com/item?id=42001234",
     fetchedAt: hoursAgo(1),
+    readAt: hoursAgo(1),
+    bookmarked: false,
   },
   {
     id: -102,
@@ -1551,6 +1555,8 @@ export const DEMO_NEWS_POSTS: NewsPost[] = [
     postedAt: hoursAgo(8),
     url: "https://arxiv.org/abs/2403.12345",
     fetchedAt: hoursAgo(1),
+    readAt: null,
+    bookmarked: true,
   },
   {
     id: -103,
@@ -1566,6 +1572,8 @@ export const DEMO_NEWS_POSTS: NewsPost[] = [
     postedAt: daysAgo(1),
     url: "https://www.theverge.com/2024/gemini-25-code-execution",
     fetchedAt: hoursAgo(1),
+    readAt: hoursAgo(3),
+    bookmarked: false,
   },
   {
     id: -104,
@@ -1581,6 +1589,8 @@ export const DEMO_NEWS_POSTS: NewsPost[] = [
     postedAt: daysAgo(1),
     url: "https://openai.com/blog/structured-outputs-v2",
     fetchedAt: hoursAgo(1),
+    readAt: hoursAgo(2),
+    bookmarked: false,
   },
   {
     id: -105,
@@ -1596,6 +1606,8 @@ export const DEMO_NEWS_POSTS: NewsPost[] = [
     postedAt: daysAgo(2),
     url: "https://huggingface.co/blog/open-coder-bench",
     fetchedAt: hoursAgo(1),
+    readAt: null,
+    bookmarked: false,
   },
   {
     id: -106,
@@ -1611,6 +1623,8 @@ export const DEMO_NEWS_POSTS: NewsPost[] = [
     postedAt: daysAgo(2),
     url: "https://techcrunch.com/anthropic-series-e",
     fetchedAt: hoursAgo(1),
+    readAt: null,
+    bookmarked: false,
   },
   {
     id: -107,
@@ -1626,6 +1640,8 @@ export const DEMO_NEWS_POSTS: NewsPost[] = [
     postedAt: daysAgo(3),
     url: "https://www.anthropic.com/news/claude-code-review",
     fetchedAt: hoursAgo(1),
+    readAt: hoursAgo(6),
+    bookmarked: false,
   },
 ];
 
