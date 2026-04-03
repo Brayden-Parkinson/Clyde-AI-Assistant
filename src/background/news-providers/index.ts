@@ -1,5 +1,7 @@
 /**
  * News provider registry — calls all enabled sources in parallel.
+ * Respects user-disabled sources from chrome.storage.local.
+ * Emits per-source progress messages for the UI.
  */
 
 import { NEWS_SOURCES } from "@shared/constants";
@@ -20,25 +22,52 @@ export interface FetchResult {
   }>;
 }
 
+/** Send per-source progress to the popup UI */
+function emitProgress(source: string, status: "fetching" | "done" | "error") {
+  chrome.runtime.sendMessage({
+    type: "NEWS_SOURCE_PROGRESS",
+    source,
+    status,
+  }).catch(() => {}); // popup may not be open
+}
+
 export async function fetchAllSources(): Promise<FetchResult> {
   const items: RawNewsItem[] = [];
   const errors: string[] = [];
   const sourceStats: FetchResult["sourceStats"] = [];
   const now = new Date().toISOString();
 
-  const entries = Object.entries(NEWS_SOURCES).filter(([, cfg]) => cfg.enabled);
+  // Respect user-disabled sources
+  const storage = await chrome.storage.local.get("newsDisabledSources");
+  const disabledSources = new Set<string>(storage.newsDisabledSources ?? []);
+
+  const entries = Object.entries(NEWS_SOURCES).filter(
+    ([key, cfg]) => cfg.enabled && !disabledSources.has(key),
+  );
 
   const results = await Promise.allSettled(
     entries.map(async ([key, cfg]) => {
       const source = key as NewsSourceType;
-      if (cfg.type === "json" && source === "hacker-news") {
-        return { source, name: cfg.name, items: await fetchHackerNews() };
+      emitProgress(key, "fetching");
+      try {
+        let fetched: RawNewsItem[];
+        if (cfg.type === "json" && source === "hacker-news") {
+          fetched = await fetchHackerNews();
+        } else {
+          fetched = await fetchRSS(cfg.url, source, cfg.name);
+        }
+        emitProgress(key, "done");
+        return { source, name: cfg.name, items: fetched };
+      } catch (err) {
+        emitProgress(key, "error");
+        throw err;
       }
-      return { source, name: cfg.name, items: await fetchRSS(cfg.url, source, cfg.name) };
     }),
   );
 
-  for (const result of results) {
+  for (let i = 0; i < results.length; i++) {
+    const result = results[i];
+    const [key, cfg] = entries[i];
     if (result.status === "fulfilled") {
       items.push(...result.value.items);
       sourceStats.push({
@@ -50,30 +79,14 @@ export async function fetchAllSources(): Promise<FetchResult> {
       });
     } else {
       const reason = result.reason instanceof Error ? result.reason.message : String(result.reason);
-      errors.push(reason);
-      // Try to extract which source failed from the error
+      errors.push(`${cfg.name}: ${reason}`);
       sourceStats.push({
-        source: "anthropic-blog", // fallback — order matches entries
-        name: "Unknown",
+        source: key as NewsSourceType,
+        name: cfg.name,
         count: 0,
         error: reason,
         fetchedAt: now,
       });
-    }
-  }
-
-  // Fix source stats for failed entries by matching with entries order
-  let failIdx = 0;
-  for (let i = 0; i < results.length; i++) {
-    if (results[i].status === "rejected") {
-      const [key, cfg] = entries[i];
-      // Find the corresponding failed stat entry and fix it
-      const failedStats = sourceStats.filter((s) => s.error !== null);
-      if (failedStats[failIdx]) {
-        failedStats[failIdx].source = key as NewsSourceType;
-        failedStats[failIdx].name = cfg.name;
-      }
-      failIdx++;
     }
   }
 
