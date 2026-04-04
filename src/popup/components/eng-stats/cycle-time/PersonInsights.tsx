@@ -12,6 +12,7 @@ interface PersonInsightsProps {
   timeRange: number;
   reviews?: PRReview[];
   authorTickets?: Map<string, JiraTicket[]>;
+  personRows?: PersonRow[];
 }
 
 type SortKey = "author" | "prCount" | "prsPerWeek" | "avgCycleHours" | "aiPct" | "avgReviewDays" | "velocity" | "quality" | "impact" | "collaboration" | "overall" | "ticketsPerWeek";
@@ -79,13 +80,16 @@ const SORT_CYCLE: SortKey[] = ["overall", "aiPct", "velocity", "quality", "impac
 
 const EMPTY_AUTHOR_TICKETS = new Map<string, JiraTicket[]>();
 
-export function PersonInsights({ darkMode, metrics, prToTickets, timeRange, reviews = [], authorTickets }: PersonInsightsProps) {
+export function PersonInsights({ darkMode, metrics, prToTickets, timeRange, reviews = [], authorTickets, personRows: externalRows }: PersonInsightsProps) {
   const safeAuthorTickets = authorTickets ?? EMPTY_AUTHOR_TICKETS;
 
-  const rows = useMemo(() => {
+  const computedRows = useMemo(() => {
+    if (externalRows) return externalRows;
     const base = computePersonRows(metrics, prToTickets, timeRange);
     return applyProductivityScores(base, metrics, prToTickets, timeRange, reviews, safeAuthorTickets);
-  }, [metrics, prToTickets, timeRange, reviews, safeAuthorTickets]);
+  }, [externalRows, metrics, prToTickets, timeRange, reviews, safeAuthorTickets]);
+
+  const rows = computedRows;
 
   const ticketsPerWeekMap = useMemo(() => {
     const weeksInRange = Math.max(1, Math.ceil(timeRange / 7));

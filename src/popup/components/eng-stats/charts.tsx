@@ -638,25 +638,21 @@ export function PRFlowChart({
 // ─── PR Size Donut Chart ───
 
 export function PRSizeChart({
-  small,
-  medium,
-  large,
+  buckets,
   dark,
 }: {
-  small: number;
-  medium: number;
-  large: number;
+  buckets: { label: string; count: number; color: string }[];
   dark: boolean;
 }) {
-  const total = small + medium + large || 1;
-  const smallPct = Math.round((small / total) * 100);
+  const total = buckets.reduce((sum, b) => sum + b.count, 0) || 1;
+  const smallPct = buckets.length > 0 ? Math.round((buckets[0].count / total) * 100) : 0;
   const isGood = smallPct >= 60;
 
-  const segments = [
-    { value: small, color: OS.green, label: "Small", range: "<100 lines" },
-    { value: medium, color: OS.warning, label: "Medium", range: "100–499" },
-    { value: large, color: OS.red, label: "Large", range: "500+ lines" },
-  ];
+  const segments = buckets.map((b) => ({
+    value: b.count,
+    color: b.color,
+    label: b.label,
+  }));
 
   const r = 38;
   const sw = 14;
@@ -778,15 +774,6 @@ export function PRSizeChart({
                 }}
               >
                 {seg.value}
-              </span>
-              <span
-                style={{
-                  color: dk(dark, "rgba(255,255,255,0.25)", OS.faint),
-                  fontFamily: OS.mono,
-                  fontSize: 10,
-                }}
-              >
-                {seg.range}
               </span>
             </div>
           ))}

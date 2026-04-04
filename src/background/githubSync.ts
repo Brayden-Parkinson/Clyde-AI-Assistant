@@ -233,6 +233,8 @@ export async function syncGitHubData(): Promise<{
                 });
               }
               if (aiComments.length > 0) {
+                // Delete existing comments for this PR to prevent duplicates on re-sync
+                await db.ai_review_comments.where("[repo+prNumber]").equals([repo, pull.number]).delete();
                 await db.ai_review_comments.bulkAdd(aiComments);
               }
             } catch (_rcErr) {

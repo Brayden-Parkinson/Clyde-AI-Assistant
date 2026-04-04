@@ -25,6 +25,7 @@ import {
   type KpiId,
   type SectionId,
   toolColors,
+  PR_SIZE_BUCKETS,
 } from "./shared";
 import { InfoTip } from "./charts";
 
@@ -49,9 +50,7 @@ interface SummaryTabProps extends TabProps {
     fullWidth?: boolean;
   }>;
   PRSizeChart: React.ComponentType<{
-    small: number;
-    medium: number;
-    large: number;
+    buckets: { label: string; count: number; color: string }[];
     dark: boolean;
   }>;
   PRFlowChart: React.ComponentType<{
@@ -108,6 +107,7 @@ interface KPICardProps {
   detailSub?: string;
   alertBorder?: boolean;
   trendPositive?: boolean;
+  infoTip?: string;
   dark: boolean;
   showDelta?: boolean;
   showSparkline?: boolean;
@@ -123,6 +123,7 @@ function KPICard({
   detailSub,
   alertBorder,
   trendPositive = true,
+  infoTip,
   dark,
   showDelta = true,
   showSparkline = true,
@@ -158,6 +159,9 @@ function KPICard({
     >
       <div
         style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 4,
           fontFamily: OS.mono,
           fontSize: 10,
           fontWeight: 600,
@@ -168,6 +172,7 @@ function KPICard({
         }}
       >
         {label}
+        {infoTip && <InfoTip dark={dark} text={infoTip} />}
       </div>
       <div
         style={{
@@ -282,9 +287,7 @@ export function SummaryTab({
   const summaryStats = useMemo(() => {
     const rawCycleTimes: number[] = [];
     const rawReviewTimes: number[] = [];
-    let smallCount = 0;
-    let mediumCount = 0;
-    let largeCount = 0;
+    const sizeBucketCounts = PR_SIZE_BUCKETS.map(() => 0);
     const toolCounts: Record<string, number> = {};
     const humanOnly: PRMetric[] = [];
 
@@ -302,11 +305,11 @@ export function SummaryTab({
         rawReviewTimes.push(toBusinessHours(m.timeToFirstReviewHours, m.createdAt, reviewEnd));
       }
 
-      // PR sizes
+      // PR sizes (using shared PR_SIZE_BUCKETS thresholds)
       const lines = m.additions + m.deletions;
-      if (lines < 100) smallCount++;
-      else if (lines < 500) mediumCount++;
-      else largeCount++;
+      for (let i = 0; i < PR_SIZE_BUCKETS.length; i++) {
+        if (lines < PR_SIZE_BUCKETS[i].max) { sizeBucketCounts[i]++; break; }
+      }
 
       // Tool counts
       for (const tool of m.aiTools) {
@@ -341,9 +344,7 @@ export function SummaryTab({
       avgCycleTime,
       reviewTimes,
       medianReviewTime,
-      smallCount,
-      mediumCount,
-      largeCount,
+      sizeBucketCounts,
       displayToolEntries,
       unattributedAICount,
       aiPRs,
@@ -384,11 +385,13 @@ export function SummaryTab({
       // PR count
       prCountByWeek.set(wk, (prCountByWeek.get(wk) ?? 0) + 1);
 
-      // AI adoption
-      if (!aiByWeek.has(wk)) aiByWeek.set(wk, { ai: 0, total: 0 });
-      const ab = aiByWeek.get(wk)!;
-      ab.total++;
-      if (m.aiAssisted) ab.ai++;
+      // AI adoption (exclude bots to match headline)
+      if (!m.author || !isBotAuthor(m.author)) {
+        if (!aiByWeek.has(wk)) aiByWeek.set(wk, { ai: 0, total: 0 });
+        const ab = aiByWeek.get(wk)!;
+        ab.total++;
+        if (m.aiAssisted) ab.ai++;
+      }
 
       // Lead time
       if (m.id != null) {
@@ -504,12 +507,14 @@ export function SummaryTab({
       ? Math.round(((recent.length - older.length) / older.length) * 100)
       : null;
 
-    // AI delta
-    const recentAIPct = recent.length > 0
-      ? (recent.filter((m) => m.aiAssisted).length / recent.length) * 100
+    // AI delta (exclude bots to match headline)
+    const recentHuman = recent.filter((m) => !m.author || !isBotAuthor(m.author));
+    const olderHuman = older.filter((m) => !m.author || !isBotAuthor(m.author));
+    const recentAIPct = recentHuman.length > 0
+      ? (recentHuman.filter((m) => m.aiAssisted).length / recentHuman.length) * 100
       : 0;
-    const olderAIPct = older.length > 0
-      ? (older.filter((m) => m.aiAssisted).length / older.length) * 100
+    const olderAIPct = olderHuman.length > 0
+      ? (olderHuman.filter((m) => m.aiAssisted).length / olderHuman.length) * 100
       : 0;
     const aiDelta = olderAIPct !== 0
       ? Math.round(((recentAIPct - olderAIPct) / olderAIPct) * 100)
@@ -668,7 +673,7 @@ export function SummaryTab({
   // ─── Derived values ───
   const {
     cycleTimes, avgCycleTime, medianReviewTime,
-    smallCount, mediumCount, largeCount,
+    sizeBucketCounts,
     displayToolEntries, unattributedAICount,
     aiPRs, aiPct,
   } = summaryStats;
@@ -739,6 +744,7 @@ export function SummaryTab({
       deltaPeriodLabel: `vs prev ${timeRange / 2}d`,
       trendPositive: false,
       alertBorder: leadTimeIsHigh,
+      infoTip: "Calendar time from earliest linked ticket creation to PR merge. Includes weekends and non-working hours, unlike cycle time which uses business hours.",
       detailSub: `ticket \u2192 merge (${leadTimes.length} linked)`,
     },
   };
@@ -772,7 +778,7 @@ export function SummaryTab({
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
           <div style={{ padding: "14px 16px", borderRadius: 10, border: cardBorder, background: cardBg }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 12 }}>
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 600, color: dk(dark, "rgba(255,255,255,0.7)", OS.secondary) }}>Cycle Time <InfoTip dark={dark} text="Average time from PR creation to merge, in business hours. Weekends and nights excluded. Outliers (top/bottom 5%) removed. Dashed line shows linear trend; dotted section is a forecast." /></span>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 600, color: dk(dark, "rgba(255,255,255,0.7)", OS.secondary) }}>Cycle Time <InfoTip dark={dark} text="Average time from PR creation to merge, in business hours. Weekends and nights excluded. Statistical outliers removed using IQR method. Dashed line shows linear trend; dotted section is a forecast." /></span>
               <span style={{ fontSize: 10, color: dk(dark, "rgba(255,255,255,0.3)", OS.faint), fontFamily: OS.mono }}>weekly avg, days</span>
             </div>
             {weeklyBuckets.length > 0 ? (
@@ -783,7 +789,7 @@ export function SummaryTab({
           </div>
           <div style={{ padding: "14px 16px", borderRadius: 10, border: cardBorder, background: cardBg }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 600, color: dk(dark, "rgba(255,255,255,0.7)", OS.secondary) }}>AI Adoption <InfoTip dark={dark} text="Percentage of merged PRs that used AI tools (Copilot, Cursor, CodeRabbit, etc.), calculated weekly. Detection is based on commit trailers, PR labels, and bot comments." /></span>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 600, color: dk(dark, "rgba(255,255,255,0.7)", OS.secondary) }}>AI Adoption <InfoTip dark={dark} text="Percentage of merged PRs with detected AI tool signatures, calculated weekly. Detection is based on commit trailers, PR labels, and bot comments. Tools that don't leave traces in commits (e.g., Copilot completions) may not be counted, so this is a lower bound." /></span>
               <span style={{ fontSize: 10, color: dk(dark, "rgba(255,255,255,0.3)", OS.faint), fontFamily: OS.mono }}>weekly % of PRs</span>
             </div>
             <div style={{ fontSize: 10, color: dk(dark, "rgba(255,255,255,0.35)", OS.muted), marginBottom: 8 }}>{aiSubtitle}</div>
@@ -795,7 +801,7 @@ export function SummaryTab({
           {sectionVisible("cycleTime") && (
             <div style={{ padding: "14px 16px", borderRadius: 10, border: cardBorder, background: cardBg }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 12 }}>
-                <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 600, color: dk(dark, "rgba(255,255,255,0.7)", OS.secondary) }}>Cycle Time <InfoTip dark={dark} text="Average time from PR creation to merge, in business hours. Weekends and nights excluded. Outliers (top/bottom 5%) removed. Dashed line shows linear trend; dotted section is a forecast." /></span>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 600, color: dk(dark, "rgba(255,255,255,0.7)", OS.secondary) }}>Cycle Time <InfoTip dark={dark} text="Average time from PR creation to merge, in business hours. Weekends and nights excluded. Statistical outliers removed using IQR method. Dashed line shows linear trend; dotted section is a forecast." /></span>
                 <span style={{ fontSize: 10, color: dk(dark, "rgba(255,255,255,0.3)", OS.faint), fontFamily: OS.mono }}>weekly avg, days</span>
               </div>
               {weeklyBuckets.length > 0 ? <CycleTimeChart buckets={weeklyBuckets} dark={dark} height={300} /> : null}
@@ -804,7 +810,7 @@ export function SummaryTab({
           {sectionVisible("aiAdoption") && weeklyAI.length >= 2 && (
             <div style={{ padding: "14px 16px", borderRadius: 10, border: cardBorder, background: cardBg }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
-                <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 600, color: dk(dark, "rgba(255,255,255,0.7)", OS.secondary) }}>AI Adoption <InfoTip dark={dark} text="Percentage of merged PRs that used AI tools (Copilot, Cursor, CodeRabbit, etc.), calculated weekly. Detection is based on commit trailers, PR labels, and bot comments." /></span>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 600, color: dk(dark, "rgba(255,255,255,0.7)", OS.secondary) }}>AI Adoption <InfoTip dark={dark} text="Percentage of merged PRs with detected AI tool signatures, calculated weekly. Detection is based on commit trailers, PR labels, and bot comments. Tools that don't leave traces in commits (e.g., Copilot completions) may not be counted, so this is a lower bound." /></span>
                 <span style={{ fontSize: 10, color: dk(dark, "rgba(255,255,255,0.3)", OS.faint), fontFamily: OS.mono }}>weekly % of PRs</span>
               </div>
               <AIAdoptionChart weeklyPcts={weeklyAI} dark={dark} height={280} />
@@ -818,8 +824,8 @@ export function SummaryTab({
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
           {sectionVisible("prSize") && (
             <div style={{ padding: "14px 16px", borderRadius: 10, border: cardBorder, background: cardBg }}>
-              <h3 style={sectionTitle}><span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>PR Size Distribution <InfoTip dark={dark} text="PRs grouped by total lines changed (additions + deletions). Small: < 100 lines, Medium: 100–499, Large: 500+. Smaller PRs generally get faster, higher-quality reviews." /></span></h3>
-              <PRSizeChart small={smallCount} medium={mediumCount} large={largeCount} dark={dark} />
+              <h3 style={sectionTitle}><span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>PR Size Distribution <InfoTip dark={dark} text="PRs grouped by total lines changed (additions + deletions). S: <194, M: 194–400, L: 400–800, XL: 800+. Smaller PRs generally get faster, higher-quality reviews." /></span></h3>
+              <PRSizeChart buckets={PR_SIZE_BUCKETS.map((b, i) => ({ label: b.label, count: sizeBucketCounts[i], color: b.color }))} dark={dark} />
             </div>
           )}
           {sectionVisible("toolUsage") && (

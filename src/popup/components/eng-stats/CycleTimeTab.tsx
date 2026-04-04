@@ -49,8 +49,8 @@ export function CycleTimeTab({
   // Person rows are computed here and shared between PersonInsights and ProductivityMatrix
   const personRows = useMemo(() => {
     const base = computePersonRows(metrics, prToTickets, timeRange);
-    return applyProductivityScores(base, metrics, prToTickets, timeRange, reviews);
-  }, [metrics, prToTickets, timeRange, reviews]);
+    return applyProductivityScores(base, metrics, prToTickets, timeRange, reviews, authorTickets);
+  }, [metrics, prToTickets, timeRange, reviews, authorTickets]);
 
   return (
     <>
@@ -88,7 +88,7 @@ export function CycleTimeTab({
       <ComponentBreakdown darkMode={darkMode} metrics={metrics} prToTickets={prToTickets} />
 
       {/* Developer Insights */}
-      <PersonInsights darkMode={darkMode} metrics={metrics} prToTickets={prToTickets} timeRange={timeRange} reviews={reviews} authorTickets={authorTickets} />
+      <PersonInsights darkMode={darkMode} metrics={metrics} prToTickets={prToTickets} timeRange={timeRange} reviews={reviews} authorTickets={authorTickets} personRows={personRows} />
 
       {/* Productivity Matrix */}
       <ProductivityMatrixSection darkMode={darkMode} personRows={personRows} />

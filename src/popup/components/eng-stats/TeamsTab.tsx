@@ -11,6 +11,7 @@ import {
   computeTeamWeeklyCycles,
   dk,
   fmtHours,
+  PR_SIZE_BUCKETS,
   toBusinessHours,
   weekKey,
 } from "./shared";
@@ -79,17 +80,18 @@ export function TeamsTab({ darkMode, allMetrics, selectedRepo, prToTickets, conf
   );
 
   const teamSizeDist = useMemo(() => {
-    const result = new Map<string, { s: number; m: number; l: number }>();
+    const result = new Map<string, { s: number; m: number; l: number; xl: number }>();
     const source = selectedRepo === "__all__" ? allMetrics : allMetrics.filter((x) => x.repo === selectedRepo);
     for (const m of source) {
       const tickets = prToTickets.get(m.id!);
       const team = tickets?.[0]?.component ?? (tickets?.length ? "No Component" : "Unlinked");
-      if (!result.has(team)) result.set(team, { s: 0, m: 0, l: 0 });
+      if (!result.has(team)) result.set(team, { s: 0, m: 0, l: 0, xl: 0 });
       const dist = result.get(team)!;
       const lines = m.additions + m.deletions;
-      if (lines < 100) dist.s++;
-      else if (lines < 500) dist.m++;
-      else dist.l++;
+      if (lines < PR_SIZE_BUCKETS[0].max) dist.s++;
+      else if (lines < PR_SIZE_BUCKETS[1].max) dist.m++;
+      else if (lines < PR_SIZE_BUCKETS[2].max) dist.l++;
+      else dist.xl++;
     }
     return result;
   }, [allMetrics, selectedRepo, prToTickets]);
@@ -177,10 +179,10 @@ export function TeamsTab({ darkMode, allMetrics, selectedRepo, prToTickets, conf
       {sortedTeamRows.map((row) => {
         const isGhost = row.team === "No Component" || row.team === "Unlinked";
         const flagCycle = row.avgCycleHours != null && row.avgCycleHours > 240;
-        const flagReview = row.medReviewHours != null && row.medReviewHours >= 1;
+        const flagReview = row.medReviewHours != null && row.medReviewHours >= 24;
         const trend = teamWeeklyCycles.get(row.team) ?? [];
-        const sizeDist = teamSizeDist.get(row.team) ?? { s: 0, m: 0, l: 0 };
-        const sizeTotal = sizeDist.s + sizeDist.m + sizeDist.l || 1;
+        const sizeDist = teamSizeDist.get(row.team) ?? { s: 0, m: 0, l: 0, xl: 0 };
+        const sizeTotal = sizeDist.s + sizeDist.m + sizeDist.l + sizeDist.xl || 1;
         const isExpanded = expandedTeam === row.team;
 
         return (
@@ -243,19 +245,20 @@ export function TeamsTab({ darkMode, allMetrics, selectedRepo, prToTickets, conf
                     <div style={{ fontSize: 10, color: dk(darkMode, "rgba(255,255,255,0.4)", OS.muted), textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6, fontFamily: OS.mono }}>PR size mix</div>
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                       <div style={{ display: "flex", height: 8, flex: 1, borderRadius: 4, overflow: "hidden" }}>
-                        <div style={{ width: `${(sizeDist.s / sizeTotal) * 100}%`, background: OS.green }} />
-                        <div style={{ width: `${(sizeDist.m / sizeTotal) * 100}%`, background: OS.warning }} />
-                        <div style={{ width: `${(sizeDist.l / sizeTotal) * 100}%`, background: OS.red }} />
+                        <div style={{ width: `${(sizeDist.s / sizeTotal) * 100}%`, background: PR_SIZE_BUCKETS[0].color }} />
+                        <div style={{ width: `${(sizeDist.m / sizeTotal) * 100}%`, background: PR_SIZE_BUCKETS[1].color }} />
+                        <div style={{ width: `${(sizeDist.l / sizeTotal) * 100}%`, background: PR_SIZE_BUCKETS[2].color }} />
+                        <div style={{ width: `${(sizeDist.xl / sizeTotal) * 100}%`, background: PR_SIZE_BUCKETS[3].color }} />
                       </div>
                       <span style={{ fontSize: 10, color: dk(darkMode, "rgba(255,255,255,0.4)", OS.muted), fontFamily: OS.mono, whiteSpace: "nowrap" }}>
-                        {sizeDist.s}/{sizeDist.m}/{sizeDist.l}
+                        {sizeDist.s}/{sizeDist.m}/{sizeDist.l}/{sizeDist.xl}
                       </span>
                     </div>
                   </div>
                   <div>
                     <div style={{ fontSize: 10, color: dk(darkMode, "rgba(255,255,255,0.4)", OS.muted), textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6, fontFamily: OS.mono }}>Flags</div>
                     <div style={{ fontSize: 11, lineHeight: 1.6, color: dk(darkMode, "rgba(255,255,255,0.7)", OS.secondary) }}>
-                      {flagCycle && <div style={{ color: OS.red }}>⚠ Cycle time 2x+ org avg</div>}
+                      {flagCycle && <div style={{ color: OS.red }}>⚠ Cycle time &gt; 10 business days</div>}
                       {flagReview && <div style={{ color: OS.warning }}>⚠ Review time in hours</div>}
                       {!flagCycle && !flagReview && <div style={{ opacity: 0.3 }}>No flags</div>}
                     </div>

@@ -6,7 +6,7 @@
 import type { PRMetric, CopilotDailyMetric } from "@shared/types";
 import type { AuthorAIRow, TeamRow } from "./shared";
 import { isBotAuthor } from "@shared/constants";
-import { removeOutliers, toBusinessHours } from "./shared";
+import { removeOutliers, toBusinessHours, toolColors } from "./shared";
 
 // ─── Types ───
 
@@ -52,7 +52,7 @@ export interface AIAdoptionScore {
 
 // ─── Constants ───
 
-const KNOWN_TOOLS = 6; // claude, copilot, cursor, aider, devin, codex
+const KNOWN_TOOLS = Object.keys(toolColors).length;
 const PILLAR_WEIGHTS = { utilization: 0.35, impact: 0.45, quality: 0.20 };
 
 // ─── Helpers ───
@@ -141,11 +141,7 @@ export function computeImpact(metrics: PRMetric[]): PillarScore {
   const aiUserLogins = new Set(aiAuthors.keys());
   const aiUserThroughput: number[] = [];
   const nonAIUserThroughput: number[] = [];
-  for (const m of human) {
-    if (!m.author) continue;
-    // Skip authors we've already counted
-  }
-  // Simpler: total PRs per author, split by whether they ever use AI
+  // Total PRs per author, split by whether they ever use AI
   const authorTotals = new Map<string, number>();
   for (const m of human) {
     if (!m.author) continue;
@@ -291,6 +287,8 @@ export function generateActionItems(
   }
 
   // AI PRs are slower
+  // Note: cycleDelta.value <= 0 works because negative deltas are clamped to 0 in computeImpact().
+  // A value of exactly 0 means AI PRs are equal or slower. If clamping logic changes, update this check.
   const cycleDelta = impact.metrics.find((m) => m.name === "Cycle Time Delta");
   if (cycleDelta && cycleDelta.available && cycleDelta.value <= 0) {
     items.push({
@@ -329,7 +327,7 @@ export function generateActionItems(
   if (revertMetric && revertMetric.available && revertMetric.value < 50) {
     items.push({
       priority: "high",
-      message: "Elevated revert rate detected — review AI-assisted PR quality",
+      message: "Elevated revert rate detected — review recent PR quality and revert patterns",
       metric: "Revert Rate",
     });
   }
