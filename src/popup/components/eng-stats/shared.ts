@@ -570,11 +570,17 @@ export function computeWeeklyBuckets(metrics: PRMetric[], timeRange: number): We
   }
   return Array.from(buckets.entries())
     .sort((a, b) => a[0].localeCompare(b[0]))
-    .map(([key, vals]) => ({
-      label: weekLabel(new Date(key + "T12:00:00")),
-      avgHours: vals.reduce((a, b) => a + b, 0) / vals.length,
-      count: vals.length,
-    }))
+    .map(([key, vals]) => {
+      const cleaned = vals.length >= 4 ? removeOutliers(vals) : vals;
+      const avg = cleaned.length > 0
+        ? cleaned.reduce((a, b) => a + b, 0) / cleaned.length
+        : vals.reduce((a, b) => a + b, 0) / vals.length;
+      return {
+        label: weekLabel(new Date(key + "T12:00:00")),
+        avgHours: avg,
+        count: vals.length,
+      };
+    })
     .slice(-Math.ceil(timeRange / 7));
 }
 
@@ -618,7 +624,7 @@ export function computeTeamWeeklyCycles(
       const biz = toBusinessHours(m.cycleTimeHours, m.createdAt, m.mergedAt);
       const key = weekKey(new Date(m.mergedAt));
       if (!byWeek.has(key)) byWeek.set(key, []);
-      byWeek.get(key)!.push(biz / 24);
+      byWeek.get(key)!.push(biz);
     }
     const weekly = Array.from(byWeek.entries())
       .sort((a, b) => a[0].localeCompare(b[0]))

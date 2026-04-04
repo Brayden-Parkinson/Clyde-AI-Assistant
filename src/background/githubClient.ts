@@ -389,7 +389,6 @@ const AI_REVIEW_BOTS = new Map<string, string>([
   ["copilot-swe-agent[bot]", "copilot"],
   ["copilot[bot]", "copilot"],
   ["claude-code-review[bot]", "claude"],
-  ["github-actions[bot]", "github-actions"],
   ["amazon-q-developer[bot]", "amazon-q"],
   ["devin-ai-integration[bot]", "devin"],
   ["sonarcloud[bot]", "sonarcloud"],
@@ -479,14 +478,14 @@ export function classifyReviewComment(
   // Copilot / Claude: generic severity detection
   if (severity === "info" && tool !== "cursor" && tool !== "coderabbit") {
     if (lower.includes("critical") || lower.includes("vulnerability")) severity = "high";
-    else if (lower.includes("warning") || lower.includes("issue")) severity = "medium";
+    else if (lower.includes("warning")) severity = "medium";
     else if (lower.includes("suggestion") || lower.includes("nit")) severity = "low";
   }
 
   // ── Category classification (keyword-based) ──
   let category = "other";
-  if (/security|vulnerab|xss|injection|auth|csrf|secret|credential/i.test(body)) category = "security";
-  else if (/type[- ]?safe|type\s+error|typescript|type\s+mismatch|generic|any\b/i.test(body)) category = "type-safety";
+  if (/security|vulnerab|xss|injection|auth(?!or)|csrf|secret|credential/i.test(body)) category = "security";
+  else if (/type[- ]?safe|type\s+error|typescript|type\s+mismatch|generic|:\s*any\b|as\s+any\b|<any>|any\[\]/i.test(body)) category = "type-safety";
   else if (/performance|O\(n|complex|slow|optimi[zs]|memo|cache|render/i.test(body)) category = "perf";
   else if (/bug|error|crash|null|undefined|race\s+condition|deadlock|off[- ]by/i.test(body)) category = "bug";
   else if (/logic|condition|branch|edge\s+case|incorrect|wrong/i.test(body)) category = "logic";

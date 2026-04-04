@@ -1,7 +1,7 @@
 /**
  * Multi-dimensional productivity scoring system.
  *
- * 3 sub-scores + 1 composite, each 0-100:
+ * 4 sub-scores + 1 composite, each 0-100:
  *
  * Velocity: shipping speed & throughput
  *   - Throughput 35% (PRs/week)
@@ -22,7 +22,14 @@
  *   - Ticket throughput 10% (Jira tickets closed in period)
  *   - Sustained output 25% (PRs * (1 - revert_rate)^2)
  *
- * Overall: 0.35 * Velocity + 0.35 * Impact + 0.30 * Quality
+ * Collaboration: code review engagement
+ *   - Reviews given/week 35%
+ *   - Turnaround 30% (inverse time to review)
+ *   - Thoroughness 20% (non-rubber-stamp reviews)
+ *   - Breadth 15% (distinct authors reviewed)
+ *
+ * Overall (with reviews):  0.30*Velocity + 0.30*Impact + 0.20*Quality + 0.20*Collaboration
+ * Overall (fallback):      0.35*Velocity + 0.35*Impact + 0.30*Quality
  */
 
 import type { PersonRow, ProductivityScores } from "../shared";
@@ -185,9 +192,11 @@ function computeAuthorRaws(
       author: r.author,
       prsPerWeek: r.prsPerWeek,
       avgCycleHours: r.avgCycleHours ?? 9999,
-      avgFirstReviewHours: prs.length > 0
-        ? prs.reduce((s, p) => s + (p.timeToFirstReviewHours ?? 0), 0) / prs.filter((p) => p.timeToFirstReviewHours !== null).length || 9999
-        : 9999,
+      avgFirstReviewHours: (() => {
+        const withReview = prs.filter((p) => p.timeToFirstReviewHours !== null);
+        if (withReview.length === 0) return 9999;
+        return withReview.reduce((s, p) => s + (p.timeToFirstReviewHours ?? 0), 0) / withReview.length;
+      })(),
       activeWeeksRatio: weeks.size / totalWeeks,
       revertCount,
       avgPRSize: r.avgPRSize,

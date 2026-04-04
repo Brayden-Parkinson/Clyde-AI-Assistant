@@ -170,23 +170,26 @@ export function EngStatsView({ darkMode = false }: EngStatsViewProps) {
   );
 
   // All JIRA tickets with assignees (for ticket-per-author metrics)
+  // Uses the assigneeEmail index — values are either null or a real email string (never empty string or undefined, per v28 migration).
   const allJiraTickets = useLiveQuery(
     () =>
       db.jira_tickets
+        .where("assigneeEmail")
+        .above("")
         .toArray()
-        .then((tickets) => tickets.filter((t) => t.assigneeEmail))
         .catch(() => []),
     [queryKey],
     [] as JiraTicket[],
   );
 
-  // PR reviews for collaboration scoring
+  // PR reviews for collaboration scoring (weekday-filtered to match allMetrics)
   const prReviews = useLiveQuery(
     () =>
       db.pr_reviews
         .where("submittedAt")
         .aboveOrEqual(since)
         .toArray()
+        .then((reviews) => reviews.filter((r) => isWeekday(r.submittedAt)))
         .catch(() => []),
     [since, queryKey],
     [] as PRReview[],
