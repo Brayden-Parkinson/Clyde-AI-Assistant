@@ -190,6 +190,42 @@ async function ghFetchOne<T>(token: string, path: string): Promise<T> {
   return resp.json() as Promise<T>;
 }
 
+// ─── PR Inbox API ───
+
+export interface GHUser { login: string; avatar_url: string; }
+
+export async function fetchGitHubUser(token: string): Promise<GHUser> {
+  return ghFetchOne<GHUser>(token, "/user");
+}
+
+interface GHSearchResult<T> { total_count: number; items: T[]; }
+
+export interface GHSearchIssueItem {
+  number: number;
+  title: string;
+  html_url: string;
+  repository_url: string;
+  user: { login: string; avatar_url: string } | null;
+  created_at: string;
+  updated_at: string;
+  draft?: boolean;
+  pull_request?: { html_url: string };
+  labels: Array<{ name: string; color: string }>;
+}
+
+export async function searchPRsForUser(
+  token: string,
+  username: string,
+  reason: "review-requested" | "assignee" | "mentions",
+): Promise<GHSearchIssueItem[]> {
+  const q = encodeURIComponent(`type:pr state:open ${reason}:${username}`);
+  const result = await ghFetchOne<GHSearchResult<GHSearchIssueItem>>(
+    token,
+    `/search/issues?q=${q}&per_page=100&sort=updated&order=desc`,
+  );
+  return result.items;
+}
+
 // ─── Public API ───
 
 /** Fetch currently open PRs for a repo (for backlog projection). Caps at 10 pages (1000 PRs). */

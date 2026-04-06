@@ -838,6 +838,22 @@ export interface PRReview {
   syncedAt: string;
 }
 
+/** PR Inbox item — a PR the user needs to act on */
+export interface PRInboxItem {
+  id: number;
+  number: number;
+  title: string;
+  html_url: string;
+  repo: string;
+  author: string;
+  authorAvatar: string;
+  createdAt: string;
+  updatedAt: string;
+  isDraft: boolean;
+  reason: "review-requested" | "assigned" | "mentioned";
+  labels: Array<{ name: string; color: string }>;
+}
+
 /** Point-in-time snapshot of open PR count per repo */
 export interface OpenPRSnapshot {
   id?: number;
