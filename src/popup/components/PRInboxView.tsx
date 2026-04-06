@@ -78,9 +78,9 @@ export function PRInboxView({ darkMode = false, demoMode = false }: PRInboxViewP
     // Load cache
     chrome.storage.local.get("prInboxCache").then((result) => {
       if (result.prInboxCache) {
-        const cache = result.prInboxCache as { prs: PRInboxItem[]; lastFetched: string };
+        const cache = result.prInboxCache as { prs: PRInboxItem[]; fetchedAt: string };
         setPrs(cache.prs);
-        setLastFetched(cache.lastFetched);
+        setLastFetched(cache.fetchedAt);
       }
     });
 
@@ -91,33 +91,29 @@ export function PRInboxView({ darkMode = false, demoMode = false }: PRInboxViewP
       }
     });
 
-    // Request fresh data
-    setLoading(true);
-    chrome.runtime.sendMessage({ type: "PR_INBOX_FETCH" }).catch(() => {
-      setLoading(false);
-      setError("Failed to fetch PRs");
-    });
-  }, [demoMode]);
-
-  // Listen for results
-  useEffect(() => {
-    if (demoMode) return;
-    const listener = (msg: { type: string; prs?: PRInboxItem[]; error?: string }) => {
+    // Register listener BEFORE sending fetch to avoid race condition
+    const listener = (msg: { type: string; prs?: PRInboxItem[]; fetchedAt?: string; error?: string }) => {
       if (msg.type === "PR_INBOX_RESULT") {
         setLoading(false);
         if (msg.error) {
           setError(msg.error);
         } else if (msg.prs) {
           setPrs(msg.prs);
-          const now = new Date().toISOString();
-          setLastFetched(now);
+          setLastFetched(msg.fetchedAt ?? new Date().toISOString());
           setError(null);
           setNoToken(false);
-          chrome.storage.local.set({ prInboxCache: { prs: msg.prs, lastFetched: now } });
         }
       }
     };
     chrome.runtime.onMessage.addListener(listener);
+
+    // Request fresh data
+    setLoading(true);
+    chrome.runtime.sendMessage({ type: "PR_INBOX_FETCH" }).catch(() => {
+      setLoading(false);
+      setError("Failed to fetch PRs");
+    });
+
     return () => chrome.runtime.onMessage.removeListener(listener);
   }, [demoMode]);
 
