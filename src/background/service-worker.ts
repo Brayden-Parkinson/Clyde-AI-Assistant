@@ -40,6 +40,8 @@ import { initSyncHooks, syncPush } from "./sync-engine";
 import { fetchAndCacheCalendarEvents } from "./google-calendar";
 import { initiateGoogleOAuth, disconnectGoogle } from "./google-auth";
 import { syncGitHubData, backfillPRAuthors, syncOpenPRSnapshots } from "./githubSync";
+import { fetchGitHubUser, searchPRsForUser } from "./githubClient";
+import type { PRInboxItem } from "@shared/types";
 import { syncJiraData, linkPRsToJira } from "./jiraSync";
 import { executeAction, createProposal } from "./action-executor";
 import { generateDraft, regenerateDraft } from "./draft-generator";
@@ -861,6 +863,102 @@ chrome.runtime.onMessage.addListener(
         sendResponse(result);
       })().catch((err) => sendResponse({ ok: false, message: err instanceof Error ? err.message : String(err) }));
       return true;
+    } else if (message.type === "PR_INBOX_FETCH") {
+      sendResponse({ ok: true });
+      (async () => {
+        try {
+          const store = await chrome.storage.local.get(["githubToken", "githubUsername"]);
+          const token = store.githubToken as string | undefined;
+          if (!token) {
+            chrome.runtime.sendMessage({
+              type: "PR_INBOX_RESULT",
+              error: "No GitHub token configured",
+              prs: [],
+            }).catch(() => {});
+            return;
+          }
+
+          // Read or fetch+cache the GitHub username
+          let username = store.githubUsername as string | undefined;
+          if (!username) {
+            const user = await fetchGitHubUser(token);
+            username = user.login;
+            await chrome.storage.local.set({ githubUsername: username });
+          }
+
+          // Run 3 parallel searches
+          const [reviewRequested, assigned, mentioned] = await Promise.all([
+            searchPRsForUser(token, username, "review-requested"),
+            searchPRsForUser(token, username, "assignee"),
+            searchPRsForUser(token, username, "mentions"),
+          ]);
+
+          // Deduplicate by html_url with priority: review-requested > assigned > mentioned
+          const reasonPriority: Record<string, number> = {
+            "review-requested": 0,
+            "assigned": 1,
+            "mentioned": 2,
+          };
+          const seen = new Map<string, PRInboxItem>();
+
+          const mapItem = (
+            item: (typeof reviewRequested)[number],
+            reason: PRInboxItem["reason"],
+          ): PRInboxItem => {
+            // Extract "owner/repo" from repository_url
+            const repo = item.repository_url.replace("https://api.github.com/repos/", "");
+            return {
+              id: item.number,
+              number: item.number,
+              title: item.title,
+              html_url: item.html_url,
+              repo,
+              author: item.user?.login ?? "unknown",
+              authorAvatar: item.user?.avatar_url ?? "",
+              createdAt: item.created_at,
+              updatedAt: item.updated_at,
+              isDraft: item.draft ?? false,
+              reason,
+              labels: item.labels,
+            };
+          };
+
+          const buckets: Array<{ items: typeof reviewRequested; reason: PRInboxItem["reason"] }> = [
+            { items: reviewRequested, reason: "review-requested" },
+            { items: assigned, reason: "assigned" },
+            { items: mentioned, reason: "mentioned" },
+          ];
+
+          for (const { items, reason } of buckets) {
+            for (const item of items) {
+              const existing = seen.get(item.html_url);
+              if (!existing || reasonPriority[reason] < reasonPriority[existing.reason]) {
+                seen.set(item.html_url, mapItem(item, reason));
+              }
+            }
+          }
+
+          const prs = Array.from(seen.values());
+          const fetchedAt = new Date().toISOString();
+
+          // Cache result
+          await chrome.storage.local.set({ prInboxCache: { prs, fetchedAt } });
+
+          // Broadcast to UI
+          chrome.runtime.sendMessage({
+            type: "PR_INBOX_RESULT",
+            prs,
+            fetchedAt,
+          }).catch(() => {});
+        } catch (err) {
+          chrome.runtime.sendMessage({
+            type: "PR_INBOX_RESULT",
+            error: String(err),
+            prs: [],
+          }).catch(() => {});
+        }
+      })();
+      return false;
     }
     return false;
   },
