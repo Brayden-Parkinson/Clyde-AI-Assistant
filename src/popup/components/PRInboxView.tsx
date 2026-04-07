@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { OS } from "@shared/tokens";
 import { dk } from "../DarkModeContext";
 import type { PRInboxItem } from "@shared/types";
@@ -130,6 +130,26 @@ export function PRInboxView({ darkMode = false, demoMode = false }: PRInboxViewP
   const [drawerLoading, setDrawerLoading] = useState(false);
   const [drawerError, setDrawerError] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [drawerWidth, setDrawerWidth] = useState(420);
+  const dragging = useRef(false);
+
+  // Drag-to-resize the drawer
+  const onResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    dragging.current = true;
+    const onMove = (ev: MouseEvent) => {
+      if (!dragging.current) return;
+      const newWidth = Math.max(280, Math.min(window.innerWidth - 60, window.innerWidth - ev.clientX));
+      setDrawerWidth(newWidth);
+    };
+    const onUp = () => {
+      dragging.current = false;
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  }, []);
 
   useEffect(() => { ensureStyles(); }, []);
 
@@ -409,13 +429,24 @@ export function PRInboxView({ darkMode = false, demoMode = false }: PRInboxViewP
           />
           {/* Drawer panel */}
           <div style={{
-            position: "fixed", top: 0, right: 0, bottom: 0, width: "70%", maxWidth: 420, minWidth: 280,
+            position: "fixed", top: 0, right: 0, bottom: 0, width: drawerWidth,
             background: dk(darkMode, "#222226", OS.white), borderLeft: `1px solid ${border}`,
             boxShadow: "-4px 0 24px rgba(0,0,0,0.15)",
             transform: drawerOpen ? "translateX(0)" : "translateX(100%)",
-            transition: "transform 0.25s cubic-bezier(0.32, 0.72, 0, 1)",
+            transition: dragging.current ? "none" : "transform 0.25s cubic-bezier(0.32, 0.72, 0, 1)",
             zIndex: 10001, display: "flex", flexDirection: "column", overflow: "hidden",
           }}>
+            {/* Resize handle */}
+            <div
+              onMouseDown={onResizeStart}
+              style={{
+                position: "absolute", top: 0, left: 0, bottom: 0, width: 6,
+                cursor: "col-resize", zIndex: 1,
+                background: "transparent",
+              }}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.background = dk(darkMode, "rgba(255,255,255,0.08)", "rgba(0,0,0,0.06)"); }}
+              onMouseLeave={(e) => { if (!dragging.current) (e.currentTarget as HTMLDivElement).style.background = "transparent"; }}
+            />
             {/* Drawer header */}
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px", borderBottom: `1px solid ${border}`, flexShrink: 0 }}>
               <span style={{ fontSize: 12, fontWeight: 600, color: muted }}>
@@ -509,7 +540,7 @@ export function PRInboxView({ darkMode = false, demoMode = false }: PRInboxViewP
                     style={{
                       fontSize: 12, lineHeight: 1.6, color: dk(darkMode, "#bbb", OS.secondary),
                       wordBreak: "break-word",
-                      maxHeight: 300, overflowY: "auto",
+                      overflowY: "auto",
                       padding: 10, borderRadius: 6,
                       background: dk(darkMode, "rgba(255,255,255,0.03)", "#f8f8f8"),
                     }}
