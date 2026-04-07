@@ -870,11 +870,9 @@ chrome.runtime.onMessage.addListener(
           const store = await chrome.storage.local.get(["githubToken", "githubUsername"]);
           const token = store.githubToken as string | undefined;
           if (!token) {
-            chrome.runtime.sendMessage({
-              type: "PR_INBOX_RESULT",
-              error: "No GitHub token configured",
-              prs: [],
-            }).catch(() => {});
+            await chrome.storage.local.set({
+              prInboxCache: { prs: [], fetchedAt: new Date().toISOString(), error: "No GitHub token configured" },
+            });
             return;
           }
 
@@ -944,18 +942,11 @@ chrome.runtime.onMessage.addListener(
           // Cache result
           await chrome.storage.local.set({ prInboxCache: { prs, fetchedAt } });
 
-          // Broadcast to UI
-          chrome.runtime.sendMessage({
-            type: "PR_INBOX_RESULT",
-            prs,
-            fetchedAt,
-          }).catch(() => {});
+          // UI picks this up via chrome.storage.onChanged listener
         } catch (err) {
-          chrome.runtime.sendMessage({
-            type: "PR_INBOX_RESULT",
-            error: String(err),
-            prs: [],
-          }).catch(() => {});
+          await chrome.storage.local.set({
+            prInboxCache: { prs: [], fetchedAt: new Date().toISOString(), error: String(err) },
+          });
         }
       })();
       return false;

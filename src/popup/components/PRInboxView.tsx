@@ -75,8 +75,9 @@ export function PRInboxView({ darkMode = false, demoMode = false }: PRInboxViewP
       return;
     }
 
-    // Load cache
-    chrome.storage.local.get("prInboxCache").then((result) => {
+    // Load cache for instant render
+    chrome.storage.local.get(["prInboxCache", "githubToken"]).then((result) => {
+      if (!result.githubToken) setNoToken(true);
       if (result.prInboxCache) {
         const cache = result.prInboxCache as { prs: PRInboxItem[]; fetchedAt: string };
         setPrs(cache.prs);
@@ -84,37 +85,31 @@ export function PRInboxView({ darkMode = false, demoMode = false }: PRInboxViewP
       }
     });
 
-    // Check for token
-    chrome.storage.local.get("githubToken").then((result) => {
-      if (!result.githubToken) {
-        setNoToken(true);
-      }
-    });
-
-    // Register listener BEFORE sending fetch to avoid race condition
-    const listener = (msg: { type: string; prs?: PRInboxItem[]; fetchedAt?: string; error?: string }) => {
-      if (msg.type === "PR_INBOX_RESULT") {
-        setLoading(false);
-        if (msg.error) {
-          setError(msg.error);
-        } else if (msg.prs) {
-          setPrs(msg.prs);
-          setLastFetched(msg.fetchedAt ?? new Date().toISOString());
-          setError(null);
-          setNoToken(false);
-        }
+    // Watch for cache updates from the service worker — this is the primary
+    // delivery mechanism (more reliable than chrome.runtime.sendMessage broadcast)
+    const onStorageChanged = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
+      if (area !== "local" || !changes.prInboxCache) return;
+      const cache = changes.prInboxCache.newValue as { prs: PRInboxItem[]; fetchedAt: string; error?: string } | undefined;
+      setLoading(false);
+      if (cache?.error) {
+        setError(cache.error);
+      } else if (cache?.prs) {
+        setPrs(cache.prs);
+        setLastFetched(cache.fetchedAt);
+        setError(null);
+        setNoToken(false);
       }
     };
-    chrome.runtime.onMessage.addListener(listener);
+    chrome.storage.onChanged.addListener(onStorageChanged);
 
-    // Request fresh data
+    // Request fresh data from background
     setLoading(true);
     chrome.runtime.sendMessage({ type: "PR_INBOX_FETCH" }).catch(() => {
       setLoading(false);
       setError("Failed to fetch PRs");
     });
 
-    return () => chrome.runtime.onMessage.removeListener(listener);
+    return () => chrome.storage.onChanged.removeListener(onStorageChanged);
   }, [demoMode]);
 
   const handleRefresh = useCallback(() => {
