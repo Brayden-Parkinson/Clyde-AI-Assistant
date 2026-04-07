@@ -43,6 +43,18 @@ function repoShortName(repo: string): string {
   return parts.length > 1 ? parts[1] : repo;
 }
 
+/** Strip HTML comments, image tags, and common PR template boilerplate */
+function cleanBody(raw: string): string {
+  return raw
+    .replace(/<!--[\s\S]*?-->/g, "")      // HTML comments
+    .replace(/<img[^>]*>/gi, "")           // inline images
+    .replace(/\[!\[.*?\]\(.*?\)\]\(.*?\)/g, "") // markdown image links
+    .replace(/!\[.*?\]\(.*?\)/g, "")       // markdown images
+    .replace(/^#+\s*(Checklist|Test Plan|Automated PR Environment|Frontend Proxy Environment|Risk)\b[\s\S]*?(?=^#|\z)/gm, "") // common template sections
+    .replace(/\n{3,}/g, "\n\n")            // collapse blank runs
+    .trim();
+}
+
 function ciSummary(data: PRDetailData): { passed: number; failed: number; pending: number; total: number } {
   let passed = 0, failed = 0, pending = 0;
   for (const c of data.checks) {
@@ -371,19 +383,19 @@ export function PRInboxView({ darkMode = false, demoMode = false }: PRInboxViewP
           <div
             onClick={closeDrawer}
             style={{
-              position: "absolute", inset: 0, background: "rgba(0,0,0,0.3)",
+              position: "fixed", inset: 0, background: "rgba(0,0,0,0.3)",
               opacity: drawerOpen ? 1 : 0, transition: "opacity 0.25s ease",
-              zIndex: 20,
+              zIndex: 100,
             }}
           />
           {/* Drawer panel */}
           <div style={{
-            position: "absolute", top: 0, right: 0, bottom: 0, width: "70%", maxWidth: 420, minWidth: 280,
+            position: "fixed", top: 0, right: 0, bottom: 0, width: "70%", maxWidth: 420, minWidth: 280,
             background: dk(darkMode, "#222226", OS.white), borderLeft: `1px solid ${border}`,
             boxShadow: "-4px 0 24px rgba(0,0,0,0.15)",
             transform: drawerOpen ? "translateX(0)" : "translateX(100%)",
             transition: "transform 0.25s cubic-bezier(0.32, 0.72, 0, 1)",
-            zIndex: 21, display: "flex", flexDirection: "column", overflow: "hidden",
+            zIndex: 101, display: "flex", flexDirection: "column", overflow: "hidden",
           }}>
             {/* Drawer header */}
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px", borderBottom: `1px solid ${border}`, flexShrink: 0 }}>
@@ -470,7 +482,7 @@ export function PRInboxView({ darkMode = false, demoMode = false }: PRInboxViewP
               )}
 
               {/* Description */}
-              {drawerData?.detail.body && (
+              {drawerData?.detail.body && cleanBody(drawerData.detail.body).length > 0 && (
                 <div style={{ marginBottom: 14 }}>
                   <div style={{ fontSize: 11, fontWeight: 600, color: muted, marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.5 }}>Description</div>
                   <div style={{
@@ -480,8 +492,7 @@ export function PRInboxView({ darkMode = false, demoMode = false }: PRInboxViewP
                     padding: 10, borderRadius: 6,
                     background: dk(darkMode, "rgba(255,255,255,0.03)", "#f8f8f8"),
                   }}>
-                    {drawerData.detail.body.slice(0, 2000)}
-                    {drawerData.detail.body.length > 2000 && "…"}
+                    {(() => { const cleaned = cleanBody(drawerData.detail.body ?? ""); return cleaned.slice(0, 2000) + (cleaned.length > 2000 ? "…" : ""); })()}
                   </div>
                 </div>
               )}
