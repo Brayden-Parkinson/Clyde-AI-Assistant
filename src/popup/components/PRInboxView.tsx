@@ -3,6 +3,7 @@ import { OS } from "@shared/tokens";
 import { dk } from "../DarkModeContext";
 import type { PRInboxItem } from "@shared/types";
 import { DEMO_PR_INBOX } from "@shared/demo-data";
+import { marked } from "marked";
 
 interface PRInboxViewProps {
   darkMode?: boolean;
@@ -72,13 +73,31 @@ function ciSummary(data: PRDetailData): { passed: number; failed: number; pendin
 
 // ─── Spin keyframes ───
 
-let spinInjected = false;
-function ensureSpinKeyframes() {
-  if (spinInjected) return;
+let stylesInjected = false;
+function ensureStyles() {
+  if (stylesInjected) return;
   const style = document.createElement("style");
-  style.textContent = `@keyframes pr-inbox-spin { from { transform: rotate(0deg) } to { transform: rotate(360deg) } }`;
+  style.textContent = `
+    @keyframes pr-inbox-spin { from { transform: rotate(0deg) } to { transform: rotate(360deg) } }
+    .pr-description h1,.pr-description h2,.pr-description h3,.pr-description h4 { font-size: 13px; font-weight: 600; margin: 8px 0 4px; }
+    .pr-description h1 { font-size: 14px; }
+    .pr-description p { margin: 4px 0; }
+    .pr-description ul,.pr-description ol { margin: 4px 0; padding-left: 18px; }
+    .pr-description li { margin: 2px 0; }
+    .pr-description code { font-size: 11px; padding: 1px 4px; border-radius: 3px; background: rgba(128,128,128,0.12); }
+    .pr-description pre { font-size: 11px; padding: 8px; border-radius: 4px; background: rgba(128,128,128,0.08); overflow-x: auto; margin: 6px 0; }
+    .pr-description pre code { padding: 0; background: none; }
+    .pr-description a { color: #5e6ad2; text-decoration: none; }
+    .pr-description a:hover { text-decoration: underline; }
+    .pr-description blockquote { margin: 4px 0; padding-left: 10px; border-left: 3px solid rgba(128,128,128,0.25); color: inherit; opacity: 0.75; }
+    .pr-description img { max-width: 100%; border-radius: 4px; margin: 4px 0; }
+    .pr-description hr { border: none; border-top: 1px solid rgba(128,128,128,0.2); margin: 8px 0; }
+    .pr-description table { border-collapse: collapse; font-size: 11px; margin: 6px 0; }
+    .pr-description th,.pr-description td { border: 1px solid rgba(128,128,128,0.2); padding: 3px 6px; }
+    .pr-description input[type="checkbox"] { margin-right: 4px; }
+  `;
   document.head.appendChild(style);
-  spinInjected = true;
+  stylesInjected = true;
 }
 
 // ─── External link icon ───
@@ -112,7 +131,7 @@ export function PRInboxView({ darkMode = false, demoMode = false }: PRInboxViewP
   const [drawerError, setDrawerError] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
 
-  useEffect(() => { ensureSpinKeyframes(); }, []);
+  useEffect(() => { ensureStyles(); }, []);
 
   // Load cached data + fetch
   useEffect(() => {
@@ -485,15 +504,22 @@ export function PRInboxView({ darkMode = false, demoMode = false }: PRInboxViewP
               {drawerData?.detail.body && cleanBody(drawerData.detail.body).length > 0 && (
                 <div style={{ marginBottom: 14 }}>
                   <div style={{ fontSize: 11, fontWeight: 600, color: muted, marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.5 }}>Description</div>
-                  <div style={{
-                    fontSize: 12, lineHeight: 1.5, color: dk(darkMode, "#bbb", OS.secondary),
-                    whiteSpace: "pre-wrap", wordBreak: "break-word",
-                    maxHeight: 300, overflowY: "auto",
-                    padding: 10, borderRadius: 6,
-                    background: dk(darkMode, "rgba(255,255,255,0.03)", "#f8f8f8"),
-                  }}>
-                    {(() => { const cleaned = cleanBody(drawerData.detail.body ?? ""); return cleaned.slice(0, 2000) + (cleaned.length > 2000 ? "…" : ""); })()}
-                  </div>
+                  <div
+                    className="pr-description"
+                    style={{
+                      fontSize: 12, lineHeight: 1.6, color: dk(darkMode, "#bbb", OS.secondary),
+                      wordBreak: "break-word",
+                      maxHeight: 300, overflowY: "auto",
+                      padding: 10, borderRadius: 6,
+                      background: dk(darkMode, "rgba(255,255,255,0.03)", "#f8f8f8"),
+                    }}
+                    dangerouslySetInnerHTML={{
+                      __html: (() => {
+                        const cleaned = cleanBody(drawerData.detail.body ?? "").slice(0, 3000);
+                        return marked.parse(cleaned, { async: false, breaks: true, gfm: true }) as string;
+                      })(),
+                    }}
+                  />
                 </div>
               )}
 
