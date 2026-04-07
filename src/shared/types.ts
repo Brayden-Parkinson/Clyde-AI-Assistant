@@ -850,7 +850,6 @@ export interface PRInboxItem {
   createdAt: string;
   updatedAt: string;
   isDraft: boolean;
-  reason: "review-requested" | "assigned" | "mentioned";
   labels: Array<{ name: string; color: string }>;
 }
 

@@ -867,9 +867,11 @@ chrome.runtime.onMessage.addListener(
       sendResponse({ ok: true });
       (async () => {
         try {
+          console.log("[CT:pr-inbox] Fetch started");
           const store = await chrome.storage.local.get(["githubToken", "githubUsername"]);
           const token = store.githubToken as string | undefined;
           if (!token) {
+            console.log("[CT:pr-inbox] No GitHub token found");
             await chrome.storage.local.set({
               prInboxCache: { prs: [], fetchedAt: new Date().toISOString(), error: "No GitHub token configured" },
             });
@@ -879,71 +881,45 @@ chrome.runtime.onMessage.addListener(
           // Read or fetch+cache the GitHub username
           let username = store.githubUsername as string | undefined;
           if (!username) {
+            console.log("[CT:pr-inbox] Fetching GitHub username...");
             const user = await fetchGitHubUser(token);
             username = user.login;
             await chrome.storage.local.set({ githubUsername: username });
           }
+          console.log("[CT:pr-inbox] Username:", username);
 
-          // Run 3 parallel searches
-          const [reviewRequested, assigned, mentioned] = await Promise.all([
-            searchPRsForUser(token, username, "review-requested"),
-            searchPRsForUser(token, username, "assignee"),
-            searchPRsForUser(token, username, "mentions"),
-          ]);
+          // Single query: "involves" catches review-requested, assigned, mentioned,
+          // reviewed-by, commented, and team-review-requested — everything in one call
+          console.log("[CT:pr-inbox] Searching involves:%s ...", username);
+          const allPRs = await searchPRsForUser(token, username, "involves");
+          console.log(`[CT:pr-inbox] Found ${allPRs.length} PRs`);
 
-          // Deduplicate by html_url with priority: review-requested > assigned > mentioned
-          const reasonPriority: Record<string, number> = {
-            "review-requested": 0,
-            "assigned": 1,
-            "mentioned": 2,
-          };
-          const seen = new Map<string, PRInboxItem>();
-
-          const mapItem = (
-            item: (typeof reviewRequested)[number],
-            reason: PRInboxItem["reason"],
-          ): PRInboxItem => {
-            // Extract "owner/repo" from repository_url
-            const repo = item.repository_url.replace("https://api.github.com/repos/", "");
-            return {
+          // Filter out PRs authored by the current user (they don't "need" you)
+          const prs: PRInboxItem[] = allPRs
+            .filter((item) => (item.user?.login ?? "").toLowerCase() !== username.toLowerCase())
+            .map((item) => ({
               id: item.number,
               number: item.number,
               title: item.title,
               html_url: item.html_url,
-              repo,
+              repo: item.repository_url.replace("https://api.github.com/repos/", ""),
               author: item.user?.login ?? "unknown",
               authorAvatar: item.user?.avatar_url ?? "",
               createdAt: item.created_at,
               updatedAt: item.updated_at,
               isDraft: item.draft ?? false,
-              reason,
               labels: item.labels,
-            };
-          };
-
-          const buckets: Array<{ items: typeof reviewRequested; reason: PRInboxItem["reason"] }> = [
-            { items: reviewRequested, reason: "review-requested" },
-            { items: assigned, reason: "assigned" },
-            { items: mentioned, reason: "mentioned" },
-          ];
-
-          for (const { items, reason } of buckets) {
-            for (const item of items) {
-              const existing = seen.get(item.html_url);
-              if (!existing || reasonPriority[reason] < reasonPriority[existing.reason]) {
-                seen.set(item.html_url, mapItem(item, reason));
-              }
-            }
-          }
-
-          const prs = Array.from(seen.values());
+            }));
           const fetchedAt = new Date().toISOString();
 
           // Cache result
+          console.log(`[CT:pr-inbox] Deduped to ${prs.length} PRs, caching...`);
           await chrome.storage.local.set({ prInboxCache: { prs, fetchedAt } });
+          console.log("[CT:pr-inbox] Done");
 
           // UI picks this up via chrome.storage.onChanged listener
         } catch (err) {
+          console.error("[CT:pr-inbox] Error:", err);
           await chrome.storage.local.set({
             prInboxCache: { prs: [], fetchedAt: new Date().toISOString(), error: String(err) },
           });

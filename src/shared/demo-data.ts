@@ -1673,7 +1673,6 @@ export const DEMO_PR_INBOX: PRInboxItem[] = [
     createdAt: hoursAgo(3),
     updatedAt: hoursAgo(1),
     isDraft: false,
-    reason: "review-requested",
     labels: [{ name: "bug", color: "d73a4a" }],
   },
   {
@@ -1687,7 +1686,6 @@ export const DEMO_PR_INBOX: PRInboxItem[] = [
     createdAt: hoursAgo(18),
     updatedAt: hoursAgo(4),
     isDraft: false,
-    reason: "review-requested",
     labels: [{ name: "feature", color: "0075ca" }, { name: "backend", color: "5319e7" }],
   },
   {
@@ -1701,7 +1699,6 @@ export const DEMO_PR_INBOX: PRInboxItem[] = [
     createdAt: daysAgo(2),
     updatedAt: hoursAgo(8),
     isDraft: false,
-    reason: "assigned",
     labels: [{ name: "compliance", color: "fbca04" }],
   },
   {
@@ -1715,7 +1712,6 @@ export const DEMO_PR_INBOX: PRInboxItem[] = [
     createdAt: daysAgo(1),
     updatedAt: hoursAgo(12),
     isDraft: true,
-    reason: "mentioned",
     labels: [],
   },
   {
@@ -1729,7 +1725,6 @@ export const DEMO_PR_INBOX: PRInboxItem[] = [
     createdAt: daysAgo(3),
     updatedAt: daysAgo(1),
     isDraft: false,
-    reason: "assigned",
     labels: [{ name: "infra", color: "006b75" }],
   },
 ];

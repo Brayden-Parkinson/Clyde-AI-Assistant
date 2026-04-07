@@ -4,8 +4,6 @@ import { dk } from "../DarkModeContext";
 import type { PRInboxItem } from "@shared/types";
 import { DEMO_PR_INBOX } from "@shared/demo-data";
 
-type PRFilter = "all" | "review-requested" | "assigned" | "mentioned";
-
 interface PRInboxViewProps {
   darkMode?: boolean;
   demoMode?: boolean;
@@ -24,18 +22,6 @@ function timeAgo(iso: string): string {
   if (days < 7) return `${days}d ago`;
   return `${Math.floor(days / 7)}w ago`;
 }
-
-const REASON_COLORS: Record<PRInboxItem["reason"], string> = {
-  "review-requested": OS.blue,
-  "assigned": OS.green,
-  "mentioned": "#8b5cf6", // purple
-};
-
-const REASON_LABELS: Record<PRInboxItem["reason"], string> = {
-  "review-requested": "Review",
-  "assigned": "Assigned",
-  "mentioned": "Mentioned",
-};
 
 function repoShortName(repo: string): string {
   const parts = repo.split("/");
@@ -60,11 +46,11 @@ export function PRInboxView({ darkMode = false, demoMode = false }: PRInboxViewP
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastFetched, setLastFetched] = useState<string | null>(null);
-  const [filter, setFilter] = useState<PRFilter>("all");
+  const [activeLabel, setActiveLabel] = useState<string | null>(null);
+  const [activeRepo, setActiveRepo] = useState<string | null>(null);
   const [hoveredId, setHoveredId] = useState<number | null>(null);
   const [noToken, setNoToken] = useState(false);
 
-  // Inject spin keyframes on mount
   useEffect(() => { ensureSpinKeyframes(); }, []);
 
   // Load cached data + fetch
@@ -75,7 +61,6 @@ export function PRInboxView({ darkMode = false, demoMode = false }: PRInboxViewP
       return;
     }
 
-    // Load cache for instant render
     chrome.storage.local.get(["prInboxCache", "githubToken"]).then((result) => {
       if (!result.githubToken) setNoToken(true);
       if (result.prInboxCache) {
@@ -85,8 +70,6 @@ export function PRInboxView({ darkMode = false, demoMode = false }: PRInboxViewP
       }
     });
 
-    // Watch for cache updates from the service worker — this is the primary
-    // delivery mechanism (more reliable than chrome.runtime.sendMessage broadcast)
     const onStorageChanged = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
       if (area !== "local" || !changes.prInboxCache) return;
       const cache = changes.prInboxCache.newValue as { prs: PRInboxItem[]; fetchedAt: string; error?: string } | undefined;
@@ -102,7 +85,6 @@ export function PRInboxView({ darkMode = false, demoMode = false }: PRInboxViewP
     };
     chrome.storage.onChanged.addListener(onStorageChanged);
 
-    // Request fresh data from background
     setLoading(true);
     chrome.runtime.sendMessage({ type: "PR_INBOX_FETCH" }).catch(() => {
       setLoading(false);
@@ -122,19 +104,35 @@ export function PRInboxView({ darkMode = false, demoMode = false }: PRInboxViewP
     });
   }, [demoMode, loading]);
 
-  // Filter counts
-  const counts = useMemo(() => {
-    const c = { all: prs.length, "review-requested": 0, assigned: 0, mentioned: 0 };
+  // Collect all unique labels and repos for filter pills
+  const allLabels = useMemo(() => {
+    const map = new Map<string, { name: string; color: string; count: number }>();
     for (const pr of prs) {
-      c[pr.reason]++;
+      for (const label of pr.labels) {
+        const existing = map.get(label.name);
+        if (existing) existing.count++;
+        else map.set(label.name, { ...label, count: 1 });
+      }
     }
-    return c;
+    return Array.from(map.values()).sort((a, b) => b.count - a.count);
   }, [prs]);
 
-  const filtered = useMemo(
-    () => filter === "all" ? prs : prs.filter((pr) => pr.reason === filter),
-    [prs, filter],
-  );
+  const allRepos = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const pr of prs) {
+      map.set(pr.repo, (map.get(pr.repo) ?? 0) + 1);
+    }
+    return Array.from(map.entries())
+      .map(([repo, count]) => ({ repo, count }))
+      .sort((a, b) => b.count - a.count);
+  }, [prs]);
+
+  const filtered = useMemo(() => {
+    let list = prs;
+    if (activeLabel) list = list.filter((pr) => pr.labels.some((l) => l.name === activeLabel));
+    if (activeRepo) list = list.filter((pr) => pr.repo === activeRepo);
+    return list;
+  }, [prs, activeLabel, activeRepo]);
 
   const lastFetchedLabel = useMemo(() => {
     if (!lastFetched) return null;
@@ -157,26 +155,30 @@ export function PRInboxView({ darkMode = false, demoMode = false }: PRInboxViewP
     alignItems: "center",
     justifyContent: "space-between",
     padding: "12px 16px 8px",
-    borderBottom: `1px solid ${dk(darkMode, "#2a2a2e", OS.border)}`,
   };
 
-  const pillBarStyle: React.CSSProperties = {
+  const filterBarStyle: React.CSSProperties = {
     display: "flex",
-    gap: 6,
-    padding: "8px 16px",
+    gap: 5,
+    padding: "6px 16px 8px",
+    flexWrap: "wrap",
     borderBottom: `1px solid ${dk(darkMode, "#2a2a2e", OS.border)}`,
   };
 
-  const pillStyle = (active: boolean): React.CSSProperties => ({
-    padding: "4px 10px",
-    borderRadius: 12,
-    fontSize: 12,
+  const chipStyle = (active: boolean, color?: string): React.CSSProperties => ({
+    padding: "3px 8px",
+    borderRadius: 10,
+    fontSize: 11,
     fontWeight: active ? 600 : 400,
     fontFamily: OS.font,
     cursor: "pointer",
     border: "none",
-    background: active ? dk(darkMode, "rgba(94,106,210,0.25)", OS.blueBg) : "transparent",
-    color: active ? dk(darkMode, "#a5adff", OS.blue) : dk(darkMode, "#999", OS.muted),
+    background: active
+      ? (color ? `#${color}25` : dk(darkMode, "rgba(94,106,210,0.25)", OS.blueBg))
+      : dk(darkMode, "rgba(255,255,255,0.05)", "#f3f3f3"),
+    color: active
+      ? (color ? `#${color}` : dk(darkMode, "#a5adff", OS.blue))
+      : dk(darkMode, "#999", OS.muted),
     transition: "background 0.15s, color 0.15s",
   });
 
@@ -186,13 +188,12 @@ export function PRInboxView({ darkMode = false, demoMode = false }: PRInboxViewP
     padding: "4px 0",
   };
 
-  const rowStyle = (pr: PRInboxItem, hovered: boolean): React.CSSProperties => ({
+  const rowStyle = (hovered: boolean): React.CSSProperties => ({
     display: "flex",
     alignItems: "flex-start",
     gap: 10,
     padding: "10px 16px",
     cursor: "pointer",
-    borderLeft: `3px solid ${REASON_COLORS[pr.reason]}`,
     background: hovered
       ? dk(darkMode, "rgba(255,255,255,0.04)", "rgba(0,0,0,0.02)")
       : "transparent",
@@ -225,17 +226,19 @@ export function PRInboxView({ darkMode = false, demoMode = false }: PRInboxViewP
     );
   }
 
+  const hasFilters = allLabels.length > 0 || allRepos.length > 1;
+
   return (
     <div style={containerStyle}>
       {/* Header */}
       <div style={headerStyle}>
         <span style={{ fontSize: 13, fontWeight: 600 }}>
-          {prs.length > 0 ? `${prs.length} PR${prs.length === 1 ? "" : "s"} need you` : "PR Inbox"}
+          {prs.length > 0 ? `${prs.length} PR${prs.length === 1 ? "" : "s"}` : "PR Inbox"}
         </span>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           {lastFetchedLabel && (
             <span style={{ fontSize: 11, color: dk(darkMode, "#666", OS.faint) }}>
-              Updated {lastFetchedLabel}
+              {lastFetchedLabel}
             </span>
           )}
           <button
@@ -263,22 +266,48 @@ export function PRInboxView({ darkMode = false, demoMode = false }: PRInboxViewP
         </div>
       </div>
 
-      {/* Filter pills */}
-      <div style={pillBarStyle}>
-        {(["all", "review-requested", "assigned", "mentioned"] as PRFilter[]).map((f) => (
-          <button
-            key={f}
-            onClick={() => setFilter(f)}
-            style={pillStyle(filter === f)}
-          >
-            {f === "all" ? "All" : REASON_LABELS[f as PRInboxItem["reason"]]}
-            {" "}
-            <span style={{ opacity: 0.7 }}>
-              {f === "all" ? counts.all : counts[f as PRInboxItem["reason"]]}
-            </span>
-          </button>
-        ))}
-      </div>
+      {/* Filter bar — repo chips + label chips */}
+      {hasFilters && (
+        <div style={filterBarStyle}>
+          {/* Repo chips */}
+          {allRepos.length > 1 && allRepos.map(({ repo, count }) => (
+            <button
+              key={repo}
+              onClick={() => setActiveRepo(activeRepo === repo ? null : repo)}
+              style={chipStyle(activeRepo === repo)}
+            >
+              {repoShortName(repo)} <span style={{ opacity: 0.6 }}>{count}</span>
+            </button>
+          ))}
+          {/* Separator if both exist */}
+          {allRepos.length > 1 && allLabels.length > 0 && (
+            <span style={{ color: dk(darkMode, "#333", OS.border), fontSize: 11, padding: "3px 2px" }}>|</span>
+          )}
+          {/* Label chips */}
+          {allLabels.slice(0, 8).map(({ name, color, count }) => (
+            <button
+              key={name}
+              onClick={() => setActiveLabel(activeLabel === name ? null : name)}
+              style={chipStyle(activeLabel === name, color)}
+            >
+              {name} <span style={{ opacity: 0.6 }}>{count}</span>
+            </button>
+          ))}
+          {/* Clear filters */}
+          {(activeLabel || activeRepo) && (
+            <button
+              onClick={() => { setActiveLabel(null); setActiveRepo(null); }}
+              style={{
+                ...chipStyle(false),
+                color: dk(darkMode, "#888", OS.muted),
+                fontStyle: "italic",
+              }}
+            >
+              clear
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Error banner */}
       {error && (
@@ -315,18 +344,17 @@ export function PRInboxView({ darkMode = false, demoMode = false }: PRInboxViewP
         {filtered.length === 0 && !loading && !error ? (
           <div style={emptyStyle}>
             <span style={{ fontSize: 28, opacity: 0.3 }}>&#10003;</span>
-            <span>Nothing needs your attention right now</span>
+            <span>{(activeLabel || activeRepo) ? "No PRs match this filter" : "Nothing needs your attention right now"}</span>
           </div>
         ) : (
           filtered.map((pr) => (
             <div
-              key={pr.id}
-              style={rowStyle(pr, hoveredId === pr.id)}
+              key={`${pr.repo}-${pr.number}`}
+              style={rowStyle(hoveredId === pr.id)}
               onMouseEnter={() => setHoveredId(pr.id)}
               onMouseLeave={() => setHoveredId(null)}
               onClick={() => chrome.tabs.create({ url: pr.html_url })}
             >
-              {/* Content */}
               <div style={{ flex: 1, minWidth: 0 }}>
                 {/* Top line: repo + time */}
                 <div style={{
@@ -378,7 +406,6 @@ export function PRInboxView({ darkMode = false, demoMode = false }: PRInboxViewP
                   gap: 6,
                   flexWrap: "wrap",
                 }}>
-                  {/* Author */}
                   <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                     <img
                       src={pr.authorAvatar}
@@ -387,28 +414,11 @@ export function PRInboxView({ darkMode = false, demoMode = false }: PRInboxViewP
                       height={16}
                       style={{ borderRadius: "50%", flexShrink: 0 }}
                     />
-                    <span style={{
-                      fontSize: 11,
-                      color: dk(darkMode, "#777", OS.muted),
-                    }}>
+                    <span style={{ fontSize: 11, color: dk(darkMode, "#777", OS.muted) }}>
                       {pr.author}
                     </span>
                   </div>
 
-                  {/* Reason badge */}
-                  <span style={{
-                    fontSize: 10,
-                    fontWeight: 600,
-                    padding: "1px 6px",
-                    borderRadius: 8,
-                    color: REASON_COLORS[pr.reason],
-                    background: REASON_COLORS[pr.reason] + "18",
-                    letterSpacing: 0.2,
-                  }}>
-                    {REASON_LABELS[pr.reason]}
-                  </span>
-
-                  {/* Draft badge */}
                   {pr.isDraft && (
                     <span style={{
                       fontSize: 10,
@@ -422,10 +432,10 @@ export function PRInboxView({ darkMode = false, demoMode = false }: PRInboxViewP
                     </span>
                   )}
 
-                  {/* Labels */}
-                  {pr.labels.slice(0, 2).map((label) => (
+                  {pr.labels.map((label) => (
                     <span
                       key={label.name}
+                      onClick={(e) => { e.stopPropagation(); setActiveLabel(activeLabel === label.name ? null : label.name); }}
                       style={{
                         fontSize: 10,
                         padding: "1px 6px",
@@ -433,6 +443,7 @@ export function PRInboxView({ darkMode = false, demoMode = false }: PRInboxViewP
                         color: `#${label.color}`,
                         background: `#${label.color}18`,
                         fontWeight: 500,
+                        cursor: "pointer",
                       }}
                     >
                       {label.name}
@@ -444,7 +455,6 @@ export function PRInboxView({ darkMode = false, demoMode = false }: PRInboxViewP
           ))
         )}
 
-        {/* Loading skeleton when no cached data */}
         {loading && prs.length === 0 && (
           <div style={{ padding: "24px 16px", textAlign: "center" }}>
             <span style={{ fontSize: 12, color: dk(darkMode, "#666", OS.muted) }}>

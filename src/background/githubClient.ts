@@ -216,7 +216,7 @@ export interface GHSearchIssueItem {
 export async function searchPRsForUser(
   token: string,
   username: string,
-  reason: "review-requested" | "assignee" | "mentions",
+  reason: "review-requested" | "assignee" | "mentions" | "reviewed-by" | "user-review-requested" | "involves",
 ): Promise<GHSearchIssueItem[]> {
   const q = encodeURIComponent(`type:pr state:open ${reason}:${username}`);
   const result = await ghFetchOne<GHSearchResult<GHSearchIssueItem>>(
