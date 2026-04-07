@@ -40,7 +40,7 @@ import { initSyncHooks, syncPush } from "./sync-engine";
 import { fetchAndCacheCalendarEvents } from "./google-calendar";
 import { initiateGoogleOAuth, disconnectGoogle } from "./google-auth";
 import { syncGitHubData, backfillPRAuthors, syncOpenPRSnapshots } from "./githubSync";
-import { fetchGitHubUser, searchPRsForUser } from "./githubClient";
+import { fetchGitHubUser, searchPRsForUser, fetchPRFullDetail, fetchPRCheckRuns, fetchPRCombinedStatus } from "./githubClient";
 import type { PRInboxItem } from "@shared/types";
 import { syncJiraData, linkPRsToJira } from "./jiraSync";
 import { executeAction, createProposal } from "./action-executor";
@@ -926,6 +926,24 @@ chrome.runtime.onMessage.addListener(
         }
       })();
       return false;
+    } else if (message.type === "PR_INBOX_DETAIL") {
+      // Fetch full PR detail + CI status for the drawer
+      const { repo, prNumber } = message as unknown as { type: string; repo: string; prNumber: number };
+      (async () => {
+        try {
+          const { githubToken } = await chrome.storage.local.get("githubToken");
+          if (!githubToken) { sendResponse({ error: "No token" }); return; }
+          const detail = await fetchPRFullDetail(githubToken, repo, prNumber);
+          const [checks, status] = await Promise.all([
+            fetchPRCheckRuns(githubToken, repo, detail.head.sha).catch(() => []),
+            fetchPRCombinedStatus(githubToken, repo, detail.head.sha).catch(() => ({ state: "unknown", statuses: [] })),
+          ]);
+          sendResponse({ detail, checks, status });
+        } catch (err) {
+          sendResponse({ error: String(err) });
+        }
+      })();
+      return true; // keep sendResponse channel open for async
     }
     return false;
   },

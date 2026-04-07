@@ -213,6 +213,50 @@ export interface GHSearchIssueItem {
   labels: Array<{ name: string; color: string }>;
 }
 
+export interface GHPRFullDetail {
+  number: number;
+  title: string;
+  body: string | null;
+  html_url: string;
+  state: string;
+  draft: boolean;
+  user: { login: string; avatar_url: string } | null;
+  created_at: string;
+  updated_at: string;
+  merged_at: string | null;
+  labels: Array<{ name: string; color: string }>;
+  requested_reviewers: Array<{ login: string; avatar_url: string }>;
+  requested_teams: Array<{ name: string; slug: string }>;
+  head: { sha: string };
+}
+
+export interface GHCheckRun {
+  name: string;
+  status: string;
+  conclusion: string | null;
+}
+
+export interface GHCombinedStatus {
+  state: string;
+  statuses: Array<{ context: string; state: string; description: string | null }>;
+}
+
+export async function fetchPRFullDetail(token: string, repo: string, prNumber: number): Promise<GHPRFullDetail> {
+  return ghFetchOne<GHPRFullDetail>(token, `/repos/${repo}/pulls/${prNumber}`);
+}
+
+export async function fetchPRCheckRuns(token: string, repo: string, sha: string): Promise<GHCheckRun[]> {
+  const result = await ghFetchOne<{ total_count: number; check_runs: GHCheckRun[] }>(
+    token,
+    `/repos/${repo}/commits/${sha}/check-runs?per_page=100`,
+  );
+  return result.check_runs;
+}
+
+export async function fetchPRCombinedStatus(token: string, repo: string, sha: string): Promise<GHCombinedStatus> {
+  return ghFetchOne<GHCombinedStatus>(token, `/repos/${repo}/commits/${sha}/status`);
+}
+
 export async function searchPRsForUser(
   token: string,
   username: string,
