@@ -385,7 +385,7 @@ export function PRInboxView({ darkMode = false, demoMode = false }: PRInboxViewP
             style={{
               position: "fixed", inset: 0, background: "rgba(0,0,0,0.3)",
               opacity: drawerOpen ? 1 : 0, transition: "opacity 0.25s ease",
-              zIndex: 100,
+              zIndex: 10000,
             }}
           />
           {/* Drawer panel */}
@@ -395,7 +395,7 @@ export function PRInboxView({ darkMode = false, demoMode = false }: PRInboxViewP
             boxShadow: "-4px 0 24px rgba(0,0,0,0.15)",
             transform: drawerOpen ? "translateX(0)" : "translateX(100%)",
             transition: "transform 0.25s cubic-bezier(0.32, 0.72, 0, 1)",
-            zIndex: 101, display: "flex", flexDirection: "column", overflow: "hidden",
+            zIndex: 10001, display: "flex", flexDirection: "column", overflow: "hidden",
           }}>
             {/* Drawer header */}
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px", borderBottom: `1px solid ${border}`, flexShrink: 0 }}>
