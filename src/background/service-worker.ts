@@ -896,7 +896,6 @@ chrome.runtime.onMessage.addListener(
 
           // Filter out PRs authored by the current user (they don't "need" you)
           const prs: PRInboxItem[] = allPRs
-            .filter((item) => (item.user?.login ?? "").toLowerCase() !== username.toLowerCase())
             .map((item) => ({
               id: item.number,
               number: item.number,
