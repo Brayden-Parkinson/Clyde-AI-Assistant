@@ -123,6 +123,8 @@ export function PRInboxView({ darkMode = false, demoMode = false }: PRInboxViewP
   const [activeRepo, setActiveRepo] = useState<string | null>(null);
   const [hoveredId, setHoveredId] = useState<number | null>(null);
   const [noToken, setNoToken] = useState(false);
+  const [githubUsername, setGithubUsername] = useState<string | null>(null);
+  const [viewFilter, setViewFilter] = useState<"all" | "needs-review" | "mine">("all");
 
   // Drawer state
   const [selectedPR, setSelectedPR] = useState<PRInboxItem | null>(null);
@@ -161,8 +163,9 @@ export function PRInboxView({ darkMode = false, demoMode = false }: PRInboxViewP
       return;
     }
 
-    chrome.storage.local.get(["prInboxCache", "githubToken"]).then((result) => {
+    chrome.storage.local.get(["prInboxCache", "githubToken", "githubUsername"]).then((result) => {
       if (!result.githubToken) setNoToken(true);
+      if (result.githubUsername) setGithubUsername(result.githubUsername as string);
       if (result.prInboxCache) {
         const cache = result.prInboxCache as { prs: PRInboxItem[]; fetchedAt: string };
         setPrs(cache.prs);
@@ -263,10 +266,19 @@ export function PRInboxView({ darkMode = false, demoMode = false }: PRInboxViewP
 
   const filtered = useMemo(() => {
     let list = prs;
+    const uname = githubUsername?.toLowerCase();
+    if (viewFilter === "mine") list = list.filter((pr) => pr.author.toLowerCase() === uname);
+    else if (viewFilter === "needs-review") list = list.filter((pr) => pr.author.toLowerCase() !== uname);
     if (activeLabel) list = list.filter((pr) => pr.labels.some((l) => l.name === activeLabel));
     if (activeRepo) list = list.filter((pr) => pr.repo === activeRepo);
     return list;
-  }, [prs, activeLabel, activeRepo]);
+  }, [prs, activeLabel, activeRepo, viewFilter, githubUsername]);
+
+  const viewCounts = useMemo(() => {
+    const uname = githubUsername?.toLowerCase();
+    const mine = prs.filter((pr) => pr.author.toLowerCase() === uname).length;
+    return { all: prs.length, mine, review: prs.length - mine };
+  }, [prs, githubUsername]);
 
   const lastFetchedLabel = useMemo(() => lastFetched ? timeAgo(lastFetched) : null, [lastFetched]);
 
@@ -318,9 +330,31 @@ export function PRInboxView({ darkMode = false, demoMode = false }: PRInboxViewP
         </div>
       </div>
 
-      {/* Filter bar */}
+      {/* View filter — All / Needs Review / My PRs */}
+      {githubUsername && prs.length > 0 && (
+        <div style={{ display: "flex", gap: 6, padding: "6px 16px 6px", borderBottom: hasFilters ? "none" : `1px solid ${border}` }}>
+          {([["all", "All", viewCounts.all], ["needs-review", "Needs Review", viewCounts.review], ["mine", "My PRs", viewCounts.mine]] as const).map(([key, label, count]) => (
+            <button
+              key={key}
+              onClick={() => setViewFilter(key)}
+              style={{
+                padding: "4px 10px", borderRadius: 12, fontSize: 12,
+                fontWeight: viewFilter === key ? 600 : 400, fontFamily: OS.font,
+                cursor: "pointer", border: "none",
+                background: viewFilter === key ? dk(darkMode, "rgba(94,106,210,0.25)", OS.blueBg) : "transparent",
+                color: viewFilter === key ? dk(darkMode, "#a5adff", OS.blue) : muted,
+                transition: "background 0.15s, color 0.15s",
+              }}
+            >
+              {label} <span style={{ opacity: 0.6 }}>{count}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Label + repo filter bar */}
       {hasFilters && (
-        <div style={{ display: "flex", gap: 5, padding: "6px 16px 8px", flexWrap: "wrap", borderBottom: `1px solid ${border}` }}>
+        <div style={{ display: "flex", gap: 5, padding: "4px 16px 8px", flexWrap: "wrap", borderBottom: `1px solid ${border}` }}>
           {allRepos.length > 1 && allRepos.map(({ repo, count }) => (
             <button key={repo} onClick={() => setActiveRepo(activeRepo === repo ? null : repo)} style={chipStyle(activeRepo === repo)}>
               {repoShortName(repo)} <span style={{ opacity: 0.6 }}>{count}</span>
