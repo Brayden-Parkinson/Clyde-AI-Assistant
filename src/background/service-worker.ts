@@ -39,10 +39,8 @@ import { generateWeeklyDigest } from "./weekly-digest";
 import { initSyncHooks, syncPush } from "./sync-engine";
 import { fetchAndCacheCalendarEvents } from "./google-calendar";
 import { initiateGoogleOAuth, disconnectGoogle } from "./google-auth";
-import { syncGitHubData, backfillPRAuthors, syncOpenPRSnapshots } from "./githubSync";
 import { fetchGitHubUser, searchPRsForUser, fetchPRFullDetail, fetchPRCheckRuns, fetchPRCombinedStatus } from "./githubClient";
 import type { PRInboxItem } from "@shared/types";
-import { syncJiraData, linkPRsToJira } from "./jiraSync";
 import { executeAction, createProposal } from "./action-executor";
 import { generateDraft, regenerateDraft } from "./draft-generator";
 import { setFollowUpRule, runFollowUpCheck } from "./follow-up-engine";
@@ -178,18 +176,6 @@ async function runCleanup(): Promise<void> {
   // AI News posts: 30 days
   const newsPostCutoff = new Date(now - NEWS_POST_TTL_MS).toISOString();
   await db.news_posts.where("fetchedAt").below(newsPostCutoff).delete();
-
-  // Open PR snapshots: 90 days
-  const snapshotCutoff = new Date(now - 90 * 24 * 60 * 60 * 1000).toISOString();
-  await db.open_pr_snapshots.where("snapshotAt").below(snapshotCutoff).delete();
-
-  // AI review comments: 90 days
-  const reviewCommentCutoff = new Date(now - 90 * 24 * 60 * 60 * 1000).toISOString();
-  await db.ai_review_comments.where("createdAt").below(reviewCommentCutoff).delete();
-
-  // PR reviews (collaboration scoring): 360 days — keep longer for scoring accuracy
-  const prReviewCutoff = new Date(now - 360 * 24 * 60 * 60 * 1000).toISOString();
-  await db.pr_reviews.where("submittedAt").below(prReviewCutoff).delete();
 
   // People context: remove entries for deleted people
   const allPeopleIds = new Set((await db.people.toArray()).map(p => p.id).filter((id): id is number => id != null));
@@ -423,30 +409,6 @@ chrome.runtime.onInstalled.addListener(async () => {
     periodInMinutes: 120,
   });
 
-  // Eng Stats: GitHub sync every 6 hours
-  chrome.alarms.create(ALARMS.GITHUB_SYNC, {
-    delayInMinutes: 10,
-    periodInMinutes: 360,
-  });
-  // Eng Stats: Jira sync every 6 hours
-  chrome.alarms.create(ALARMS.JIRA_SYNC, {
-    delayInMinutes: 15,
-    periodInMinutes: 360,
-  });
-
-  // Eng Stats: Review backfill — kick off if not already done
-  chrome.storage.local.get("botFilterBackfillDone").then((r) => {
-    if (!r.botFilterBackfillDone) {
-      chrome.alarms.create(ALARMS.REVIEW_BACKFILL, { delayInMinutes: 2 });
-    }
-  });
-  // Eng Stats: Author backfill — kick off if not already done
-  chrome.storage.local.get("authorBackfillDone").then((r) => {
-    if (!r.authorBackfillDone) {
-      chrome.alarms.create(ALARMS.AUTHOR_BACKFILL, { delayInMinutes: 3 });
-    }
-  });
-
   // People Context: compute every 4 hours
   chrome.alarms.create(ALARMS.PEOPLE_CONTEXT, {
     delayInMinutes: 20,
@@ -522,22 +484,6 @@ chrome.runtime.onStartup.addListener(async () => {
   chrome.alarms.create(ALARMS.WEEKLY_DIGEST, { delayInMinutes: 180, periodInMinutes: 7 * 24 * 60 });
   // Phase 2: Follow-up check every 2 hours
   chrome.alarms.create(ALARMS.FOLLOW_UP_CHECK, { delayInMinutes: 5, periodInMinutes: 120 });
-  // Eng Stats: GitHub sync every 6 hours
-  chrome.alarms.create(ALARMS.GITHUB_SYNC, { delayInMinutes: 10, periodInMinutes: 360 });
-  // Eng Stats: Jira sync every 6 hours
-  chrome.alarms.create(ALARMS.JIRA_SYNC, { delayInMinutes: 15, periodInMinutes: 360 });
-  // Eng Stats: Review backfill — resume if not done
-  chrome.storage.local.get("botFilterBackfillDone").then((r) => {
-    if (!r.botFilterBackfillDone) {
-      chrome.alarms.create(ALARMS.REVIEW_BACKFILL, { delayInMinutes: 2 });
-    }
-  });
-  // Eng Stats: Author backfill — resume if not done
-  chrome.storage.local.get("authorBackfillDone").then((r) => {
-    if (!r.authorBackfillDone) {
-      chrome.alarms.create(ALARMS.AUTHOR_BACKFILL, { delayInMinutes: 3 });
-    }
-  });
   // People Context: compute every 4 hours
   chrome.alarms.create(ALARMS.PEOPLE_CONTEXT, { delayInMinutes: 20, periodInMinutes: 240 });
   // AI News: auto-refresh (controlled by user toggle)
@@ -795,33 +741,6 @@ chrome.runtime.onMessage.addListener(
         .then((ruleId) => sendResponse({ ok: true, ruleId }))
         .catch((err) => sendResponse({ ok: false, error: String(err) }));
       return true;
-    } else if (message.type === "GITHUB_SYNC") {
-      // Acknowledge immediately — sync runs in background and broadcasts completion
-      sendResponse({ ok: true, started: true });
-      syncGitHubData()
-        .then((result) => {
-          linkPRsToJira().catch(() => {});
-          syncOpenPRSnapshots().catch(() => {});
-          chrome.runtime.sendMessage({
-            type: "GITHUB_SYNC_COMPLETE",
-            ...result,
-          }).catch(() => {});
-        })
-        .catch((err) => {
-          chrome.runtime.sendMessage({
-            type: "GITHUB_SYNC_COMPLETE",
-            error: String(err),
-            synced: 0,
-            total: 0,
-            errors: [String(err)],
-          }).catch(() => {});
-        });
-      return false;
-    } else if (message.type === "JIRA_SYNC") {
-      syncJiraData()
-        .then((result) => sendResponse({ ok: true, ...result }))
-        .catch((err) => sendResponse({ ok: false, error: String(err) }));
-      return true;
     } else if (message.type === "REFRESH_NEWS") {
       sendResponse({ ok: true, started: true });
       refreshNews()
@@ -1000,23 +919,9 @@ chrome.alarms.onAlarm.addListener((alarm) => {
       runFollowUpCheck()
         .catch((err) => console.warn("[CT:worker] Follow-up check failed:", err));
       break;
-    case ALARMS.GITHUB_SYNC:
-      syncGitHubData()
-        .then(() => linkPRsToJira())
-        .then(() => syncOpenPRSnapshots())
-        .catch((err) => console.warn("[CT:worker] GitHub sync failed:", err));
-      break;
-    case ALARMS.JIRA_SYNC:
-      syncJiraData()
-        .catch((err) => console.warn("[CT:worker] Jira sync failed:", err));
-      break;
     case ALARMS.PEOPLE_CONTEXT:
       computePeopleContext()
         .catch((err) => console.warn("[CT:worker] People context computation failed:", err));
-      break;
-    case ALARMS.AUTHOR_BACKFILL:
-      backfillPRAuthors()
-        .catch((err) => console.warn("[CT:worker] Author backfill failed:", err));
       break;
     case ALARMS.NEWS_REFRESH:
       refreshNews()
