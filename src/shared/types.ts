@@ -651,119 +651,6 @@ export interface FollowUpRule {
   createdAt: string;
 }
 
-// ─── Eng Stats: GitHub PR Metrics ───
-
-/** Aggregated metrics for a single merged PR */
-export interface PRMetric {
-  id?: number;
-  repo: string;
-  prNumber: number;
-  title: string;
-  /** Head branch name (for Jira ticket extraction) */
-  branch: string | null;
-  /** GitHub login of the PR author */
-  author: string | null;
-  createdAt: string;
-  mergedAt: string | null;
-  /** Hours from PR creation to merge */
-  cycleTimeHours: number | null;
-  /** Hours from PR creation to first review submitted */
-  timeToFirstReviewHours: number | null;
-  reviewRounds: number;
-  additions: number;
-  deletions: number;
-  changedFiles: number;
-  /** true if any AI co-author/signature was detected */
-  aiAssisted: boolean;
-  /** e.g. ["claude", "cursor", "copilot"] — dev tools that authored code */
-  aiTools: string[];
-  /** e.g. ["coderabbit", "copilot"] — AI tools that reviewed the PR */
-  aiReviewers: string[];
-  /** true if this PR reverts a previous PR (detected from title pattern) */
-  isRevert: boolean;
-  /** PR number that was reverted, extracted from body (e.g. "Reverts org/repo#123") */
-  revertedPrNumber: number | null;
-  syncedAt: string;
-}
-
-/** Individual AI review comment extracted from PR review threads */
-export interface AIReviewComment {
-  id?: number;
-  repo: string;
-  prNumber: number;
-  /** GitHub login of the PR author who received this review */
-  prAuthor: string | null;
-  /** AI tool that made the comment: "cursor", "coderabbit", "copilot", "claude" */
-  tool: string;
-  /** Raw comment body text */
-  body: string;
-  /** Classified category: "bug", "style", "security", "perf", "type-safety", "logic", "other" */
-  category: string;
-  /** Normalized severity: "high", "medium", "low", "info" */
-  severity: string;
-  /** File path the comment is on, if available */
-  filePath: string | null;
-  createdAt: string;
-  syncedAt: string;
-}
-
-// ─── Eng Stats: Jira Integration ───
-
-/** A Jira ticket synced from the REST API */
-export interface JiraTicket {
-  id?: number;
-  /** e.g. "RAD-1292" */
-  key: string;
-  summary: string;
-  /** e.g. "Backlog", "Code Review", "Merged", "Done" */
-  status: string;
-  statusCategory: "todo" | "in_progress" | "done";
-  /** e.g. "Story", "Bug", "Task", "New Feature", "Epic" */
-  issueType: string;
-  /** Team identifier — Jira component, e.g. "BE Guild", "Collab App" */
-  component: string | null;
-  priority: string;
-  /** Parent epic key for roadmap grouping */
-  epicKey: string | null;
-  projectKey: string;
-  createdAt: string;
-  updatedAt: string;
-  assigneeEmail: string | null;
-  assigneeDisplayName: string | null;
-  resolvedAt: string | null;
-  syncedAt: string;
-}
-
-/** Link between a PR and a Jira ticket */
-export interface PRJiraLink {
-  id?: number;
-  prMetricId: number;
-  jiraTicketKey: string;
-  source: "title" | "branch";
-  linkedAt: string;
-}
-
-/** Daily Copilot usage snapshot from the GitHub org metrics API */
-export interface CopilotDailyMetric {
-  id?: number;
-  /** YYYY-MM-DD */
-  date: string;
-  totalActiveUsers: number;
-  totalEngagedUsers: number;
-  totalChats: number;
-  /** Aggregated code suggestions shown across all editors/models */
-  totalSuggestions: number;
-  /** Aggregated code suggestions accepted across all editors/models */
-  totalAcceptances: number;
-  /** Aggregated lines of code suggested */
-  totalLinesSuggested: number;
-  /** Aggregated lines of code accepted */
-  totalLinesAccepted: number;
-  /** Total licensed Copilot seats (from billing API, null if unavailable) */
-  totalSeats: number | null;
-  syncedAt: string;
-}
-
 // ─── AI News ───
 
 /** Known news source identifiers */
@@ -821,23 +708,6 @@ export interface RawNewsItem {
   postedAt: string;
 }
 
-// ─── Eng Stats: Open PR Snapshots ───
-
-/** A human PR review persisted for collaboration scoring */
-export interface PRReview {
-  id?: number;
-  repo: string;
-  prNumber: number;
-  /** GitHub login of the reviewer */
-  reviewer: string;
-  /** GitHub login of the PR author */
-  prAuthor: string | null;
-  /** APPROVED | CHANGES_REQUESTED | COMMENTED | DISMISSED */
-  state: string;
-  submittedAt: string;
-  syncedAt: string;
-}
-
 /** PR Inbox item — a PR the user needs to act on */
 export interface PRInboxItem {
   id: number;
@@ -853,12 +723,4 @@ export interface PRInboxItem {
   labels: Array<{ name: string; color: string }>;
 }
 
-/** Point-in-time snapshot of open PR count per repo */
-export interface OpenPRSnapshot {
-  id?: number;
-  repo: string;
-  openCount: number;
-  /** ISO timestamp when this snapshot was taken */
-  snapshotAt: string;
-}
 

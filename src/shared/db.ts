@@ -27,14 +27,7 @@ import type {
   ActionProposal,
   DraftMessage,
   FollowUpRule,
-  PRMetric,
-  CopilotDailyMetric,
-  JiraTicket,
-  PRJiraLink,
   NewsPost,
-  AIReviewComment,
-  OpenPRSnapshot,
-  PRReview,
 } from "./types";
 
 class ClydeDB extends Dexie {
@@ -64,15 +57,8 @@ class ClydeDB extends Dexie {
   action_proposals!: EntityTable<ActionProposal, "id">;
   drafts!: EntityTable<DraftMessage, "id">;
   follow_up_rules!: EntityTable<FollowUpRule, "id">;
-  pr_metrics!: EntityTable<PRMetric, "id">;
-  copilot_metrics!: EntityTable<CopilotDailyMetric, "id">;
-  jira_tickets!: EntityTable<JiraTicket, "id">;
-  pr_jira_links!: EntityTable<PRJiraLink, "id">;
   people_context!: EntityTable<PersonContext, "personId">;
   news_posts!: EntityTable<NewsPost, "id">;
-  ai_review_comments!: EntityTable<AIReviewComment, "id">;
-  open_pr_snapshots!: EntityTable<OpenPRSnapshot, "id">;
-  pr_reviews!: EntityTable<PRReview, "id">;
 
   constructor() {
     super("CommitmentTracker");

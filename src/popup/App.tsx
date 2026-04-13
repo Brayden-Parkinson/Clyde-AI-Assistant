@@ -30,7 +30,6 @@ import { SettingsPanel } from "../options/Options";
 import { ClydeChat } from "./components/ClydeChat";
 import { DraftComposer } from "./components/DraftComposer";
 import { PeoplePanel } from "./components/PeoplePanel";
-import { EngStatsView } from "./components/EngStatsView";
 import { AINewsView } from "./components/AINewsView";
 import { PRInboxView } from "./components/PRInboxView";
 import { FocusView } from "./components/focus/FocusView";
@@ -40,7 +39,7 @@ import {
   InlineIcon,
 } from "./components/Icons";
 
-type ViewMode = "focus" | "board" | "people" | "pr-inbox" | "eng-stats" | "ai-news" | "devlog" | "settings" | "draft";
+type ViewMode = "focus" | "board" | "people" | "pr-inbox" | "ai-news" | "devlog" | "settings" | "draft";
 
 // ─── Display settings (persisted in chrome.storage.local) ───
 
@@ -1391,7 +1390,6 @@ function TopBar({
   viewMode,
   setViewMode,
   developerMode,
-  engStatsEnabled,
   hasGithubToken,
   onOpenSettings,
   scanning,
@@ -1408,7 +1406,6 @@ function TopBar({
   viewMode: ViewMode;
   setViewMode: (v: ViewMode) => void;
   developerMode: boolean;
-  engStatsEnabled: boolean;
   hasGithubToken: boolean;
   onOpenSettings: () => void;
   scanning: boolean;
@@ -1430,7 +1427,6 @@ function TopBar({
     { key: "board", label: "Board", show: true },
     { key: "people", label: "People", show: true },
     { key: "pr-inbox", label: "PRs", show: hasGithubToken || demoMode },
-    { key: "eng-stats", label: "Eng Stats", show: engStatsEnabled },
     { key: "ai-news", label: "AI News", show: true },
     { key: "devlog", label: "Dev Log", show: developerMode },
   ];
@@ -1446,7 +1442,7 @@ function TopBar({
     if (el) {
       setSlider({ left: el.offsetLeft, width: el.offsetWidth });
     }
-  }, [viewMode, developerMode, engStatsEnabled, hasGithubToken]);
+  }, [viewMode, developerMode, hasGithubToken]);
 
   return (
     <div
@@ -1636,7 +1632,6 @@ export default function App() {
     if (viewMode !== "draft") setActiveDraftId(null);
   }, [viewMode]);
   const [developerMode, setDeveloperMode] = useState(false);
-  const [engStatsEnabled, setEngStatsEnabled] = useState(false);
   const [hasGithubToken, setHasGithubToken] = useState(false);
   const [demoMode, setDemoMode] = useState(false);
   const [privacyMode, setPrivacyMode] = useState(false);
@@ -1670,10 +1665,9 @@ export default function App() {
   ) ?? new Set<number>();
 
   useEffect(() => {
-    chrome.storage.local.get(["anthropicApiKey", "userName", "developerMode", "demoMode", "engStatsEnabled", "githubToken"]).then((result) => {
+    chrome.storage.local.get(["anthropicApiKey", "userName", "developerMode", "demoMode", "githubToken"]).then((result) => {
       setHasApiKey(!!result.anthropicApiKey);
       setDeveloperMode(result.developerMode === true);
-      setEngStatsEnabled(result.engStatsEnabled === true);
       setHasGithubToken(!!result.githubToken);
       setDemoMode(result.demoMode === true);
       // In demo mode, always show the setup wizard on refresh
@@ -1687,9 +1681,6 @@ export default function App() {
       if (area !== "local") return;
       if (changes.developerMode) {
         setDeveloperMode(changes.developerMode.newValue === true);
-      }
-      if (changes.engStatsEnabled) {
-        setEngStatsEnabled(changes.engStatsEnabled.newValue === true);
       }
       if (changes.demoMode) {
         setDemoMode(changes.demoMode.newValue === true);
@@ -1940,7 +1931,6 @@ export default function App() {
         viewMode={viewMode}
         setViewMode={setViewMode}
         developerMode={developerMode}
-        engStatsEnabled={engStatsEnabled}
         hasGithubToken={hasGithubToken}
         onOpenSettings={() => setViewMode("settings")}
         scanning={scanning}
@@ -1960,7 +1950,7 @@ export default function App() {
 
       <div style={{ flex: 1, overflowY: "auto", display: "flex" }}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ padding: (viewMode === "focus" || viewMode === "board" || viewMode === "devlog" || viewMode === "eng-stats" || viewMode === "ai-news" || viewMode === "pr-inbox") ? "12px 16px" : 0 }}>
+          <div style={{ padding: (viewMode === "focus" || viewMode === "board" || viewMode === "devlog" || viewMode === "ai-news" || viewMode === "pr-inbox") ? "12px 16px" : 0 }}>
 
             {/* Focus view */}
             {viewMode === "focus" && <FocusView darkMode={darkMode} demoMode={demoMode} />}
@@ -2043,9 +2033,6 @@ export default function App() {
 
             {/* PR Inbox view */}
             {viewMode === "pr-inbox" && <PRInboxView darkMode={darkMode} demoMode={demoMode} />}
-
-            {/* Eng Stats view */}
-            {viewMode === "eng-stats" && <EngStatsView darkMode={darkMode} />}
 
             {/* AI News view */}
             {viewMode === "ai-news" && <AINewsView darkMode={darkMode} demoMode={demoMode} />}
