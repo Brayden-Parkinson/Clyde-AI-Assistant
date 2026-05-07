@@ -69,6 +69,21 @@ export interface Commitment {
   tag_id: number | null;
   /** ISO timestamp when created */
   createdAt: string;
+  /**
+   * ISO timestamp of the most recent local modification. Used by the curator
+   * sync freshness guard so a stale curator op cannot overwrite a fresh local
+   * edit. Backfilled to `createdAt` for pre-curator rows.
+   */
+  lastModifiedAt?: string;
+  /**
+   * Set when a `merge_duplicate` curator op dismisses this commitment as a
+   * duplicate of another. `merged_into` is the canonical hash that survived.
+   */
+  merge_metadata?: {
+    merged_into: string;
+    reason: "duplicate";
+    rationale: string;
+  } | null;
 }
 
 /** Raw ingested message before Claude extraction */
@@ -706,6 +721,66 @@ export interface RawNewsItem {
   text: string;
   url: string;
   postedAt: string;
+}
+
+// ─── Curator Sync ───
+//
+// External curator (Cowork skill) writes recommended changes to
+// ~/.commitment-tracker/curator-ops.json. Clyde reads + applies them.
+// Schema mirrors skills/clyde-curate/SKILL.md — keep in sync.
+
+export type CuratorOpType = "mark_done" | "flag_review" | "merge_duplicate";
+
+interface CuratorOpBase {
+  /** Stable hash id (e.g. "op:abcd1234..."), used as the idempotency key */
+  id: string;
+  type: CuratorOpType;
+  /** SHA-256 hash from the commitments table */
+  commitment_hash: string;
+  /** ISO 8601 — what the curator saw when generating this op */
+  snapshot_at: string;
+  /** ISO 8601 — when the op was generated */
+  generated_at: string;
+}
+
+export interface MarkDoneOp extends CuratorOpBase {
+  type: "mark_done";
+  confidence: number;
+  evidence: string;
+  evidence_url: string | null;
+}
+
+export interface FlagReviewOp extends CuratorOpBase {
+  type: "flag_review";
+  confidence: number;
+  evidence: string;
+}
+
+export interface MergeDuplicateOp extends CuratorOpBase {
+  type: "merge_duplicate";
+  /** Canonical hash that survives the merge */
+  primary_hash: string;
+  rationale: string;
+}
+
+export type CuratorOp = MarkDoneOp | FlagReviewOp | MergeDuplicateOp;
+
+/** Top-level shape of the curator-ops.json file. */
+export interface CuratorOpsFile {
+  version: 1;
+  generated_at: string;
+  snapshot_source: string;
+  snapshot_lastSaved: string;
+  summary: Record<string, unknown>;
+  operations: CuratorOp[];
+}
+
+/** Idempotency record — one row per curator op that has been applied locally. */
+export interface AppliedCuratorOp {
+  id: string;
+  opType: CuratorOpType;
+  commitmentHash: string;
+  appliedAt: string;
 }
 
 /** PR Inbox item — a PR the user needs to act on */

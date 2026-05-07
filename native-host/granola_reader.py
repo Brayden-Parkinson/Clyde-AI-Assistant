@@ -7,11 +7,13 @@ extension backup state on disk.
 Communicates via length-prefixed JSON on stdin/stdout.
 
 Commands:
-  ping           - Health check, returns whether Granola API is reachable
-  list_meetings  - List meetings, optionally filtered by 'since' (ISO 8601)
-  get_transcript - Get transcript for a meeting by 'meeting_id'
-  save_state     - Persist extension state to ~/.commitment-tracker/backup-{ext_id}.json
-  load_state     - Load persisted extension state from disk
+  ping                   - Health check, returns whether Granola API is reachable
+  list_meetings          - List meetings, optionally filtered by 'since' (ISO 8601)
+  get_transcript         - Get transcript for a meeting by 'meeting_id'
+  save_state             - Persist extension state to ~/.commitment-tracker/backup-{ext_id}.json
+  load_state             - Load persisted extension state from disk
+  get_curator_ops        - Read ~/.commitment-tracker/curator-ops.json
+  get_curator_ops_since  - Same, but short-circuits when file hasn't changed since 'mtime'
 """
 
 import gzip
@@ -720,11 +722,70 @@ def handle_clear_inbox() -> dict:
 # ─── Backup State Management ───
 
 BACKUP_DIR = Path.home() / ".commitment-tracker"
+CURATOR_OPS_PATH = BACKUP_DIR / "curator-ops.json"
 
 
 def get_backup_path(extension_id: str) -> Path:
     safe_id = "".join(c for c in extension_id if c.isalnum())
     return BACKUP_DIR / f"backup-{safe_id}.json"
+
+
+# ─── Curator Operations (read-only) ───
+#
+# Clyde reads this file but never writes it. The external Cowork curator skill
+# atomically writes ~/.commitment-tracker/curator-ops.json (.tmp + rename),
+# so torn reads shouldn't occur. We expose the parsed contents plus the file's
+# mtime, and a lightweight "since" probe that short-circuits when the file
+# hasn't advanced past a previously-seen mtime.
+
+
+def _read_curator_ops_file() -> dict:
+    """Read & parse the curator ops file. Caller must check that the file exists."""
+    stat = CURATOR_OPS_PATH.stat()
+    try:
+        with open(CURATOR_OPS_PATH, "r", encoding="utf-8") as f:
+            text = f.read()
+    except (IOError, OSError) as e:
+        return {"ok": False, "error": f"Failed to read curator ops: {e}"}
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as e:
+        return {
+            "ok": True,
+            "exists": True,
+            "malformed": True,
+            "error": f"JSON parse error: {e}",
+            "mtime": stat.st_mtime,
+        }
+    return {
+        "ok": True,
+        "exists": True,
+        "malformed": False,
+        "mtime": stat.st_mtime,
+        "data": data,
+    }
+
+
+def handle_get_curator_ops() -> dict:
+    if not CURATOR_OPS_PATH.exists():
+        return {"ok": True, "exists": False}
+    return _read_curator_ops_file()
+
+
+def handle_get_curator_ops_since(mtime) -> dict:
+    if not CURATOR_OPS_PATH.exists():
+        return {"ok": True, "exists": False}
+    try:
+        current_mtime = CURATOR_OPS_PATH.stat().st_mtime
+    except (IOError, OSError) as e:
+        return {"ok": False, "error": f"Failed to stat curator ops: {e}"}
+    try:
+        since = float(mtime) if mtime is not None else None
+    except (TypeError, ValueError):
+        since = None
+    if since is not None and current_mtime <= since:
+        return {"ok": True, "exists": True, "unchanged": True, "mtime": current_mtime}
+    return _read_curator_ops_file()
 
 
 def handle_save_state(state: dict, extension_id: str) -> dict:
@@ -826,6 +887,10 @@ def main():
             result = handle_read_inbox()
         elif command == "clear_inbox":
             result = handle_clear_inbox()
+        elif command == "get_curator_ops":
+            result = handle_get_curator_ops()
+        elif command == "get_curator_ops_since":
+            result = handle_get_curator_ops_since(mtime=msg.get("mtime"))
         else:
             result = {"ok": False, "error": f"Unknown command: {command}"}
     except Exception as e:
