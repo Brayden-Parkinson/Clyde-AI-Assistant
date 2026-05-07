@@ -1,7 +1,11 @@
 /**
  * Minimal chrome.* API mock for Vitest.
  * Only stubs what's needed by the tested modules.
+ *
+ * Also installs fake-indexeddb so Dexie-backed code paths can run under
+ * the node test environment.
  */
+import "fake-indexeddb/auto";
 
 const storage: Record<string, unknown> = {};
 

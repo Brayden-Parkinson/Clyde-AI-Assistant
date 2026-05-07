@@ -36,7 +36,11 @@ export const ALARMS = {
   FOLLOW_UP_CHECK: "follow-up-check",
   NEWS_REFRESH: "news-refresh",
   PEOPLE_CONTEXT: "people-context",
+  CURATOR_SYNC: "curator-sync",
 } as const;
+
+/** How often to poll the curator ops file (cheap — short-circuits when unchanged) */
+export const CURATOR_SYNC_PERIOD_MIN = 10;
 
 /** How long to keep raw messages (7 days in ms) */
 export const RAW_MESSAGE_TTL_MS = 7 * 24 * 60 * 60 * 1000;

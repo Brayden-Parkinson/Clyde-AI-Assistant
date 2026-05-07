@@ -45,6 +45,8 @@ import { executeAction, createProposal } from "./action-executor";
 import { generateDraft, regenerateDraft } from "./draft-generator";
 import { setFollowUpRule, runFollowUpCheck } from "./follow-up-engine";
 import { refreshNews } from "./newsFetcher";
+import { runCuratorSync, undoAppliedOp } from "./curator-sync";
+import { CURATOR_SYNC_PERIOD_MIN } from "@shared/constants";
 
 // ─── Badge ───
 
@@ -415,6 +417,12 @@ chrome.runtime.onInstalled.addListener(async () => {
     periodInMinutes: 240,
   });
 
+  // Curator Sync: read external curator's ops file every 10 min (cheap — short-circuits when unchanged)
+  chrome.alarms.create(ALARMS.CURATOR_SYNC, {
+    delayInMinutes: 2,
+    periodInMinutes: CURATOR_SYNC_PERIOD_MIN,
+  });
+
   // AI News: auto-refresh (controlled by user toggle, default off)
   const newsAutoRefresh = await chrome.storage.local.get("newsAutoRefresh");
   if (newsAutoRefresh.newsAutoRefresh) {
@@ -448,6 +456,11 @@ chrome.runtime.onInstalled.addListener(async () => {
   backfillPeopleFromHistory()
     .then(() => computePeopleContext())
     .catch((err) => console.warn("[CT:worker] People backfill failed:", err));
+
+  // Curator sync — opportunistic post-install poll. The alarm covers steady state.
+  runCuratorSync().catch((err) =>
+    console.warn("[CT:worker] Curator sync (install) failed:", err),
+  );
 });
 
 chrome.runtime.onStartup.addListener(async () => {
@@ -486,6 +499,8 @@ chrome.runtime.onStartup.addListener(async () => {
   chrome.alarms.create(ALARMS.FOLLOW_UP_CHECK, { delayInMinutes: 5, periodInMinutes: 120 });
   // People Context: compute every 4 hours
   chrome.alarms.create(ALARMS.PEOPLE_CONTEXT, { delayInMinutes: 20, periodInMinutes: 240 });
+  // Curator Sync: read external curator's ops file every 10 min
+  chrome.alarms.create(ALARMS.CURATOR_SYNC, { delayInMinutes: 2, periodInMinutes: CURATOR_SYNC_PERIOD_MIN });
   // AI News: auto-refresh (controlled by user toggle)
   chrome.storage.local.get("newsAutoRefresh").then((r) => {
     if (r.newsAutoRefresh) {
@@ -504,6 +519,11 @@ chrome.runtime.onStartup.addListener(async () => {
   backfillTags().catch((err) =>
     console.warn("[CT:worker] Tag backfill failed:", err),
   );
+
+  // Curator sync — opportunistic startup poll. The alarm covers steady state.
+  runCuratorSync().catch((err) =>
+    console.warn("[CT:worker] Curator sync (startup) failed:", err),
+  );
 });
 
 // ─── Message Handling ───
@@ -520,6 +540,7 @@ chrome.runtime.onMessage.addListener(
     const PRIVILEGED_TYPES = new Set([
       "EXECUTE_ACTION", "RESTORE_BACKUP", "SEND_DRAFT", "GENERATE_DRAFT",
       "REGENERATE_DRAFT", "SET_FOLLOW_UP", "GOOGLE_OAUTH_START", "GOOGLE_DISCONNECT",
+      "RUN_CURATOR_SYNC", "UNDO_CURATOR_OP",
     ]);
     if (PRIVILEGED_TYPES.has(message.type) && sender.tab) {
       sendResponse({ ok: false, error: "Privileged action rejected — request must originate from extension page, not content script" });
@@ -844,6 +865,18 @@ chrome.runtime.onMessage.addListener(
         }
       })();
       return false;
+    } else if (message.type === "RUN_CURATOR_SYNC") {
+      const { force } = (message as unknown) as { force?: boolean; type: string };
+      runCuratorSync({ force })
+        .then((result) => sendResponse({ ok: true, result }))
+        .catch((err) => sendResponse({ ok: false, error: err instanceof Error ? err.message : String(err) }));
+      return true;
+    } else if (message.type === "UNDO_CURATOR_OP") {
+      const { id } = (message as unknown) as { id: string; type: string };
+      undoAppliedOp(id)
+        .then((undone) => sendResponse({ ok: true, undone }))
+        .catch((err) => sendResponse({ ok: false, error: err instanceof Error ? err.message : String(err) }));
+      return true;
     } else if (message.type === "PR_INBOX_DETAIL") {
       // Fetch full PR detail + CI status for the drawer
       const { repo, prNumber } = message as unknown as { type: string; repo: string; prNumber: number };
@@ -926,6 +959,10 @@ chrome.alarms.onAlarm.addListener((alarm) => {
     case ALARMS.NEWS_REFRESH:
       refreshNews()
         .catch((err) => console.warn("[CT:worker] News refresh failed:", err));
+      break;
+    case ALARMS.CURATOR_SYNC:
+      runCuratorSync()
+        .catch((err) => console.warn("[CT:worker] Curator sync failed:", err));
       break;
     default:
       if (alarm.name.startsWith(ALARMS.SNOOZE_PREFIX)) {

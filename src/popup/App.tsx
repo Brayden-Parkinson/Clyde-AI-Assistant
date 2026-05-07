@@ -33,6 +33,7 @@ import { PeoplePanel } from "./components/PeoplePanel";
 import { AINewsView } from "./components/AINewsView";
 import { PRInboxView } from "./components/PRInboxView";
 import { FocusView } from "./components/focus/FocusView";
+import { CuratorUpdatesChip } from "./components/CuratorUpdatesChip";
 import {
   IconSettings, IconWarning, IconX, IconRefresh, IconLoader, IconCheck,
   IconChevronUp, IconChevronDown, IconArrowRight, IconClock, IconPeople,
@@ -1519,6 +1520,7 @@ function TopBar({
 
       {/* Right controls */}
       <div style={{ flex: 1, display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 6 }}>
+        <CuratorUpdatesChip demoMode={demoMode} />
         <button
           onClick={onRescan}
           disabled={scanning}

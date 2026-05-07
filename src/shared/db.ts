@@ -28,6 +28,7 @@ import type {
   DraftMessage,
   FollowUpRule,
   NewsPost,
+  AppliedCuratorOp,
 } from "./types";
 
 class ClydeDB extends Dexie {
@@ -59,6 +60,7 @@ class ClydeDB extends Dexie {
   follow_up_rules!: EntityTable<FollowUpRule, "id">;
   people_context!: EntityTable<PersonContext, "personId">;
   news_posts!: EntityTable<NewsPost, "id">;
+  applied_curator_ops!: EntityTable<AppliedCuratorOp, "id">;
 
   constructor() {
     super("CommitmentTracker");
@@ -342,6 +344,21 @@ class ClydeDB extends Dexie {
       return tx.table("news_posts").toCollection().modify((post: Record<string, unknown>) => {
         if (post.readAt === undefined) post.readAt = null;
         if (post.bookmarked === undefined) post.bookmarked = false;
+      });
+    });
+
+    // Curator Sync: external curator (Cowork skill) drops recommended changes
+    // into ~/.commitment-tracker/curator-ops.json. We track which ops we've
+    // applied (by their stable id) so re-reading the file is idempotent, and
+    // we backfill commitments.lastModifiedAt so the freshness guard has a
+    // value to compare against on existing rows.
+    this.version(31).stores({
+      applied_curator_ops: "id, appliedAt, commitmentHash",
+    }).upgrade((tx) => {
+      return tx.table("commitments").toCollection().modify((c: Record<string, unknown>) => {
+        if (c.lastModifiedAt === undefined) {
+          c.lastModifiedAt = c.createdAt;
+        }
       });
     });
   }

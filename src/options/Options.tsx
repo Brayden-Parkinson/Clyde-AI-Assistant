@@ -52,6 +52,7 @@ interface FormState {
   slackEnabled: boolean;
   granolaEnabled: boolean;
   calendarEnabled: boolean;
+  curatorSyncEnabled: boolean;
   // Phase 2: external integration tokens (stored like anthropicApiKey)
   slackBotToken: string;
   nudgeEnabled: boolean;
@@ -89,6 +90,7 @@ const DEFAULT_FORM: FormState = {
   slackEnabled: true,
   granolaEnabled: true,
   calendarEnabled: true,
+  curatorSyncEnabled: true,
   slackBotToken: "",
   nudgeEnabled: true,
   githubToken: "",
@@ -439,6 +441,7 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
         "slackEnabled",
         "granolaEnabled",
         "calendarEnabled",
+        "curatorSyncEnabled",
         "githubToken",
         "githubRepos",
         "githubOrg",
@@ -481,6 +484,7 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
           slackEnabled: result.slackEnabled !== false,
           granolaEnabled: result.granolaEnabled !== false,
           calendarEnabled: result.calendarEnabled !== false,
+          curatorSyncEnabled: result.curatorSyncEnabled !== false,
           slackBotToken: result.slackBotToken ?? "",
           nudgeEnabled: result.nudgeEnabled !== false,
           githubToken: result.githubToken ?? "",
@@ -581,6 +585,7 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
         slackEnabled: formData.slackEnabled,
         granolaEnabled: formData.granolaEnabled,
         calendarEnabled: formData.calendarEnabled,
+        curatorSyncEnabled: formData.curatorSyncEnabled,
         slackBotToken: formData.slackBotToken,
         nudgeEnabled: formData.nudgeEnabled,
         githubToken: formData.githubToken,
@@ -1072,6 +1077,20 @@ export function SettingsPanel({ onBack }: { onBack?: () => void }) {
             2. Come back here and click <strong>Test Connection</strong>
           </div>
         </Disclosure>
+
+        <div style={{ ...fieldRow, marginTop: 16, marginBottom: 0, alignItems: "flex-start" }}>
+          <div style={{ flex: 1 }}>
+            <div style={labelStyle}>Curator Sync</div>
+            <div style={subLabel}>
+              Apply recommended changes from the external curator (~/.commitment-tracker/curator-ops.json).
+              Polled every 10 min via the same native host.
+            </div>
+          </div>
+          <Toggle
+            value={form.curatorSyncEnabled}
+            onChange={() => update("curatorSyncEnabled", !form.curatorSyncEnabled)}
+          />
+        </div>
       </div>
 
       {/* Google Docs */}
