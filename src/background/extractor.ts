@@ -131,6 +131,36 @@ CONFIDENCE FLOOR:
 - Only return items with confidence >= 0.65 (stricter than Slack — email has more noise)
 ` : "";
 
+  const meetingBlock = sourceType === "meeting" ? `
+
+GRANOLA MEETING TRANSCRIPT — SPECIAL RULES:
+This content is a transcribed meeting from Granola. The transcript distinguishes speakers ONLY as ${userName} (the [ME] lines, captured from microphone) or "Other" (everyone else in the room — individual speakers are NOT distinguished).
+
+CRITICAL — third-party commitment risk:
+Because "Other" speakers cannot be told apart, you cannot reliably tell when one attendee assigns a task to another attendee vs. to ${userName}. Stay conservative.
+
+ELIGIBLE FOR EXTRACTION:
+- [ME] lines where ${userName} commits to an action ("I'll send that", "Let me look into it") → direction "by_me"
+- [MENTIONS ME] lines — these are pre-filtered to "Other" segments that explicitly name ${userName}. If the segment is a request directed at ${userName}, extract it with direction "assigned_to_me".
+
+NEVER EXTRACT from "Other" segments shown as [context] (or any unattributed segment):
+- "I'll handle the deploy" → SKIP (could be addressed to anyone)
+- "We need to update the docs" → SKIP (group statement, no owner)
+- "Alice, can you review this?" → SKIP (third-party assignment)
+- "Bob will send the report" → SKIP (third-party assignment)
+
+CONTEXT FIELD:
+- Use the meeting title (from the system header) as "context", prefixed with "#" — e.g., "#Drones Weekly Sync", "#Brian / Brayden 1:1"
+
+CONFIDENCE FLOOR:
+- Only return items with confidence >= 0.75. Transcripts are noisy.
+
+VOICE-TO-TEXT NOISE:
+- Speaker turns may be mid-sentence — use [context] lines to judge intent.
+- Filler words ("yeah", "okay", "right"), partial words, and run-on artifacts are common — don't treat them as commitments.
+- Garbled names (e.g. "Aradius" for "Arkadiusz", "Maran" for "Miran") are common — judge intent from full context.
+` : "";
+
   const gdocBlock = sourceType === "gdoc" ? `
 
 GOOGLE DOCS SOURCE — SPECIAL RULES:
@@ -161,9 +191,10 @@ LOW CONFIDENCE / SKIP:
 
   const sourceLabel = sourceType === "gdoc" ? "Google Docs content"
     : sourceType === "gmail" ? "Gmail emails"
+    : sourceType === "meeting" ? "a Granola meeting transcript"
     : "Slack messages";
 
-  return `You are analyzing ${sourceLabel} for ${userName}${userTitle}${userCompany}.${gmailBlock}${gdocBlock}
+  return `You are analyzing ${sourceLabel} for ${userName}${userTitle}${userCompany}.${gmailBlock}${gdocBlock}${meetingBlock}
 
 TASK: Extract commitments — things ${userName} agreed to do, or that were assigned to them by someone else.
 
@@ -504,6 +535,7 @@ function buildConversationMessages(
 async function getConfidenceFloor(sourceType: SourceType): Promise<number> {
   if (sourceType === "gdoc") return 0.75;
   if (sourceType === "gmail") return 0.65;
+  if (sourceType === "meeting") return 0.75;
   const result = await chrome.storage.local.get("confidenceThreshold");
   const stored = result.confidenceThreshold;
   if (typeof stored === "number" && stored >= 0.5 && stored <= 0.95) {
@@ -606,9 +638,12 @@ export async function extractCommitments(
         continue;
       }
 
+      // Source type is authoritative per the caller — Claude's output is ignored.
+      // The prompt's few-shot examples hardcode "slack", which used to leak into
+      // meeting-sourced records.
       const hash = await computeHash(
         commitment.original_quote,
-        commitment.source_type || sourceType,
+        sourceType,
         commitment.context,
       );
 
@@ -645,7 +680,7 @@ export async function extractCommitments(
           deadline: commitment.deadline,
           urgency: commitment.urgency,
           context: commitment.context,
-          source_type: commitment.source_type || sourceType,
+          source_type: sourceType,
           confidence: isTriggered ? Math.max(commitment.confidence, 0.95) : commitment.confidence,
           direction: commitment.direction,
           likely_completed: commitment.likely_completed,
