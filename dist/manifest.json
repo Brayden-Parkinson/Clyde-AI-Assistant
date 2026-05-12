@@ -59,7 +59,7 @@
     },
     {
       "js": [
-        "assets/gmail.ts-loader-bv3_rN4I.js"
+        "assets/gmail.ts-loader-DWQpWrnV.js"
       ],
       "matches": [
         "https://mail.google.com/*"
@@ -117,8 +117,8 @@
         "https://mail.google.com/*"
       ],
       "resources": [
-        "assets/constants-BeAyBgJb.js",
-        "assets/gmail.ts-DLD-OCjT.js"
+        "assets/constants-CxY9Wmmy.js",
+        "assets/gmail.ts-CeerWWGL.js"
       ],
       "use_dynamic_url": false
     }

@@ -1,4 +1,3 @@
-import { COMMITMENT_REGEX } from "@shared/constants";
 import { logStatus, updateStatus } from "@shared/status";
 import type { TranscriptSegment, SlackMessagePayload } from "@shared/types";
 import { getUserProfile } from "@shared/user-profile";
@@ -18,19 +17,35 @@ const WATERMARK_KEY = "granolaScannedThrough";
  * Convert structured transcript segments into tagged BufferedMessages
  * that the extractor already understands (same format as Slack pipeline).
  */
-function formatTranscriptForExtraction(
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+export function formatTranscriptForExtraction(
   segments: TranscriptSegment[],
   creator: string,
-  attendees: string[],
+  _attendees: string[],
   title: string,
 ): { candidates: BufferedMessage[]; context: BufferedMessage[] } {
+  // Granola tags each segment as either "microphone" (the user speaking) or
+  // "system" (anyone else in the room — speakers NOT individually distinguished).
+  // We therefore cannot tell when an "Other" segment is a third-party commitment
+  // between two other attendees vs. one directed at the user. Be conservative:
+  // an "Other" segment becomes a candidate only when it explicitly names the user.
+  const firstName = (creator.trim().split(/\s+/)[0] || "").toLowerCase();
+  const nameRegex = firstName
+    ? new RegExp(`\\b${escapeRegExp(firstName)}\\b`, "i")
+    : null;
+  const mentionsUser = (text: string): boolean =>
+    !!nameRegex && !!text && nameRegex.test(text);
+
   const messages: BufferedMessage[] = segments.map((seg) => ({
     text: seg.text,
     sender: seg.source === "microphone" ? creator : "Other",
     channel: title,
     timestamp: seg.start ?? new Date().toISOString(),
     isMine: seg.source === "microphone",
-    mentionsMe: false,
+    mentionsMe: seg.source !== "microphone" && mentionsUser(seg.text),
     reactions: [],
     channel_id: null,
     message_ts: null,
@@ -39,13 +54,8 @@ function formatTranscriptForExtraction(
     is_thread_reply: false,
   }));
 
-  // Candidates = user's own speech + any segment matching commitment patterns
-  const candidates = messages.filter(
-    (m) => m.isMine || COMMITMENT_REGEX.test(m.text),
-  );
-  const context = messages.filter(
-    (m) => !m.isMine && !COMMITMENT_REGEX.test(m.text),
-  );
+  const candidates = messages.filter((m) => m.isMine || m.mentionsMe);
+  const context = messages.filter((m) => !m.isMine && !m.mentionsMe);
 
   return { candidates, context };
 }
