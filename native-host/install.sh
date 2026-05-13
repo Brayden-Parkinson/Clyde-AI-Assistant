@@ -67,6 +67,36 @@ rm -f "$HOST_PATH.bak"
 # Make the Python host executable
 chmod +x "$HOST_PATH"
 
+# ─── clyde CLI ───
+# Rewrite shebang + symlink into ~/.local/bin so it's on PATH.
+CLI_PATH="$SCRIPT_DIR/clyde"
+if [ -f "$CLI_PATH" ]; then
+  sed -i.bak "1s|^#!.*|#!${PYTHON3_REAL}|" "$CLI_PATH"
+  rm -f "$CLI_PATH.bak"
+  chmod +x "$CLI_PATH"
+
+  CLI_BIN_DIR="$HOME/.local/bin"
+  mkdir -p "$CLI_BIN_DIR"
+  ln -sf "$CLI_PATH" "$CLI_BIN_DIR/clyde"
+  echo "Installed clyde CLI symlink: $CLI_BIN_DIR/clyde -> $CLI_PATH"
+
+  case ":$PATH:" in
+    *":$CLI_BIN_DIR:"*) ;;
+    *)
+      SHELL_NAME="$(basename "${SHELL:-bash}")"
+      case "$SHELL_NAME" in
+        zsh)  RC_FILE="$HOME/.zshrc" ;;
+        bash) RC_FILE="$HOME/.bashrc" ;;
+        *)    RC_FILE="your shell's rc file" ;;
+      esac
+      echo ""
+      echo "⚠  $CLI_BIN_DIR is not in your PATH. Add this line to $RC_FILE:"
+      echo "    export PATH=\"\$HOME/.local/bin:\$PATH\""
+      echo "Then reopen your terminal (or 'source $RC_FILE')."
+      ;;
+  esac
+fi
+
 # Clear macOS quarantine/provenance flags that silently block execution
 if [ "$OS" = "Darwin" ]; then
   xattr -d com.apple.quarantine "$HOST_PATH" 2>/dev/null || true

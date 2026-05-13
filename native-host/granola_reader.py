@@ -14,6 +14,14 @@ Commands:
   load_state             - Load persisted extension state from disk
   get_curator_ops        - Read ~/.commitment-tracker/curator-ops.json
   get_curator_ops_since  - Same, but short-circuits when file hasn't changed since 'mtime'
+
+  Commitment data (used by the `clyde` CLI):
+  list_commitments       - Read latest backup-*.json; optional filters
+  get_commitment         - Find one commitment by hash prefix
+  stats                  - Counts by status, source_type, age bucket
+  apply_ops              - Write a drop file under ~/.commitment-tracker/ops/
+  read_op_files          - Read every pending drop file (called by SW curator-sync)
+  consume_op_files       - Move named drop files to ~/.commitment-tracker/ops/applied/
 """
 
 import gzip
@@ -853,6 +861,303 @@ def handle_load_latest_state() -> dict:
         return {"ok": False, "error": f"Failed to load latest state: {e}", "state": None}
 
 
+# ─── Commitment data + drop-directory ops (clyde CLI surface) ───
+#
+# Read side: surfaces commitments from the latest backup-*.json file.
+# Pruning caveats (inherited from backup-sync.ts gatherState):
+#   - done/dismissed older than 30 days are NOT in the backup.
+#   - "actioned" status is excluded (pre-existing bug — track separately).
+#   - conversation_messages stripped when total backup payload > 900KB.
+#
+# Write side: drop directory at ~/.commitment-tracker/ops/.
+# Each clyde invocation writes one self-contained JSON file via tempfile+rename.
+# No flock, no concurrent-writer races. The SW's curator-sync consumes them and
+# moves successful files to ~/.commitment-tracker/ops/applied/.
+
+OPS_DIR = BACKUP_DIR / "ops"
+OPS_APPLIED_DIR = OPS_DIR / "applied"
+
+ALLOWED_OP_TYPES = {"mark_done", "flag_review", "merge_duplicate", "dismiss"}
+
+# Fields whose presence is required per op type — caught at write time so a
+# misbehaving CLI can't queue malformed ops that fail silently in the SW.
+OP_REQUIRED_FIELDS: "dict[str, set[str]]" = {
+    "mark_done": {"id", "type", "commitment_hash", "snapshot_at", "generated_at", "confidence", "evidence"},
+    "flag_review": {"id", "type", "commitment_hash", "snapshot_at", "generated_at", "confidence", "evidence"},
+    "merge_duplicate": {"id", "type", "commitment_hash", "snapshot_at", "generated_at", "primary_hash", "rationale"},
+    "dismiss": {"id", "type", "commitment_hash", "snapshot_at", "generated_at", "rationale"},
+}
+
+
+def _latest_backup_path() -> "Path | None":
+    if not BACKUP_DIR.exists():
+        return None
+    backups = sorted(
+        BACKUP_DIR.glob("backup-*.json"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    return backups[0] if backups else None
+
+
+def _load_latest_backup() -> "tuple[dict | None, str | None]":
+    """Return (state, error). state is None when no backup exists."""
+    path = _latest_backup_path()
+    if path is None:
+        return None, None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f), None
+    except (json.JSONDecodeError, IOError, OSError) as e:
+        return None, f"Failed to read backup {path.name}: {e}"
+
+
+def _slim_commitment(c: dict, verbose: bool) -> dict:
+    """Drop the heaviest fields unless explicitly requested."""
+    if verbose:
+        return c
+    return {k: v for k, v in c.items() if k != "conversation_messages"}
+
+
+def _matches_filter(c: dict, f: dict) -> bool:
+    if "status" in f and c.get("status") != f["status"]:
+        return False
+    if "source_type" in f and c.get("source_type") != f["source_type"]:
+        return False
+    if "since" in f:
+        ts = c.get("message_timestamp") or c.get("createdAt")
+        if not ts or ts < f["since"]:
+            return False
+    if "until" in f:
+        ts = c.get("message_timestamp") or c.get("createdAt")
+        if not ts or ts > f["until"]:
+            return False
+    if f.get("has_deadline") is True and not c.get("deadline"):
+        return False
+    if f.get("has_deadline") is False and c.get("deadline"):
+        return False
+    if "hash_prefix" in f and not (c.get("hash") or "").startswith(f["hash_prefix"]):
+        return False
+    return True
+
+
+def handle_list_commitments(filter_spec: "dict | None" = None, verbose: bool = False) -> dict:
+    state, err = _load_latest_backup()
+    if err:
+        return {"ok": False, "error": err}
+    if state is None:
+        return {"ok": True, "commitments": [], "backup_mtime": None}
+
+    f = filter_spec or {}
+    raw = state.get("commitments", [])
+    filtered = [c for c in raw if _matches_filter(c, f)]
+    items = [_slim_commitment(c, verbose) for c in filtered]
+
+    path = _latest_backup_path()
+    return {
+        "ok": True,
+        "commitments": items,
+        "total_in_backup": len(raw),
+        "backup_mtime": path.stat().st_mtime if path else None,
+        "backup_lastSaved": state.get("lastSaved"),
+    }
+
+
+def handle_get_commitment(hash_prefix: str, verbose: bool = False) -> dict:
+    if not hash_prefix or len(hash_prefix) < 4:
+        return {"ok": False, "error": "hash_prefix must be at least 4 characters"}
+    state, err = _load_latest_backup()
+    if err:
+        return {"ok": False, "error": err}
+    if state is None:
+        return {"ok": True, "matches": []}
+    raw = state.get("commitments", [])
+    matches = [c for c in raw if (c.get("hash") or "").startswith(hash_prefix)]
+    return {
+        "ok": True,
+        "matches": [_slim_commitment(c, verbose) for c in matches],
+    }
+
+
+def handle_stats() -> dict:
+    state, err = _load_latest_backup()
+    if err:
+        return {"ok": False, "error": err}
+    if state is None:
+        return {"ok": True, "total": 0}
+
+    raw = state.get("commitments", [])
+    by_status: "dict[str, int]" = {}
+    by_source: "dict[str, int]" = {}
+    age_buckets = {">90d": 0, "45-90d": 0, "30-45d": 0, "7-30d": 0, "<7d": 0, "no-ts": 0}
+    now_dt = datetime.now(timezone.utc)
+    for c in raw:
+        s = c.get("status") or "?"
+        by_status[s] = by_status.get(s, 0) + 1
+        src = c.get("source_type") or "?"
+        by_source[src] = by_source.get(src, 0) + 1
+
+        ts = c.get("message_timestamp")
+        if not ts:
+            age_buckets["no-ts"] += 1
+            continue
+        try:
+            ts_dt = _parse_dt(ts)
+            age_d = (now_dt - ts_dt).total_seconds() / 86400.0
+        except (ValueError, TypeError):
+            age_buckets["no-ts"] += 1
+            continue
+        if age_d > 90:
+            age_buckets[">90d"] += 1
+        elif age_d > 45:
+            age_buckets["45-90d"] += 1
+        elif age_d > 30:
+            age_buckets["30-45d"] += 1
+        elif age_d > 7:
+            age_buckets["7-30d"] += 1
+        else:
+            age_buckets["<7d"] += 1
+
+    path = _latest_backup_path()
+    pending = len(list(OPS_DIR.glob("*.json"))) if OPS_DIR.exists() else 0
+    applied = len(list(OPS_APPLIED_DIR.glob("*.json"))) if OPS_APPLIED_DIR.exists() else 0
+    return {
+        "ok": True,
+        "total": len(raw),
+        "by_status": by_status,
+        "by_source_type": by_source,
+        "by_age": age_buckets,
+        "backup_mtime": path.stat().st_mtime if path else None,
+        "backup_lastSaved": state.get("lastSaved"),
+        "pending_ops": pending,
+        "applied_ops": applied,
+    }
+
+
+def _validate_op(op: dict) -> "str | None":
+    """Return None if valid, else an error string."""
+    if not isinstance(op, dict):
+        return "op must be an object"
+    op_type = op.get("type")
+    if op_type not in ALLOWED_OP_TYPES:
+        return f"unknown op type: {op_type!r}"
+    required = OP_REQUIRED_FIELDS[op_type]
+    missing = [k for k in required if k not in op]
+    if missing:
+        return f"missing required fields for {op_type}: {missing}"
+    if not isinstance(op.get("commitment_hash"), str) or len(op["commitment_hash"]) < 8:
+        return "commitment_hash must be a string of at least 8 chars"
+    return None
+
+
+def handle_apply_ops(ops: list) -> dict:
+    if not isinstance(ops, list) or len(ops) == 0:
+        return {"ok": False, "error": "ops must be a non-empty list"}
+
+    validation_errors = []
+    for i, op in enumerate(ops):
+        err = _validate_op(op)
+        if err:
+            validation_errors.append(f"op[{i}]: {err}")
+    if validation_errors:
+        return {"ok": False, "error": "; ".join(validation_errors)}
+
+    try:
+        OPS_DIR.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        return {"ok": False, "error": f"Failed to create ops dir: {e}"}
+
+    # Filename: <unix-ns>-<pid>-<random>.json — sortable + collision-proof.
+    # urandom avoids depending on PYTHONHASHSEED and survives concurrent writers
+    # in the same nanosecond (which time_ns()+pid already largely prevents).
+    ts_ns = time.time_ns()
+    pid = os.getpid()
+    rand = os.urandom(4).hex()
+    filename = f"{ts_ns}-{pid}-{rand}.json"
+    target = OPS_DIR / filename
+
+    payload = {
+        "version": 1,
+        "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "source": "clyde-cli",
+        "operations": ops,
+    }
+    encoded = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+
+    fd, tmp_path = tempfile.mkstemp(dir=str(OPS_DIR), suffix=".tmp", prefix="op-")
+    try:
+        os.write(fd, encoded)
+        os.close(fd)
+        os.replace(tmp_path, str(target))
+    except Exception as e:
+        try:
+            os.close(fd)
+        except Exception:
+            pass
+        if os.path.exists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
+        return {"ok": False, "error": f"Failed to write op file: {e}"}
+
+    return {
+        "ok": True,
+        "filename": filename,
+        "path": str(target),
+        "op_ids": [op["id"] for op in ops],
+    }
+
+
+def handle_read_op_files() -> dict:
+    """Read every pending drop file. Called by SW curator-sync."""
+    if not OPS_DIR.exists():
+        return {"ok": True, "files": []}
+    out = []
+    # Sort by filename (which is timestamp-prefixed) so ops apply in arrival order.
+    for path in sorted(OPS_DIR.glob("*.json")):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, IOError, OSError) as e:
+            out.append({"filename": path.name, "malformed": True, "error": str(e)})
+            continue
+        ops = data.get("operations") if isinstance(data, dict) else None
+        if not isinstance(ops, list):
+            out.append({"filename": path.name, "malformed": True, "error": "missing operations array"})
+            continue
+        out.append({"filename": path.name, "operations": ops})
+    return {"ok": True, "files": out}
+
+
+def handle_consume_op_files(filenames: list) -> dict:
+    """Move named files from ops/ to ops/applied/. Idempotent — missing files OK."""
+    if not isinstance(filenames, list):
+        return {"ok": False, "error": "filenames must be a list"}
+    try:
+        OPS_APPLIED_DIR.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        return {"ok": False, "error": f"Failed to create ops/applied dir: {e}"}
+
+    consumed = 0
+    errors = []
+    for name in filenames:
+        if not isinstance(name, str) or "/" in name or ".." in name:
+            errors.append(f"refusing suspicious filename: {name!r}")
+            continue
+        src = OPS_DIR / name
+        if not src.exists():
+            continue
+        dst = OPS_APPLIED_DIR / name
+        try:
+            os.replace(str(src), str(dst))
+            consumed += 1
+        except OSError as e:
+            errors.append(f"{name}: {e}")
+
+    return {"ok": True, "consumed": consumed, "errors": errors}
+
+
 # ─── Main ───
 
 
@@ -891,6 +1196,24 @@ def main():
             result = handle_get_curator_ops()
         elif command == "get_curator_ops_since":
             result = handle_get_curator_ops_since(mtime=msg.get("mtime"))
+        elif command == "list_commitments":
+            result = handle_list_commitments(
+                filter_spec=msg.get("filter"),
+                verbose=bool(msg.get("verbose", False)),
+            )
+        elif command == "get_commitment":
+            result = handle_get_commitment(
+                hash_prefix=msg.get("hash_prefix", ""),
+                verbose=bool(msg.get("verbose", False)),
+            )
+        elif command == "stats":
+            result = handle_stats()
+        elif command == "apply_ops":
+            result = handle_apply_ops(ops=msg.get("ops", []))
+        elif command == "read_op_files":
+            result = handle_read_op_files()
+        elif command == "consume_op_files":
+            result = handle_consume_op_files(filenames=msg.get("filenames", []))
         else:
             result = {"ok": False, "error": f"Unknown command: {command}"}
     except Exception as e:

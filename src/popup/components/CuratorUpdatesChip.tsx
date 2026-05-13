@@ -167,14 +167,18 @@ function CuratorOpRow({
       ? "Marked done"
       : op.opType === "merge_duplicate"
         ? "Merged duplicate"
-        : "Flagged for review";
+        : op.opType === "dismiss"
+          ? "Dismissed"
+          : "Flagged for review";
 
   const evidence =
     op.opType === "mark_done"
       ? commitment?.completion_signal ?? null
       : op.opType === "merge_duplicate"
         ? commitment?.merge_metadata?.rationale ?? null
-        : null;
+        : op.opType === "dismiss"
+          ? commitment?.completion_signal ?? null
+          : null;
 
   return (
     <div
