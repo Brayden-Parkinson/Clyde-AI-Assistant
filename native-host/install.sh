@@ -44,20 +44,46 @@ case "$OS" in
     ;;
 esac
 
-# ─── Find python3 and write absolute path into shebang ───
+# ─── Find python3 (≥3.10) and write absolute path into shebang ───
+# granola_reader.py uses PEP 604 union syntax (`dict | None`) in runtime
+# function signatures, which evaluates at def time and needs 3.10+.
+# macOS ships /usr/bin/python3 as 3.9.6, so `command -v python3` is unreliable
+# unless homebrew is first on PATH for the user running this script.
 
-PYTHON3_PATH="$(command -v python3 2>/dev/null || true)"
+PYTHON3_PATH=""
+# Probe specific versions explicitly, then fall back to whatever `python3` resolves to.
+for candidate in \
+  /opt/homebrew/bin/python3.14 \
+  /opt/homebrew/bin/python3.13 \
+  /opt/homebrew/bin/python3.12 \
+  /opt/homebrew/bin/python3.11 \
+  /opt/homebrew/bin/python3.10 \
+  /usr/local/bin/python3.14 \
+  /usr/local/bin/python3.13 \
+  /usr/local/bin/python3.12 \
+  /usr/local/bin/python3.11 \
+  /usr/local/bin/python3.10 \
+  "$(command -v python3 2>/dev/null || true)"; do
+  [ -x "$candidate" ] || continue
+  vmajor=$("$candidate" -c 'import sys; print(sys.version_info.major)' 2>/dev/null || echo 0)
+  vminor=$("$candidate" -c 'import sys; print(sys.version_info.minor)' 2>/dev/null || echo 0)
+  if [ "$vmajor" -ge 3 ] && [ "$vminor" -ge 10 ]; then
+    PYTHON3_PATH="$candidate"
+    break
+  fi
+done
+
 if [ -z "$PYTHON3_PATH" ]; then
-  echo "Error: python3 not found. Please install Python 3 first."
-  echo "  macOS: brew install python3"
-  echo "  Linux: sudo apt install python3"
+  echo "Error: python3 ≥ 3.10 not found. The host script uses PEP 604 union syntax."
+  echo "  macOS:   brew install python@3.13"
+  echo "  Linux:   apt install python3.12  (or newer)"
   exit 1
 fi
 
 # Resolve symlinks to get the real path (Chrome's sandbox may not follow symlinks)
 PYTHON3_REAL="$(realpath "$PYTHON3_PATH" 2>/dev/null || readlink -f "$PYTHON3_PATH" 2>/dev/null || echo "$PYTHON3_PATH")"
 
-echo "Found python3: $PYTHON3_REAL"
+echo "Found python3 (≥3.10): $PYTHON3_REAL"
 
 # Rewrite the shebang in granola_reader.py to use the absolute python3 path
 # This avoids issues with Chrome's sandbox not finding /usr/bin/env python3
