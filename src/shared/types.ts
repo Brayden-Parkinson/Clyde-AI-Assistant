@@ -729,7 +729,7 @@ export interface RawNewsItem {
 // ~/.commitment-tracker/curator-ops.json. Clyde reads + applies them.
 // Schema mirrors skills/clyde-curate/SKILL.md — keep in sync.
 
-export type CuratorOpType = "mark_done" | "flag_review" | "merge_duplicate";
+export type CuratorOpType = "mark_done" | "flag_review" | "merge_duplicate" | "dismiss";
 
 interface CuratorOpBase {
   /** Stable hash id (e.g. "op:abcd1234..."), used as the idempotency key */
@@ -763,7 +763,18 @@ export interface MergeDuplicateOp extends CuratorOpBase {
   rationale: string;
 }
 
-export type CuratorOp = MarkDoneOp | FlagReviewOp | MergeDuplicateOp;
+/**
+ * Mark a commitment as `dismissed` without implying it duplicates another.
+ * Use this for things like "no longer relevant", "wrong extraction",
+ * "decided not to do this" — distinct from `merge_duplicate` which
+ * collapses duplicates.
+ */
+export interface DismissOp extends CuratorOpBase {
+  type: "dismiss";
+  rationale: string;
+}
+
+export type CuratorOp = MarkDoneOp | FlagReviewOp | MergeDuplicateOp | DismissOp;
 
 /** Top-level shape of the curator-ops.json file. */
 export interface CuratorOpsFile {

@@ -42,6 +42,24 @@ interface CuratorOpsNativeResponse {
   data?: CuratorOpsFile;
 }
 
+interface DropDirReadResponse {
+  ok?: boolean;
+  error?: string;
+  /** Each entry: one drop file's contents */
+  files?: Array<{
+    filename: string;
+    operations?: CuratorOp[];
+    malformed?: boolean;
+    error?: string;
+  }>;
+}
+
+interface DropDirConsumeResponse {
+  ok?: boolean;
+  error?: string;
+  consumed?: number;
+}
+
 function emptyResult(): CuratorSyncResult {
   return {
     read: false,
@@ -125,6 +143,20 @@ export async function applyOp(op: CuratorOp): Promise<ApplyOutcome> {
             rationale: op.rationale,
           },
         });
+      } else if (op.type === "dismiss") {
+        await db.commitments.update(cid, {
+          status: "dismissed",
+          completion_signal: op.rationale,
+          lastModifiedAt: now,
+        });
+      } else {
+        // Unknown op type — refuse to mark applied so a future SW that
+        // understands the type can still process it. The op stays in the
+        // drop directory (or curator-ops.json) until consumed by a build
+        // that recognises it.
+        throw new Error(
+          `Unknown curator op type: ${(op as { type?: string }).type ?? "(missing)"}`,
+        );
       }
 
       await db.applied_curator_ops.add({
@@ -196,7 +228,27 @@ export async function runCuratorSync(opts?: {
     return result;
   }
 
-  const lastMtime = opts?.force ? null : await getLastSeenMtime();
+  // Two independent passes — both always run so a missing/empty curator-ops.json
+  // never stops the drop-dir from being scanned.
+  await runSingleFilePass(result, opts?.force);
+  await runDropDirPass(result);
+
+  if (result.applied > 0 || result.errors.length > 0) {
+    await logStatus(
+      result.errors.length > 0 ? "warn" : "info",
+      "worker",
+      `Curator sync: applied=${result.applied}, alreadyApplied=${result.skippedAlreadyApplied}, fresherLocal=${result.skippedFresherLocal}, unknownHash=${result.skippedUnknownHash}, errors=${result.errors.length}`,
+    );
+  }
+
+  return result;
+}
+
+async function runSingleFilePass(
+  result: CuratorSyncResult,
+  force?: boolean,
+): Promise<void> {
+  const lastMtime = force ? null : await getLastSeenMtime();
   const cmd: Record<string, unknown> = { command: "get_curator_ops_since" };
   if (lastMtime !== null) cmd.mtime = lastMtime;
 
@@ -207,25 +259,25 @@ export async function runCuratorSync(opts?: {
     const msg = err instanceof Error ? err.message : String(err);
     result.errors.push(`native messaging failed: ${msg}`);
     await logStatus("warn", "worker", `Curator sync: native messaging failed (${msg})`);
-    return result;
+    return;
   }
 
   if (resp.ok === false) {
     result.errors.push(resp.error ?? "unknown native error");
-    return result;
+    return;
   }
-  if (resp.exists === false) return result;
-  if (resp.unchanged) return result;
+  if (resp.exists === false) return;
+  if (resp.unchanged) return;
   if (resp.malformed) {
     result.errors.push(`malformed curator-ops.json: ${resp.error ?? "unknown"}`);
     await logStatus("warn", "worker", `Curator sync: malformed curator-ops.json — ${resp.error ?? "unknown"}`);
-    return result;
+    return;
   }
 
   const file = resp.data;
   if (!file || !Array.isArray(file.operations)) {
     result.errors.push("curator-ops.json missing operations array");
-    return result;
+    return;
   }
 
   result.read = true;
@@ -260,14 +312,98 @@ export async function runCuratorSync(opts?: {
   if (typeof resp.mtime === "number") {
     await setLastSeenMtime(resp.mtime);
   }
+}
 
-  if (result.applied > 0 || result.errors.length > 0) {
-    await logStatus(
-      result.errors.length > 0 ? "warn" : "info",
-      "worker",
-      `Curator sync: applied=${result.applied}, alreadyApplied=${result.skippedAlreadyApplied}, fresherLocal=${result.skippedFresherLocal}, unknownHash=${result.skippedUnknownHash}, errors=${result.errors.length}`,
-    );
+async function runDropDirPass(result: CuratorSyncResult): Promise<void> {
+  let resp: DropDirReadResponse | undefined;
+  try {
+    resp = (await sendNative({ command: "read_op_files" })) as unknown as
+      | DropDirReadResponse
+      | undefined;
+  } catch (err) {
+    // Native host doesn't know this command yet (older install) — silent skip.
+    // The host's main() returns ok:false for unknown commands, which falls through below.
+    const msg = err instanceof Error ? err.message : String(err);
+    result.errors.push(`drop-dir read failed: ${msg}`);
+    return;
   }
 
-  return result;
+  if (!resp) return;
+  if (resp.ok === false) {
+    // Real error from the host (permission denied, mid-rename, etc.). The
+    // "missing dir" case returns `{ok: true, files: []}` — see
+    // handle_read_op_files in granola_reader.py.
+    result.errors.push(`drop-dir read failed: ${resp.error ?? "unknown"}`);
+    return;
+  }
+
+  const files = resp.files ?? [];
+  if (files.length === 0) return;
+
+  const consumed: string[] = [];
+
+  for (const file of files) {
+    if (file.malformed || !Array.isArray(file.operations)) {
+      result.errors.push(
+        `malformed drop file ${file.filename}: ${file.error ?? "missing operations array"}`,
+      );
+      // Don't consume — leave on disk so the user can inspect / delete.
+      continue;
+    }
+
+    let fileSucceeded = true;
+    for (const op of file.operations) {
+      if (!op || typeof op.id !== "string" || typeof op.type !== "string") {
+        result.errors.push(
+          `malformed op in ${file.filename}: ${JSON.stringify(op)?.slice(0, 80)}`,
+        );
+        fileSucceeded = false;
+        continue;
+      }
+      try {
+        const outcome = await applyOp(op);
+        switch (outcome) {
+          case "applied":
+            result.applied++;
+            break;
+          case "already-applied":
+            result.skippedAlreadyApplied++;
+            break;
+          case "fresher-local":
+            result.skippedFresherLocal++;
+            break;
+          case "unknown-hash":
+            result.skippedUnknownHash++;
+            fileSucceeded = false;
+            // Leave on disk — user may restore the commitment and want the op re-applied.
+            break;
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        result.errors.push(`op ${op.id} (${file.filename}): ${msg}`);
+        fileSucceeded = false;
+      }
+    }
+
+    // Only consume if every op in the file applied (or was a no-op already-applied).
+    // unknown-hash + thrown errors keep the file on disk.
+    if (fileSucceeded) consumed.push(file.filename);
+  }
+
+  if (consumed.length === 0) return;
+
+  try {
+    const consumeResp = (await sendNative({
+      command: "consume_op_files",
+      filenames: consumed,
+    })) as unknown as DropDirConsumeResponse;
+    if (consumeResp.ok === false) {
+      result.errors.push(`consume_op_files failed: ${consumeResp.error ?? "unknown"}`);
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    result.errors.push(`consume_op_files failed: ${msg}`);
+  }
+
+  result.read = true;
 }

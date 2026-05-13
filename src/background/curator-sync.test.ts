@@ -7,6 +7,7 @@ import type {
   MarkDoneOp,
   FlagReviewOp,
   MergeDuplicateOp,
+  DismissOp,
 } from "@shared/types";
 import { clearStorageLocal, setStorageLocal } from "../test-utils/chrome-mock";
 
@@ -88,6 +89,18 @@ function makeMergeDup(overrides: Partial<MergeDuplicateOp> = {}): MergeDuplicate
     primary_hash: "h-canon",
     rationale: "Identical text in same channel within an hour",
     generated_at: "2026-04-02T00:01:00Z",
+    ...overrides,
+  };
+}
+
+function makeDismiss(overrides: Partial<DismissOp> = {}): DismissOp {
+  return {
+    id: "op:dismiss-1",
+    type: "dismiss",
+    commitment_hash: "h-default",
+    snapshot_at: "2026-04-02T00:00:00Z",
+    generated_at: "2026-04-02T00:01:00Z",
+    rationale: "No longer relevant",
     ...overrides,
   };
 }
@@ -351,6 +364,254 @@ describe("runCuratorSync — applies ops via native bridge", () => {
     expect(r.read).toBe(false);
     expect(r.errors).toHaveLength(1);
     expect(r.errors[0]).toMatch(/malformed/);
+  });
+});
+
+// ─── New op types + safety guards ───────────────────────────────────────
+
+describe("applyOp — dismiss", () => {
+  it("flips status to dismissed, records rationale, bumps lastModifiedAt", async () => {
+    await db.commitments.add(makeCommitment({ hash: "h-dismiss" }));
+    const op = makeDismiss({
+      commitment_hash: "h-dismiss",
+      rationale: "no longer relevant — staffing decision changed",
+    });
+
+    const outcome = await applyOp(op);
+
+    expect(outcome).toBe("applied");
+    const c = await db.commitments.where("hash").equals("h-dismiss").first();
+    expect(c?.status).toBe("dismissed");
+    expect(c?.completion_signal).toBe("no longer relevant — staffing decision changed");
+    expect(c?.lastModifiedAt && c.lastModifiedAt > "2026-04-02T00:00:00Z").toBe(true);
+    // dismiss is distinct from merge_duplicate — no merge_metadata stamped
+    expect(c?.merge_metadata).toBeUndefined();
+    const applied = await db.applied_curator_ops.get(op.id);
+    expect(applied?.opType).toBe("dismiss");
+  });
+
+  it("can be undone — reverts status to 'new' (mirrors mark_done semantics)", async () => {
+    await db.commitments.add(makeCommitment({ hash: "h-dismiss-undo" }));
+    const op = makeDismiss({ id: "op:dismiss-undo", commitment_hash: "h-dismiss-undo" });
+    expect(await applyOp(op)).toBe("applied");
+
+    const undone = await undoAppliedOp(op.id);
+
+    expect(undone).toBe(true);
+    const c = await db.commitments.where("hash").equals("h-dismiss-undo").first();
+    expect(c?.status).toBe("new");
+  });
+});
+
+describe("applyOp — unknown op type", () => {
+  it("throws and refuses to record applied_curator_ops (forward-compat guard)", async () => {
+    await db.commitments.add(makeCommitment({ hash: "h-unknown" }));
+    // Cast through unknown — the schema disallows this at compile time, which
+    // is the whole point: an old SW seeing a future op type at runtime must
+    // not silently mark it applied.
+    const op = {
+      id: "op:future-type-1",
+      type: "future_unknown_op",
+      commitment_hash: "h-unknown",
+      snapshot_at: "2026-04-02T00:00:00Z",
+      generated_at: "2026-04-02T00:01:00Z",
+    } as unknown as CuratorOp;
+
+    await expect(applyOp(op)).rejects.toThrow(/unknown curator op type/i);
+
+    const c = await db.commitments.where("hash").equals("h-unknown").first();
+    expect(c?.status).toBe("new"); // unchanged
+    expect(await db.applied_curator_ops.get("op:future-type-1")).toBeUndefined();
+  });
+});
+
+// ─── runCuratorSync — drop-directory pass ────────────────────────────────
+
+describe("runCuratorSync — drop-dir scan", () => {
+  // Command-aware mock helper. The drop-dir code path adds `read_op_files`
+  // and `consume_op_files` calls AFTER the existing `get_curator_ops_since`,
+  // so each test needs to dispatch by command.
+  function setupNative(handlers: Record<string, unknown>) {
+    sendNativeMock.mockImplementation((msg: { command?: string }) => {
+      const cmd = msg.command ?? "";
+      if (cmd in handlers) return Promise.resolve(handlers[cmd]);
+      return Promise.resolve({ ok: false, error: `no mock for ${cmd}` });
+    });
+  }
+
+  it("applies ops from drop files and consumes successful files", async () => {
+    await db.commitments.add(makeCommitment({ hash: "h-drop-1" }));
+    await db.commitments.add(makeCommitment({ hash: "h-drop-2" }));
+
+    const consumed: string[] = [];
+    setupNative({
+      get_curator_ops_since: { ok: true, exists: false },
+      read_op_files: {
+        ok: true,
+        files: [
+          {
+            filename: "1-1-a.json",
+            operations: [makeMarkDone({ id: "op:dd-a", commitment_hash: "h-drop-1" })],
+          },
+          {
+            filename: "2-1-b.json",
+            operations: [makeDismiss({ id: "op:dd-b", commitment_hash: "h-drop-2" })],
+          },
+        ],
+      },
+      consume_op_files: ((req: { filenames: string[] }) => {
+        consumed.push(...req.filenames);
+        return { ok: true, consumed: req.filenames.length };
+      }) as unknown,
+    });
+    // The consume_op_files handler above is a function; remap to a callback.
+    sendNativeMock.mockImplementation((msg: { command?: string; filenames?: string[] }) => {
+      if (msg.command === "get_curator_ops_since") return Promise.resolve({ ok: true, exists: false });
+      if (msg.command === "read_op_files") {
+        return Promise.resolve({
+          ok: true,
+          files: [
+            {
+              filename: "1-1-a.json",
+              operations: [makeMarkDone({ id: "op:dd-a", commitment_hash: "h-drop-1" })],
+            },
+            {
+              filename: "2-1-b.json",
+              operations: [makeDismiss({ id: "op:dd-b", commitment_hash: "h-drop-2" })],
+            },
+          ],
+        });
+      }
+      if (msg.command === "consume_op_files") {
+        consumed.push(...(msg.filenames ?? []));
+        return Promise.resolve({ ok: true, consumed: (msg.filenames ?? []).length });
+      }
+      return Promise.resolve({ ok: false, error: `no mock for ${msg.command}` });
+    });
+
+    const r = await runCuratorSync();
+
+    expect(r.applied).toBe(2);
+    expect(r.errors).toEqual([]);
+    expect(consumed.sort()).toEqual(["1-1-a.json", "2-1-b.json"]);
+
+    const c1 = await db.commitments.where("hash").equals("h-drop-1").first();
+    expect(c1?.status).toBe("done");
+    const c2 = await db.commitments.where("hash").equals("h-drop-2").first();
+    expect(c2?.status).toBe("dismissed");
+  });
+
+  it("does NOT consume a drop file whose op hits unknown-hash", async () => {
+    // Only h-known exists; h-missing is unknown.
+    await db.commitments.add(makeCommitment({ hash: "h-known" }));
+
+    const consumed: string[] = [];
+    sendNativeMock.mockImplementation((msg: { command?: string; filenames?: string[] }) => {
+      if (msg.command === "get_curator_ops_since") return Promise.resolve({ ok: true, exists: false });
+      if (msg.command === "read_op_files") {
+        return Promise.resolve({
+          ok: true,
+          files: [
+            {
+              filename: "good.json",
+              operations: [makeMarkDone({ id: "op:good", commitment_hash: "h-known" })],
+            },
+            {
+              filename: "stale.json",
+              operations: [makeMarkDone({ id: "op:stale", commitment_hash: "h-missing" })],
+            },
+          ],
+        });
+      }
+      if (msg.command === "consume_op_files") {
+        consumed.push(...(msg.filenames ?? []));
+        return Promise.resolve({ ok: true, consumed: (msg.filenames ?? []).length });
+      }
+      return Promise.resolve({ ok: false });
+    });
+
+    const r = await runCuratorSync();
+
+    expect(r.applied).toBe(1);
+    expect(r.skippedUnknownHash).toBe(1);
+    // Only the good file is consumed — stale.json stays on disk for a future
+    // sync (perhaps after the commitment gets re-extracted).
+    expect(consumed).toEqual(["good.json"]);
+  });
+
+  it("reports a malformed drop file via errors and leaves it on disk", async () => {
+    const consumed: string[] = [];
+    sendNativeMock.mockImplementation((msg: { command?: string; filenames?: string[] }) => {
+      if (msg.command === "get_curator_ops_since") return Promise.resolve({ ok: true, exists: false });
+      if (msg.command === "read_op_files") {
+        return Promise.resolve({
+          ok: true,
+          files: [
+            {
+              filename: "broken.json",
+              malformed: true,
+              error: "JSON parse error",
+            },
+          ],
+        });
+      }
+      if (msg.command === "consume_op_files") {
+        consumed.push(...(msg.filenames ?? []));
+        return Promise.resolve({ ok: true });
+      }
+      return Promise.resolve({ ok: false });
+    });
+
+    const r = await runCuratorSync();
+
+    expect(r.applied).toBe(0);
+    expect(r.errors).toHaveLength(1);
+    expect(r.errors[0]).toMatch(/broken\.json/);
+    expect(consumed).toEqual([]);
+  });
+
+  it("unknown op types in a drop file are NOT silently consumed (forward-compat)", async () => {
+    await db.commitments.add(makeCommitment({ hash: "h-future" }));
+
+    const consumed: string[] = [];
+    sendNativeMock.mockImplementation((msg: { command?: string; filenames?: string[] }) => {
+      if (msg.command === "get_curator_ops_since") return Promise.resolve({ ok: true, exists: false });
+      if (msg.command === "read_op_files") {
+        return Promise.resolve({
+          ok: true,
+          files: [
+            {
+              filename: "future-op.json",
+              operations: [
+                {
+                  id: "op:from-the-future",
+                  type: "future_unknown_op",
+                  commitment_hash: "h-future",
+                  snapshot_at: "2026-04-02T00:00:00Z",
+                  generated_at: "2026-04-02T00:01:00Z",
+                },
+              ],
+            },
+          ],
+        });
+      }
+      if (msg.command === "consume_op_files") {
+        consumed.push(...(msg.filenames ?? []));
+        return Promise.resolve({ ok: true });
+      }
+      return Promise.resolve({ ok: false });
+    });
+
+    const r = await runCuratorSync();
+
+    expect(r.applied).toBe(0);
+    expect(r.errors).toHaveLength(1);
+    expect(r.errors[0]).toMatch(/unknown curator op type/i);
+    // CRITICAL: the file must NOT be consumed, so a future SW that knows the
+    // op type can still pick it up.
+    expect(consumed).toEqual([]);
+    // And no applied row exists for the future op.
+    expect(await db.applied_curator_ops.get("op:from-the-future")).toBeUndefined();
   });
 });
 

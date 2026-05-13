@@ -1,0 +1,462 @@
+#!/opt/homebrew/bin/python3
+"""
+`clyde` — CLI for the Clyde commitment tracker.
+
+Reads live commitment data from ~/.commitment-tracker/backup-*.json directly
+(no Chrome required). Writes go through ~/.commitment-tracker/ops/ as drop files
+that the running extension's curator-sync picks up and applies.
+
+Latency: when Chrome is running with Clyde loaded, writes typically apply
+within 30s (next curator-sync alarm cycle). Worst case is the
+CURATOR_SYNC_PERIOD_MIN alarm cycle (~10 minutes). If Chrome is closed, ops
+queue until the next time Clyde starts.
+
+Security: this CLI bypasses Chrome's native-messaging origin gate. Anyone with
+shell access to this user account can read or mutate the data. Trust boundary
+is the user account, same as ~/.commitment-tracker/ itself.
+"""
+
+from __future__ import annotations
+
+import argparse
+import datetime as _dt
+import hashlib
+import json
+import os
+import struct
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any
+
+HOST_SCRIPT = Path(__file__).resolve().parent / "granola_reader.py"
+
+
+# ─── Native messaging helpers ───
+
+
+def _call_host(command: str, **kwargs: Any) -> dict:
+    """Invoke granola_reader.py as a subprocess via Chrome's native-messaging
+    JSON-line protocol. Returns the parsed response."""
+    if not HOST_SCRIPT.exists():
+        raise SystemExit(f"clyde: host script not found at {HOST_SCRIPT}")
+    msg = {"command": command, **kwargs}
+    body = json.dumps(msg).encode("utf-8")
+    payload = struct.pack("<I", len(body)) + body
+    try:
+        p = subprocess.run(
+            [str(HOST_SCRIPT)],
+            input=payload,
+            capture_output=True,
+            timeout=15,
+        )
+    except subprocess.TimeoutExpired:
+        raise SystemExit("clyde: host script timed out")
+    if p.returncode != 0:
+        raise SystemExit(
+            f"clyde: host script exited {p.returncode}: {p.stderr.decode()[:500]}"
+        )
+    out = p.stdout
+    if len(out) < 4:
+        raise SystemExit(f"clyde: short response from host: {out!r}")
+    length = struct.unpack("<I", out[:4])[0]
+    try:
+        return json.loads(out[4 : 4 + length])
+    except json.JSONDecodeError as e:
+        raise SystemExit(f"clyde: host returned invalid JSON: {e}")
+
+
+def _now_iso() -> str:
+    return _dt.datetime.now(_dt.timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _make_op_id(op: dict) -> str:
+    """Deterministic id from op contents (incl. snapshot_at to avoid collisions
+    when the same logical op is queued twice intentionally)."""
+    keys = ("type", "commitment_hash", "snapshot_at", "evidence", "rationale", "primary_hash")
+    h = hashlib.sha256()
+    for k in keys:
+        v = op.get(k)
+        if v is not None:
+            h.update(f"{k}={v}".encode("utf-8"))
+            h.update(b"\x00")
+    return "op:" + h.hexdigest()[:32]
+
+
+# ─── Hash resolution ───
+
+
+def _resolve_hashes(hash_prefixes: list[str]) -> list[str]:
+    """Resolve each prefix to a full hash. Refuses ambiguous prefixes."""
+    # One round-trip to grab all hashes
+    resp = _call_host("list_commitments", filter={})
+    if not resp.get("ok"):
+        raise SystemExit(f"clyde: failed to list commitments: {resp.get('error')}")
+    by_hash = {c["hash"]: c for c in resp.get("commitments", []) if c.get("hash")}
+
+    resolved: list[str] = []
+    errors: list[str] = []
+    for prefix in hash_prefixes:
+        if not prefix or len(prefix) < 4:
+            errors.append(f"'{prefix}': hash prefix must be ≥4 chars")
+            continue
+        matches = [h for h in by_hash if h.startswith(prefix)]
+        if len(matches) == 0:
+            errors.append(f"'{prefix}': no commitment matches")
+        elif len(matches) > 1:
+            sample = ", ".join(
+                f"{h[:12]}…={by_hash[h].get('text','')[:50]}" for h in matches[:5]
+            )
+            errors.append(f"'{prefix}': ambiguous ({len(matches)} matches): {sample}")
+        else:
+            resolved.append(matches[0])
+
+    if errors:
+        for e in errors:
+            print(f"clyde: {e}", file=sys.stderr)
+        raise SystemExit(1)
+
+    return resolved
+
+
+# ─── Output helpers ───
+
+
+def _print_table(items: list[dict], cols: list[tuple[str, str, int]]) -> None:
+    """cols: list of (header, field_path, width)."""
+    if not items:
+        print("(no rows)")
+        return
+
+    def _get(item: dict, path: str) -> str:
+        v: Any = item
+        for part in path.split("."):
+            if isinstance(v, dict):
+                v = v.get(part)
+            else:
+                v = None
+                break
+        return "" if v is None else str(v)
+
+    header = "  ".join(h.ljust(w) for h, _, w in cols)
+    print(header)
+    print("  ".join("-" * w for _, _, w in cols))
+    for item in items:
+        row = "  ".join(
+            _get(item, p)[:w].ljust(w) for _, p, w in cols
+        )
+        print(row)
+
+
+def _fmt_age(iso_ts: str | None) -> str:
+    if not iso_ts:
+        return "?"
+    try:
+        ts = _dt.datetime.fromisoformat(iso_ts.replace("Z", "+00:00"))
+    except ValueError:
+        return "?"
+    now = _dt.datetime.now(_dt.timezone.utc)
+    days = int((now - ts).total_seconds() / 86400)
+    if days < 1:
+        hours = int((now - ts).total_seconds() / 3600)
+        return f"{hours}h"
+    return f"{days}d"
+
+
+# ─── Subcommands ───
+
+
+_NO_BACKUP_HINT = (
+    "No backup yet at ~/.commitment-tracker/backup-*.json.\n"
+    "  → Open Clyde in Chrome (the popup or options page) so the service worker\n"
+    "    writes its first backup, then re-run."
+)
+
+
+def _check_backup_exists(r: dict) -> bool:
+    """Return False (and print a hint) when stats/list returned but there's no backup yet."""
+    if r.get("total", 1) == 0 and r.get("backup_mtime") is None:
+        print(_NO_BACKUP_HINT, file=sys.stderr)
+        return False
+    return True
+
+
+def cmd_stats(_args: argparse.Namespace) -> int:
+    r = _call_host("stats")
+    if not r.get("ok"):
+        print(f"clyde: {r.get('error')}", file=sys.stderr)
+        return 1
+    if not _check_backup_exists(r):
+        return 1
+    print(f"Total commitments in backup: {r['total']}")
+    print(f"Backup last saved: {r.get('backup_lastSaved') or '(none)'}")
+    print(f"Pending ops (not yet applied): {r.get('pending_ops', 0)}")
+    print(f"Applied ops on disk: {r.get('applied_ops', 0)}")
+    print()
+    print("By status:")
+    for k in sorted(r.get("by_status", {}), key=lambda x: -r["by_status"][x]):
+        print(f"  {k:14s} {r['by_status'][k]}")
+    print()
+    print("By source_type:")
+    for k in sorted(r.get("by_source_type", {}), key=lambda x: -r["by_source_type"][x]):
+        print(f"  {k:14s} {r['by_source_type'][k]}")
+    print()
+    print("Open commitments by age (message_timestamp):")
+    for k in (">90d", "45-90d", "30-45d", "7-30d", "<7d", "no-ts"):
+        v = r.get("by_age", {}).get(k, 0)
+        print(f"  {k:8s} {v}")
+    return 0
+
+
+def cmd_dump(args: argparse.Namespace) -> int:
+    filter_spec: dict[str, Any] = {}
+    if args.status:
+        filter_spec["status"] = args.status
+    if args.source:
+        filter_spec["source_type"] = args.source
+    if args.since:
+        filter_spec["since"] = args.since
+    if args.until:
+        filter_spec["until"] = args.until
+
+    r = _call_host(
+        "list_commitments",
+        filter=filter_spec,
+        verbose=args.verbose,
+    )
+    if not r.get("ok"):
+        print(f"clyde: {r.get('error')}", file=sys.stderr)
+        return 1
+    if r.get("backup_mtime") is None and r.get("total_in_backup", 0) == 0:
+        print(_NO_BACKUP_HINT, file=sys.stderr)
+        return 1
+
+    items = r.get("commitments", [])
+    if args.limit:
+        items = items[: args.limit]
+
+    if args.json:
+        print(json.dumps(items, indent=2))
+        return 0
+
+    cols = [
+        ("HASH", "hash", 10),
+        ("STATUS", "status", 11),
+        ("SOURCE", "source_type", 8),
+        ("AGE", "_age", 5),
+        ("CONTEXT", "context", 28),
+        ("TEXT", "text", 60),
+    ]
+    for it in items:
+        it["_age"] = _fmt_age(it.get("message_timestamp"))
+        it["hash"] = (it.get("hash") or "")[:10]
+    _print_table(items, cols)
+    print(f"\n({len(items)} of {r.get('total_in_backup', '?')} commitments)")
+    return 0
+
+
+def cmd_list(args: argparse.Namespace) -> int:
+    # Same as dump but always table-formatted.
+    args.json = False
+    return cmd_dump(args)
+
+
+def cmd_get(args: argparse.Namespace) -> int:
+    r = _call_host("get_commitment", hash_prefix=args.hash, verbose=args.verbose)
+    if not r.get("ok"):
+        print(f"clyde: {r.get('error')}", file=sys.stderr)
+        return 1
+    matches = r.get("matches", [])
+    if not matches:
+        print(f"No commitment with hash prefix '{args.hash}'", file=sys.stderr)
+        return 1
+    if len(matches) > 1:
+        print(f"Ambiguous: {len(matches)} matches", file=sys.stderr)
+        for m in matches[:10]:
+            print(f"  {m['hash'][:12]}  {m.get('text','')[:80]}", file=sys.stderr)
+        return 1
+    print(json.dumps(matches[0], indent=2))
+    return 0
+
+
+def _write_ops(ops: list[dict]) -> int:
+    """Queue ops via apply_ops. Returns exit code."""
+    r = _call_host("apply_ops", ops=ops)
+    if not r.get("ok"):
+        print(f"clyde: {r.get('error')}", file=sys.stderr)
+        return 1
+    print(f"✓ queued {len(ops)} op(s) in {r['filename']}")
+    print(f"  path: {r['path']}")
+    print(
+        "  Clyde will apply on the next curator-sync alarm (≤10 min when Chrome is running)."
+    )
+    return 0
+
+
+def cmd_mark_done(args: argparse.Namespace) -> int:
+    hashes = _resolve_hashes(args.hashes)
+    now = _now_iso()
+    ops = []
+    for h in hashes:
+        op = {
+            "type": "mark_done",
+            "commitment_hash": h,
+            "snapshot_at": now,
+            "generated_at": now,
+            "confidence": 0.95,
+            "evidence": args.evidence,
+            "evidence_url": None,
+        }
+        op["id"] = _make_op_id(op)
+        ops.append(op)
+    return _write_ops(ops)
+
+
+def cmd_mark_dismissed(args: argparse.Namespace) -> int:
+    hashes = _resolve_hashes(args.hashes)
+    now = _now_iso()
+    ops = []
+    for h in hashes:
+        op = {
+            "type": "dismiss",
+            "commitment_hash": h,
+            "snapshot_at": now,
+            "generated_at": now,
+            "rationale": args.reason,
+        }
+        op["id"] = _make_op_id(op)
+        ops.append(op)
+    return _write_ops(ops)
+
+
+def cmd_flag_review(args: argparse.Namespace) -> int:
+    hashes = _resolve_hashes([args.hash])
+    now = _now_iso()
+    op = {
+        "type": "flag_review",
+        "commitment_hash": hashes[0],
+        "snapshot_at": now,
+        "generated_at": now,
+        "confidence": args.confidence,
+        "evidence": args.evidence,
+    }
+    op["id"] = _make_op_id(op)
+    return _write_ops([op])
+
+
+def cmd_status(_args: argparse.Namespace) -> int:
+    r = _call_host("stats")
+    if not r.get("ok"):
+        print(f"clyde: {r.get('error')}", file=sys.stderr)
+        return 1
+
+    backup_lastSaved = r.get("backup_lastSaved") or "(none)"
+    pending = r.get("pending_ops", 0)
+    applied = r.get("applied_ops", 0)
+
+    # Best-effort: Chrome running?
+    chrome_running = False
+    try:
+        subprocess.run(
+            ["pgrep", "-f", "Google Chrome"], capture_output=True, check=True, timeout=2
+        )
+        chrome_running = True
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+        chrome_running = False
+
+    print(f"Backup: last saved {backup_lastSaved}")
+    print(f"Pending ops in drop dir: {pending}")
+    print(f"Applied ops on disk: {applied}")
+    print(f"Chrome process running: {'yes' if chrome_running else 'no'}")
+    if pending and not chrome_running:
+        print()
+        print(
+            "⚠  Chrome is not running. Pending ops will apply when you next launch Chrome with Clyde loaded."
+        )
+    elif pending and chrome_running:
+        print()
+        print("Pending ops will apply on the next curator-sync alarm cycle (≤10 min).")
+    return 0
+
+
+# ─── Arg parser ───
+
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="clyde",
+        description="CLI for the Clyde commitment tracker. Reads run offline; writes apply when Chrome is running.",
+    )
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    # stats
+    sp = sub.add_parser("stats", help="Counts by status, source, age")
+    sp.set_defaults(func=cmd_stats)
+
+    # dump
+    sp = sub.add_parser("dump", help="List commitments (table or --json)")
+    sp.add_argument("--status", help="Filter by status (new, done, dismissed, actioned, ...)")
+    sp.add_argument("--source", help="Filter by source_type (slack, meeting, gmail, gdoc, voice)")
+    sp.add_argument("--since", help="Only include message_timestamp >= this ISO date")
+    sp.add_argument("--until", help="Only include message_timestamp <= this ISO date")
+    sp.add_argument("--limit", type=int, help="Max rows to return")
+    sp.add_argument("--json", action="store_true", help="Output JSON (default: table)")
+    sp.add_argument("--verbose", action="store_true", help="Include conversation_messages (large)")
+    sp.set_defaults(func=cmd_dump)
+
+    # list (table-only alias)
+    sp = sub.add_parser("list", help="List commitments (table only)")
+    sp.add_argument("--status", help="Filter by status")
+    sp.add_argument("--source", help="Filter by source_type")
+    sp.add_argument("--since", help="Only message_timestamp >= this")
+    sp.add_argument("--until", help="Only message_timestamp <= this")
+    sp.add_argument("--limit", type=int)
+    sp.add_argument("--verbose", action="store_true")
+    sp.set_defaults(func=cmd_list)
+
+    # get
+    sp = sub.add_parser("get", help="Show one commitment by hash prefix (JSON)")
+    sp.add_argument("hash", help="Hash or hash prefix (≥4 chars)")
+    sp.add_argument("--verbose", action="store_true", help="Include conversation_messages")
+    sp.set_defaults(func=cmd_get)
+
+    # mark-done
+    sp = sub.add_parser("mark-done", help="Queue mark_done op(s)")
+    sp.add_argument("hashes", nargs="+", help="One or more hash prefixes")
+    sp.add_argument(
+        "-e", "--evidence", default="Marked done via clyde CLI",
+        help="Evidence string (recorded in completion_signal)",
+    )
+    sp.set_defaults(func=cmd_mark_done)
+
+    # mark-dismissed
+    sp = sub.add_parser("mark-dismissed", help="Queue dismiss op(s)")
+    sp.add_argument("hashes", nargs="+", help="One or more hash prefixes")
+    sp.add_argument(
+        "-r", "--reason", default="Dismissed via clyde CLI",
+        help="Rationale (recorded in completion_signal)",
+    )
+    sp.set_defaults(func=cmd_mark_dismissed)
+
+    # flag-review
+    sp = sub.add_parser("flag-review", help="Queue flag_review op (creates a CompletionSuggestion)")
+    sp.add_argument("hash", help="Hash prefix")
+    sp.add_argument("-e", "--evidence", required=True, help="Evidence text")
+    sp.add_argument("-c", "--confidence", type=float, default=0.7, help="0.0-1.0")
+    sp.set_defaults(func=cmd_flag_review)
+
+    # status
+    sp = sub.add_parser("status", help="Backup freshness, pending ops, Chrome status")
+    sp.set_defaults(func=cmd_status)
+
+    return p
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
